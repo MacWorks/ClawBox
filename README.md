@@ -4,6 +4,20 @@ ClawBox runs OpenClaw inside a macOS VM while keeping model inference on the hos
 
 The host owns `.env`, config generation, SSH-based deployment, and host inference services. The VM owns OpenClaw installation and `openclaw gateway` execution.
 
+## Security Model
+
+ClawBox isolates OpenClaw inside a dedicated macOS virtual machine.
+
+The host retains control of model inference, configuration generation, deployment, and runtime artifacts. OpenClaw executes inside the VM and can be granted access to VM resources according to the user's preferences.
+
+This design allows users to experiment with OpenClaw in an environment that is separated from the host operating system while keeping model inference on the host.
+
+## Project Status
+
+Early development / pre-release.
+
+Interfaces, setup flow, and documentation may change between releases.
+
 ## Prerequisites
 
 Before you run any setup command, make sure all of the following already exist:
@@ -84,7 +98,7 @@ SSH key bootstrap. See `docs/setup/vm.md` for detailed VM instructions.
 ### Step 3: Clone the repository
 
 ```bash
-git clone <repository-url>
+git clone git@github.com:MacWorks/ClawBox.git
 cd ClawBox
 ```
 
