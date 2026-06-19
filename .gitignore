@@ -1,0 +1,43 @@
+# Project Development Files
+.github/prompts/*
+!.github/prompts/.gitkeep
+.vscode/
+
+# Repository-local generated logs
+/*.log
+/.*.log
+
+# Repository-local generated environment files
+/.env
+/.env.bak
+/.env.*.bak
+
+# Repository-local generated runtime/test artifacts
+/.clawbox/
+/~/
+/vm/runtime/*
+!/vm/runtime/.gitkeep
+
+# Centralized log tree
+/logs/*
+!/logs/archive
+!/logs/dev
+!/logs/runtime
+!/logs/setup
+!/logs/ssh
+!/logs/tests
+!/logs/vm
+/logs/archive/*
+!/logs/archive/.gitkeep
+/logs/dev/*
+!/logs/dev/.gitkeep
+/logs/runtime/*
+!/logs/runtime/.gitkeep
+/logs/setup/*
+!/logs/setup/.gitkeep
+/logs/ssh/*
+!/logs/ssh/.gitkeep
+/logs/tests/*
+!/logs/tests/.gitkeep
+/logs/vm/*
+!/logs/vm/.gitkeep

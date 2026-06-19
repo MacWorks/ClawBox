@@ -1,0 +1,27 @@
+# Environment files
+.env*
+!.env.example
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Runtime artifacts
+runtime/*
+!runtime/.gitkeep
+
+# Test artifacts
+tests/output/
+
+# Misc
+*.log
+*.tmp
+*.swp
+Makefile
+
+# Dev
+dev/

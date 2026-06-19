@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+show_help() {
+  cat <<EOF
+ClawBox CLI
+
+Usage:
+  ./clawbox <command>
+
+Commands:
+  setup       Run interactive setup
+  status      Show system status
+  help        Show this help message
+
+Options:
+  -h, --help  Show this help message
+
+Examples:
+  ./clawbox setup
+  ./clawbox status
+EOF
+}
+
+cmd="${1:-help}"
+if [ "$#" -gt 0 ]; then
+  shift
+fi
+
+case "$cmd" in
+  setup)
+    exec "$BASE_DIR/scripts/setup.sh" "$@"
+    ;;
+  status)
+    exec "$BASE_DIR/scripts/status.sh" "$@"
+    ;;
+  help|-h|--help)
+    show_help
+    ;;
+  *)
+    echo "Unknown command: $cmd"
+    echo
+    show_help
+    exit 1
+    ;;
+esac

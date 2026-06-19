@@ -1,0 +1,6 @@
+# ClawBox pf anchor fragment.
+# Rendered by host/firewall/apply.sh with environment-specific values.
+
+pass in quick on lo0 inet proto tcp from any to any port __LLAMA_PORT__ keep state
+pass in quick inet proto tcp from __ALLOWED_SUBNET__ to any port __LLAMA_PORT__ keep state
+block in quick log inet proto tcp from any to any port __LLAMA_PORT__
