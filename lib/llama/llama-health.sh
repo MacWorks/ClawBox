@@ -114,6 +114,7 @@ llama_prompt_for_available_port() {
   local choice=''
   local reuse_label='Use this existing instance'
   local alternate_label='Choose a different port'
+  local managed_runtime_matches=true
 
   while true; do
     llama_suggest_available_port "$host_ip" "$current_port"
@@ -127,12 +128,25 @@ llama_prompt_for_available_port() {
       llama_describe_existing_instance "$selected_port" "$host_ip" >/dev/null 2>&1 || true
 
       if [ "$prompt_mode" = 'dedicated' ] && llama_existing_instance_is_current_user_managed; then
+        managed_runtime_matches=false
+        if llama_files_match_mode user; then
+          managed_runtime_matches=true
+        elif user_has_sudo && llama_files_match_mode system; then
+          managed_runtime_matches=true
+        fi
         while true; do
           error "ClawBox-managed llama-server already running at http://$host_ip:$selected_port"
           llama_print_existing_instance_details "$selected_port"
           blank_line
-          out "1) Use the existing running llama-server on port $selected_port (recommended)"
-          out "2) Restart the existing llama-server on port $selected_port"
+          if [ "$managed_runtime_matches" = true ]; then
+            out "1) Use the existing running llama-server on port $selected_port (recommended)"
+            out "2) Restart the existing llama-server on port $selected_port"
+          else
+            warn 'The running ClawBox service does not match the current .env runtime settings.'
+            out 'Reuse will not apply the current .env changes.'
+            out "1) Use the existing running llama-server on port $selected_port without applying .env changes"
+            out "2) Restart the existing llama-server on port $selected_port to apply .env changes (recommended)"
+          fi
           out '3) Choose a different port'
           out '4) Exit setup'
           blank_line
