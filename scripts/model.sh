@@ -6,6 +6,7 @@ ENV_FILE="$BASE_DIR/.env"
 ENV_EXAMPLE_FILE="$BASE_DIR/.env.example"
 ENV_BACKUP_DECISION_MADE=false
 ENV_BACKUP_ENABLED=false
+VM_ALIAS_SYNC_HANDLED=false
 
 source "$BASE_DIR/lib/output.sh"
 source "$BASE_DIR/lib/log.sh"
@@ -38,8 +39,6 @@ offer_openclaw_alias_migration() {
   local model_alias="${OPENCLAW_DEFAULT_MODEL:-local}"
   local old_reference="$provider_name/$model_alias"
   local new_reference="$provider_name/local"
-  local remote_command=''
-  local actual_reference=''
 
   [ "$model_alias" != 'local' ] || return 0
 
@@ -58,6 +57,7 @@ offer_openclaw_alias_migration() {
   source_env_file || return $?
   success "ClawBox .env now uses $new_reference."
   out 'The VM OpenClaw config still points to the old alias until explicitly synced.'
+  VM_ALIAS_SYNC_HANDLED=true
   blank_line
   prompt_yes_no "Update the VM OpenClaw default model to $new_reference now?" 'n'
   if ! is_yes "$REPLY"; then
@@ -65,6 +65,15 @@ offer_openclaw_alias_migration() {
     outf "Inspect it later with: ssh %s 'zsh -lc \"openclaw config get agents.defaults.model.primary\"'" "${VM_HOST:-<vm-user>@<vm-ip>}"
     return 0
   fi
+
+  update_vm_openclaw_default_model "$old_reference" "$new_reference"
+}
+
+update_vm_openclaw_default_model() {
+  local old_reference="$1"
+  local new_reference="$2"
+  local remote_command=''
+  local actual_reference=''
 
   remote_command="openclaw config set agents.defaults.model.primary $(printf '%q' "$new_reference")"
   if ! ssh "$VM_HOST" "zsh -lc $(printf '%q' "$remote_command")"; then
@@ -81,6 +90,37 @@ offer_openclaw_alias_migration() {
   out 'Restart the OpenClaw gateway if it does not pick up the changed default automatically.'
 }
 
+offer_vm_openclaw_alias_sync_if_drift() {
+  local intended_reference="${OPENCLAW_PROVIDER_NAME:-clawbox}/${OPENCLAW_DEFAULT_MODEL:-local}"
+  local current_reference=''
+
+  [ "${VM_ALIAS_SYNC_HANDLED:-false}" = true ] && return 0
+  [ "${OPENCLAW_DEFAULT_MODEL:-local}" = 'local' ] || return 0
+  if [ -z "${VM_HOST:-}" ]; then
+    warn 'VM alias drift was not checked because VM_HOST is not configured. Continuing with host-only model behavior.'
+    return 0
+  fi
+  if ! current_reference="$(ssh "$VM_HOST" "zsh -lc $(printf '%q' 'openclaw config get agents.defaults.model.primary')" 2>/dev/null)"; then
+    warn 'VM alias drift was not checked because OpenClaw config could not be read over SSH. Continuing with host-only model behavior.'
+    return 0
+  fi
+  [ "$current_reference" = "$intended_reference" ] && return 0
+
+  blank_line
+  out 'The VM OpenClaw config currently uses:'
+  out "$current_reference"
+  blank_line
+  out 'ClawBox is configured to use:'
+  out "$intended_reference"
+  blank_line
+  prompt_yes_no "Update the VM OpenClaw default model to $intended_reference now?" 'n'
+  if is_yes "$REPLY"; then
+    update_vm_openclaw_default_model "$current_reference" "$intended_reference"
+  else
+    out 'OpenClaw may continue using the old alias until VM sync is performed.'
+  fi
+}
+
 main() {
   [ -f "$ENV_FILE" ] || { error 'Missing .env. Run ./clawbox setup first.'; return 1; }
   source_env_file || return $?
@@ -94,6 +134,7 @@ main() {
   out "OpenClaw model alias: ${OPENCLAW_DEFAULT_MODEL:-local}"
   out "OpenClaw model reference: ${OPENCLAW_PROVIDER_NAME:-clawbox}/${OPENCLAW_DEFAULT_MODEL:-local}"
   offer_openclaw_alias_migration || return $?
+  offer_vm_openclaw_alias_sync_if_drift || return $?
   blank_line
   prompt_yes_no 'Switch models?' 'n'
   is_yes "$REPLY" || { out 'Model switch cancelled; host model is unchanged.'; return 0; }

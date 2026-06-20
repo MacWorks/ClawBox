@@ -74,9 +74,26 @@ test_legacy_alias_migration_can_target_vm_default_only() {
   assert_contains 'VM alias sync reports narrow field update' "$output" 'Only agents.defaults.model.primary was updated'
 }
 
+test_local_alias_detects_vm_drift_and_requires_confirmation() {
+  local output
+  output="$({
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    OPENCLAW_PROVIDER_NAME='clawbox'
+    OPENCLAW_DEFAULT_MODEL='local'
+    VM_HOST='tester@vm.example'
+    prompt_yes_no() { REPLY='false'; }
+    ssh() { printf 'clawbox/legacy-model\n'; }
+    offer_vm_openclaw_alias_sync_if_drift
+  } 2>&1)"
+  assert_contains 'local alias drift shows VM primary' "$output" 'clawbox/legacy-model'
+  assert_contains 'local alias drift shows intended primary' "$output" 'clawbox/local'
+  assert_contains 'local alias drift decline preserves VM config' "$output" 'OpenClaw may continue using the old alias'
+}
+
 run_test test_legacy_alias_migration_defaults_to_no
 run_test test_legacy_alias_migration_updates_only_local_env_state
 run_test test_legacy_alias_migration_can_target_vm_default_only
+run_test test_local_alias_detects_vm_drift_and_requires_confirmation
 
 if [ "$FAILURES" -eq 0 ]; then
   printf 'PASS: test suite succeeded\n'
