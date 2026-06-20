@@ -764,6 +764,9 @@ llama_verify_service_health() {
     fi
 
     attempt=$((attempt + 1))
+    if [ $((attempt % 15)) -eq 0 ]; then
+      out "Still waiting for llama-server port ($attempt/120 seconds)..."
+    fi
     sleep 1
   done
 
@@ -776,6 +779,9 @@ llama_verify_service_health() {
       fi
 
       attempt=$((attempt + 1))
+      if [ $((attempt % 15)) -eq 0 ]; then
+        out "Still waiting for llama-server API readiness ($attempt/120 seconds)..."
+      fi
       sleep 1
     done
   fi

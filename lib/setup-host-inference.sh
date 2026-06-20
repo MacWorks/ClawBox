@@ -15,6 +15,7 @@ setup_host_inference_service_phase() {
   else
     if user_has_sudo; then
       warn 'Administrator privileges may be required'
+      step 'Requesting administrator authorization...'
       sudo -v
     fi
 

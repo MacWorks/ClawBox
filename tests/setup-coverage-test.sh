@@ -292,6 +292,24 @@ EOF
   assert_contains 'write_env_from_template still updates the current env file after creating the backup' "$output" 'UPDATED_HOST:HOST_IP="192.168.64.3"'
 }
 
+test_write_env_from_template_is_safe_without_setup_backup_globals() {
+  local output
+
+  output="$({
+    load_setup_functions
+    ENV_FILE="$TEMP_DIR/nounset.env"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    cp "$ENV_EXAMPLE_FILE" "$ENV_FILE"
+    unset ENV_BACKUP_DECISION_MADE ENV_BACKUP_ENABLED
+    MODEL_PATH='/tmp/model.gguf'
+    set -u
+    write_env_from_template
+    printf 'MODEL:%s\n' "$(grep '^MODEL_PATH=' "$ENV_FILE")"
+  } 2>&1)"
+
+  assert_contains 'write_env_from_template succeeds without setup-only backup globals' "$output" 'MODEL:MODEL_PATH="/tmp/model.gguf"'
+}
+
 test_normalize_openclaw_autostart_maps_inputs() {
   load_setup_functions
 
@@ -593,6 +611,7 @@ run_test test_value_needs_setup_distinguishes_placeholders_from_real_values
 run_test test_write_env_from_template_creates_env_from_example_and_preserves_selected_values
 run_test test_write_env_from_template_requires_explicit_backup_opt_in
 run_test test_write_env_from_template_creates_backup_when_explicitly_enabled
+run_test test_write_env_from_template_is_safe_without_setup_backup_globals
 run_test test_normalize_openclaw_autostart_maps_inputs
 run_test test_source_env_file_rejects_invalid_env_syntax
 run_test test_prompt_openclaw_autostart_respects_existing_default_and_reprompts_on_invalid_input

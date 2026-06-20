@@ -46,13 +46,13 @@ write_env_from_template() {
   fi
 
   if [ -f "$ENV_FILE" ]; then
-    if [ "$ENV_BACKUP_DECISION_MADE" != true ]; then
+    if [ "${ENV_BACKUP_DECISION_MADE:-false}" != true ]; then
       blank_line
 
       ENV_BACKUP_DECISION_MADE=true
     fi
 
-    if [ "$ENV_BACKUP_ENABLED" = true ]; then
+    if [ "${ENV_BACKUP_ENABLED:-false}" = true ]; then
       cp "$ENV_FILE" "$BASE_DIR/.env.bak"
     fi
   fi

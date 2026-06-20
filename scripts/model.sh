@@ -4,6 +4,8 @@ set -euo pipefail
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$BASE_DIR/.env"
 ENV_EXAMPLE_FILE="$BASE_DIR/.env.example"
+ENV_BACKUP_DECISION_MADE=false
+ENV_BACKUP_ENABLED=false
 
 source "$BASE_DIR/lib/output.sh"
 source "$BASE_DIR/lib/log.sh"
@@ -49,11 +51,15 @@ main() {
 
   setup_configure_model_selection || return $?
   OPENCLAW_DEFAULT_MODEL="${OPENCLAW_DEFAULT_MODEL:-local}"
-  write_env_from_template
+  write_env_from_template || return $?
   source_env_file || return $?
 
   detect_model_llama_mode || return $?
-  setup_llama_service_for_mode "$REPLY" || return $?
+  if ! setup_llama_service_for_mode "$REPLY"; then
+    error 'The model path was saved, but llama-server did not restart successfully.'
+    out 'Review the llama-server logs, correct the host service, then run ./clawbox model again.'
+    return 1
+  fi
   success "Host llama-server now uses ${MODEL_PATH##*/}."
   out "Selected GGUF: $MODEL_PATH"
   out "Advertised OpenClaw model: ${OPENCLAW_PROVIDER_NAME:-clawbox}/${OPENCLAW_DEFAULT_MODEL:-local}"
