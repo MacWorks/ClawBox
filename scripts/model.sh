@@ -36,15 +36,19 @@ detect_model_llama_mode() {
 offer_openclaw_alias_migration() {
   local provider_name="${OPENCLAW_PROVIDER_NAME:-clawbox}"
   local model_alias="${OPENCLAW_DEFAULT_MODEL:-local}"
+  local old_reference="$provider_name/$model_alias"
+  local new_reference="$provider_name/local"
+  local remote_command=''
+  local actual_reference=''
 
   [ "$model_alias" != 'local' ] || return 0
 
   blank_line
   out 'OpenClaw is using a model-specific alias:'
-  out "$provider_name/$model_alias"
+  out "$old_reference"
   blank_line
   out 'Recommended stable alias:'
-  out "$provider_name/local"
+  out "$new_reference"
   blank_line
   prompt_yes_no 'Migrate ClawBox to the stable OpenClaw alias now?' 'n'
   is_yes "$REPLY" || return 0
@@ -52,8 +56,29 @@ offer_openclaw_alias_migration() {
   OPENCLAW_DEFAULT_MODEL='local'
   write_env_from_template || return $?
   source_env_file || return $?
-  success "OpenClaw alias migrated to ${OPENCLAW_PROVIDER_NAME:-clawbox}/local."
-  out 'VM OpenClaw config is unchanged. Re-run setup and explicitly confirm config sync only when you want the VM config updated.'
+  success "ClawBox .env now uses $new_reference."
+  out 'The VM OpenClaw config still points to the old alias until explicitly synced.'
+  blank_line
+  prompt_yes_no "Update the VM OpenClaw default model to $new_reference now?" 'n'
+  if ! is_yes "$REPLY"; then
+    out 'OpenClaw may continue using the old alias until its VM config is synced.'
+    outf "Inspect it later with: ssh %s 'zsh -lc \"openclaw config get agents.defaults.model.primary\"'" "${VM_HOST:-<vm-user>@<vm-ip>}"
+    return 0
+  fi
+
+  remote_command="openclaw config set agents.defaults.model.primary $(printf '%q' "$new_reference")"
+  if ! ssh "$VM_HOST" "zsh -lc $(printf '%q' "$remote_command")"; then
+    error 'The VM OpenClaw default model was not updated.'
+    return 1
+  fi
+  actual_reference="$(ssh "$VM_HOST" "zsh -lc $(printf '%q' 'openclaw config get agents.defaults.model.primary')")" || return 1
+  if [ "$actual_reference" != "$new_reference" ]; then
+    error "VM OpenClaw default model verification failed; expected $new_reference, got $actual_reference."
+    return 1
+  fi
+  success "VM OpenClaw default model changed from $old_reference to $new_reference."
+  out 'Only agents.defaults.model.primary was updated; onboarding and custom settings were preserved.'
+  out 'Restart the OpenClaw gateway if it does not pick up the changed default automatically.'
 }
 
 main() {

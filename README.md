@@ -162,7 +162,9 @@ provisioning and OpenClaw configuration unchanged.
 
 For existing filename-derived aliases, `./clawbox model` offers a separate
 default-no migration to `clawbox/local`. That migration changes only `.env`;
-the VM config remains unchanged until a later explicit setup config sync.
+it then separately offers a targeted VM update for
+`agents.defaults.model.primary`. Full setup config sync remains separate and
+may replace broader VM configuration only after confirmation.
 
 Host checks:
 

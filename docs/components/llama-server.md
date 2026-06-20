@@ -10,6 +10,9 @@ the host service.
 
 Existing model-specific aliases remain unchanged until the user explicitly
 accepts the separate default-no migration offered by `./clawbox model`.
+That migration can separately update only the VM
+`agents.defaults.model.primary` field through `openclaw config set`; it does
+not replace the VM OpenClaw configuration file.
 
 ## Purpose
 
