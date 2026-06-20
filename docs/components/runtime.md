@@ -69,6 +69,11 @@ If `launchctl bootstrap` fails, setup now surfaces the exact bootstrap command a
 
 OpenClaw runtime logs are written under the VM runtime checkout at `VM_RUNTIME_PATH/logs/runtime/openclaw.out.log` and `VM_RUNTIME_PATH/logs/runtime/openclaw.err.log`.
 
+When `./clawbox model` explicitly syncs the VM default-model alias and the user
+chooses to restart the VM gateway, ClawBox waits for a live gateway before
+reporting success. A failed verification prints launchd, process, and log
+diagnostics without changing broader VM configuration.
+
 The VM's noninteractive SSH environment may not include Homebrew or Node in
 `PATH`. ClawBox still resolves an absolute `openclaw` binary path for launchd,
 while completion guidance uses `zsh -lc` so the VM user's `.zprofile` supplies
