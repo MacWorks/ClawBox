@@ -156,6 +156,11 @@ runtime launchd setup.
 
 ## Verification
 
+For model/build-specific `llama-server` flags, set `LLAMA_EXTRA_ARGS` in
+`.env`, for example `LLAMA_EXTRA_ARGS="-ngl 99 --jinja -fa on"`. This supports
+simple whitespace-separated arguments only; quoted values or embedded spaces
+are not supported.
+
 To switch only the host GGUF model after setup, run `./clawbox model`. It
 updates `MODEL_PATH`, restarts the managed host `llama-server`, and leaves VM
 provisioning and OpenClaw configuration unchanged.

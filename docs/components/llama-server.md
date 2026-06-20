@@ -34,6 +34,9 @@ Relevant values:
 - `LLAMA_HOST`
 - `LLAMA_PORT`
 - `LLAMA_CTX`
+- `LLAMA_EXTRA_ARGS` (optional simple whitespace-separated flags appended after
+  ClawBox's required arguments; quoting, embedded spaces, and shell expansion
+  inside this value are not supported)
 - `LLAMA_BASE_URL`
 
 New setups default `LLAMA_PORT` to `11434`. Existing `.env` values are kept as-is.

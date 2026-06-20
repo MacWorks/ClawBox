@@ -73,6 +73,7 @@ write_env_from_template() {
   replace_template_value "$temp_file" "LLAMA_HOST" "${LLAMA_HOST:-}"
   replace_template_value "$temp_file" "LLAMA_PORT" "${LLAMA_PORT:-}"
   replace_template_value "$temp_file" "LLAMA_CTX" "${LLAMA_CTX:-}"
+  replace_template_value "$temp_file" "LLAMA_EXTRA_ARGS" "${LLAMA_EXTRA_ARGS:-}"
   replace_template_value "$temp_file" "LLAMA_BASE_URL" "${LLAMA_BASE_URL:-}"
   replace_template_value "$temp_file" "LLAMA_EXTERNAL" "${LLAMA_EXTERNAL:-}"
   replace_template_value "$temp_file" "FIREWALL_SHARED_SUBNET" "${FIREWALL_SHARED_SUBNET:-}"

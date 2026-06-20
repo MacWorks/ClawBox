@@ -45,8 +45,14 @@ fi
 # Start Server
 ########################################
 
+LLAMA_EXTRA_ARGS_ARRAY=()
+if [ -n "${LLAMA_EXTRA_ARGS:-}" ]; then
+  read -r -a LLAMA_EXTRA_ARGS_ARRAY <<< "$LLAMA_EXTRA_ARGS"
+fi
+
 exec "$LLAMA_BIN" \
   -m "$MODEL_PATH" \
   --host "$LLAMA_HOST" \
   --port "$LLAMA_PORT" \
-  --ctx-size "$LLAMA_CTX"
+  --ctx-size "$LLAMA_CTX" \
+  "${LLAMA_EXTRA_ARGS_ARRAY[@]}"
