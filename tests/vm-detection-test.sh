@@ -86,6 +86,8 @@ test_vm_detection_permission_block_graceful_exit_flow() {
 
     queue_prompt_answers '1'
     FDA_OPEN_ATTEMPTS=0
+    HOME="$TEMP_DIR/permission-block-home"
+    mkdir -p "$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 
     uname() {
       printf 'arm64\n'
@@ -142,6 +144,8 @@ test_vm_detection_permission_block_manual_fallback_flow() {
     install_prompt_stubs
 
     queue_prompt_answers '2' 'Manual VM'
+    HOME="$TEMP_DIR/permission-block-manual-home"
+    mkdir -p "$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 
     uname() {
       printf 'arm64\n'
@@ -192,6 +196,8 @@ test_manual_vm_configuration_uses_running_vm_repair_flow() {
     install_prompt_stubs
 
     queue_prompt_answers '2' 'Shared VM' 'n'
+    HOME="$TEMP_DIR/manual-vm-home"
+    mkdir -p "$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 
     uname() {
       printf 'arm64\n'

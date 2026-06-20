@@ -123,8 +123,9 @@ What to expect:
 - the script copies `vm-provision.sh` to `VM_RUNTIME_PATH` when needed
 - if OpenClaw is not installed, the script prints VM-local provisioning
   instructions and prompts `Provisioning completed inside the VM? [Y/n]:`
-- after you confirm provisioning completed, setup refreshes VM runtime state and
-  continues into launchd/runtime service setup
+- after you confirm provisioning completed, setup refreshes VM runtime state,
+  offers to run the interactive OpenClaw onboarding flow, and then continues
+  into launchd/runtime service setup
 
 The default `llama-server` port for new setups is `11434`. Existing `.env` values are preserved.
 
@@ -148,8 +149,10 @@ Provisioning is one-time and safe to repeat. It installs Homebrew when needed, e
 ### Step 6: Continue host setup
 
 Return to the host terminal running `./clawbox setup` and answer yes when it
-asks whether provisioning completed inside the VM. Setup then continues with
-OpenClaw config sync and VM runtime launchd setup.
+asks whether provisioning completed inside the VM. Once it confirms OpenClaw is
+available, setup offers to run `openclaw onboard` interactively over SSH. You
+may decline and use the displayed command later. Setup then continues with VM
+runtime launchd setup.
 
 ## Verification
 

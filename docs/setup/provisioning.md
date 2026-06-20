@@ -58,8 +58,17 @@ Typical flow:
    - setup prompts `Provisioning completed inside the VM? [Y/n]:`
 5. The user runs `./vm-provision.sh` inside the VM.
 6. If the user confirms provisioning completed, host setup refreshes OpenClaw
-   runtime state and continues into runtime service setup.
-7. If the user declines, setup exits gracefully and prints the resume command:
+   runtime state. After OpenClaw is detected, setup offers to run the
+   interactive onboarding command over SSH:
+
+   ```bash
+   ssh -t vm-user@vm-ip 'zsh -lc "openclaw onboard"'
+   ```
+
+   Onboarding runs only after the user confirms. If declined, setup prints the
+   exact command using the configured VM SSH target and continues.
+7. Setup continues into runtime service setup.
+8. If the user declines provisioning completion, setup exits gracefully and prints the resume command:
    `./clawbox setup`.
 
 Provisioning remains a distinct phase separate from runtime execution.

@@ -30,6 +30,40 @@ ensure_vm_provision_script() {
 
 }
 
+openclaw_onboarding_command() {
+  require_vm_host || return 1
+
+  printf '%s\n' "ssh -t $VM_HOST 'zsh -lc \"openclaw onboard\"'"
+}
+
+run_openclaw_onboarding() {
+  require_vm_host || return 1
+
+  ssh -t "$VM_HOST" 'zsh -lc "openclaw onboard"'
+}
+
+offer_openclaw_onboarding() {
+  local onboarding_command=''
+
+  onboarding_command="$(openclaw_onboarding_command)" || return 1
+
+  section 'OpenClaw Onboarding'
+  out 'OpenClaw onboarding has not yet been completed.'
+  blank_line
+
+  prompt_yes_no 'Run onboarding now?' 'y'
+  if is_yes "$REPLY"; then
+    run_openclaw_onboarding || {
+      error 'OpenClaw onboarding did not complete.'
+      return 1
+    }
+    success 'OpenClaw onboarding completed.'
+  else
+    out 'Run onboarding later with:'
+    outf '  %s' "$onboarding_command"
+  fi
+}
+
 ensure_openclaw_provisioned() {
   if [ "$NEEDS_PROVISIONING" = true ]; then
     section "VM Provisioning"
@@ -53,6 +87,8 @@ ensure_openclaw_provisioned() {
       out '  ./clawbox setup'
       return "$LLAMA_EXIT_GRACEFUL"
     fi
+
+    offer_openclaw_onboarding || return $?
   fi
 
   return 0
