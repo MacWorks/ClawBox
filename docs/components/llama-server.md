@@ -8,6 +8,9 @@ artifacts or replace OpenClaw configuration. New ClawBox setups advertise the
 stable OpenClaw model alias `clawbox/local`; the actual GGUF remains selected by
 the host service.
 
+Existing model-specific aliases remain unchanged until the user explicitly
+accepts the separate default-no migration offered by `./clawbox model`.
+
 ## Purpose
 
 It provides the OpenAI-compatible HTTP endpoint that the VM-side OpenClaw process uses for model inference.

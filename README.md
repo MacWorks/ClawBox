@@ -160,6 +160,10 @@ To switch only the host GGUF model after setup, run `./clawbox model`. It
 updates `MODEL_PATH`, restarts the managed host `llama-server`, and leaves VM
 provisioning and OpenClaw configuration unchanged.
 
+For existing filename-derived aliases, `./clawbox model` offers a separate
+default-no migration to `clawbox/local`. That migration changes only `.env`;
+the VM config remains unchanged until a later explicit setup config sync.
+
 Host checks:
 
 ```bash

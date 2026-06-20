@@ -15,6 +15,7 @@ bash tests/lib-tests.sh
 bash tests/output-normalization-test.sh
 bash tests/output-spacing-test.sh
 bash tests/generate-openclaw-config-test.sh
+bash tests/model-command-test.sh
 bash tests/vm-provision-test.sh
 bash tests/repo-hygiene-test.sh
 bash tests/setup-startup-smoke-test.sh

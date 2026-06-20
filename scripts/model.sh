@@ -33,6 +33,29 @@ detect_model_llama_mode() {
   fi
 }
 
+offer_openclaw_alias_migration() {
+  local provider_name="${OPENCLAW_PROVIDER_NAME:-clawbox}"
+  local model_alias="${OPENCLAW_DEFAULT_MODEL:-local}"
+
+  [ "$model_alias" != 'local' ] || return 0
+
+  blank_line
+  out 'OpenClaw is using a model-specific alias:'
+  out "$provider_name/$model_alias"
+  blank_line
+  out 'Recommended stable alias:'
+  out "$provider_name/local"
+  blank_line
+  prompt_yes_no 'Migrate ClawBox to the stable OpenClaw alias now?' 'n'
+  is_yes "$REPLY" || return 0
+
+  OPENCLAW_DEFAULT_MODEL='local'
+  write_env_from_template || return $?
+  source_env_file || return $?
+  success "OpenClaw alias migrated to ${OPENCLAW_PROVIDER_NAME:-clawbox}/local."
+  out 'VM OpenClaw config is unchanged. Re-run setup and explicitly confirm config sync only when you want the VM config updated.'
+}
+
 main() {
   [ -f "$ENV_FILE" ] || { error 'Missing .env. Run ./clawbox setup first.'; return 1; }
   source_env_file || return $?
@@ -45,9 +68,10 @@ main() {
   out "OpenClaw provider: ${OPENCLAW_PROVIDER_NAME:-clawbox}"
   out "OpenClaw model alias: ${OPENCLAW_DEFAULT_MODEL:-local}"
   out "OpenClaw model reference: ${OPENCLAW_PROVIDER_NAME:-clawbox}/${OPENCLAW_DEFAULT_MODEL:-local}"
+  offer_openclaw_alias_migration || return $?
   blank_line
   prompt_yes_no 'Switch models?' 'n'
-  is_yes "$REPLY" || { out 'Model switch cancelled.'; return 0; }
+  is_yes "$REPLY" || { out 'Model switch cancelled; host model is unchanged.'; return 0; }
 
   setup_configure_model_selection || return $?
   OPENCLAW_DEFAULT_MODEL="${OPENCLAW_DEFAULT_MODEL:-local}"
@@ -68,4 +92,6 @@ main() {
   out 'Check status with: ./clawbox status'
 }
 
-main "$@"
+if [ "${CLAWBOX_MODEL_LIB_ONLY:-false}" != true ]; then
+  main "$@"
+fi
