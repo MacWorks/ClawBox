@@ -13,6 +13,7 @@ Usage:
 Commands:
   setup       Run interactive setup
   status      Show system status
+  model       Switch the host llama-server model
   help        Show this help message
 
 Options:
@@ -21,6 +22,7 @@ Options:
 Examples:
   ./clawbox setup
   ./clawbox status
+  ./clawbox model
 EOF
 }
 
@@ -35,6 +37,9 @@ case "$cmd" in
     ;;
   status)
     exec "$BASE_DIR/scripts/status.sh" "$@"
+    ;;
+  model)
+    exec "$BASE_DIR/scripts/model.sh" "$@"
     ;;
   help|-h|--help)
     show_help

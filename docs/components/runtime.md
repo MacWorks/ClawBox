@@ -31,6 +31,10 @@ That comparison deliberately ignores:
 
 Those exclusions matter because OpenClaw mutates runtime-managed fields after startup. Without normalization, the same effective config would look different on every run.
 
+When a meaningful difference remains, setup requires explicit confirmation
+before replacing the whole VM config. That replacement can remove user-managed
+settings and restart a running gateway.
+
 ## Runtime states
 
 `./clawbox setup` distinguishes between three VM states:

@@ -845,7 +845,7 @@ else
   pass "setup.sh avoids contradictory OpenClaw bootstrap and success messaging"
 fi
 
-if grep -F 'Overwrite?' "$RUN2_OUTPUT" >/dev/null 2>&1; then
+if grep -F 'Continue?' "$RUN2_OUTPUT" >/dev/null 2>&1; then
   fail "overwrite prompt appears when configs match"
 else
   pass "overwrite prompt does not appear when configs match"

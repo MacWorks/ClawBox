@@ -4,6 +4,11 @@ This document describes the host side of ClawBox.
 
 ## What `./clawbox setup` does
 
+After setup, use `./clawbox model` to switch the host GGUF without redeploying
+VM artifacts or replacing OpenClaw configuration. New setups normally advertise
+the stable `clawbox/local` model reference to OpenClaw, so a GGUF change does
+not require OpenClaw re-onboarding.
+
 `./clawbox setup` is the main host entry point. It does the following:
 
 - bootstraps `.env` values interactively when required

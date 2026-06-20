@@ -7,9 +7,20 @@ sync_openclaw_config() {
     if configs_match; then
       :
     else
-      warn "Config differs from existing ~/.openclaw/openclaw.json."
-      warn "Overwriting config may restart OpenClaw."
-      prompt_yes_no 'Overwrite?' 'n'
+      warn 'WARNING'
+      blank_line
+      warn 'This operation will replace the VM OpenClaw config:'
+      warn '~/.openclaw/openclaw.json'
+      blank_line
+      warn 'Replacing this file may remove:'
+      warn '- provider configuration'
+      warn '- model configuration'
+      warn '- onboarding state'
+      warn '- custom OpenClaw settings'
+      if command -v openclaw_runtime_is_active >/dev/null 2>&1 && openclaw_runtime_is_active; then
+        warn "OpenClaw appears to be running; applying this change can restart the gateway."
+      fi
+      prompt_yes_no 'Continue?' 'n'
       OVERWRITE_CONFIG="$REPLY"
 
       if is_yes "$OVERWRITE_CONFIG"; then

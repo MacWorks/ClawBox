@@ -156,6 +156,10 @@ runtime launchd setup.
 
 ## Verification
 
+To switch only the host GGUF model after setup, run `./clawbox model`. It
+updates `MODEL_PATH`, restarts the managed host `llama-server`, and leaves VM
+provisioning and OpenClaw configuration unchanged.
+
 Host checks:
 
 ```bash

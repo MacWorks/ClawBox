@@ -180,6 +180,17 @@ test_generate_openclaw_config_supports_custom_provider_name() {
   assert_equals 'generator writes the configured model id under the custom provider key' "$REPLY" 'sample-model'
 }
 
+test_generate_openclaw_config_supports_stable_local_alias() {
+  local fixture_root
+
+  setup_generator_fixture
+  fixture_root="$REPLY"
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '20000' 'clawbox' 'local' 'local'
+  run_generator "$fixture_root"
+  json_query "$fixture_root" 'agents.defaults.model.primary'
+  assert_equals 'generator advertises the stable default model alias' "$REPLY" 'clawbox/local'
+}
+
 printf 'Running generate-openclaw-config tests\n'
 
 run_test test_generate_openclaw_config_writes_expected_config
@@ -188,6 +199,7 @@ run_test test_generate_openclaw_config_enforces_minimum_context_window
 run_test test_generate_openclaw_config_rejects_non_numeric_context_window
 run_test test_generate_openclaw_config_requires_llama_base_url
 run_test test_generate_openclaw_config_supports_custom_provider_name
+run_test test_generate_openclaw_config_supports_stable_local_alias
 
 if [ "$FAILURES" -eq 0 ]; then
   printf 'PASS: test suite succeeded\n'

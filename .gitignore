@@ -41,3 +41,6 @@
 !/logs/tests/.gitkeep
 /logs/vm/*
 !/logs/vm/.gitkeep
+
+# macOS Finder metadata
+.DS_Store

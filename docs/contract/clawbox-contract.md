@@ -152,6 +152,10 @@ Scripts MUST NOT silently continue after critical failures.
 
 Host configuration originates from .env.
 
+For new setups, the OpenClaw-facing model alias is stable (`clawbox/local` by
+default). Changing the host GGUF through `./clawbox model` MUST remain a
+host-only operation and MUST NOT replace VM OpenClaw configuration.
+
 Host configuration MUST NOT be consumed directly by VM runtime behavior.
 
 VM runtime MUST rely on transferred artifacts and runtime configuration.

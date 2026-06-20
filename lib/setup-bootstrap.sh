@@ -235,7 +235,7 @@ ensure_env_bootstrap() {
   section "OpenClaw Configuration"
   configured_or_default 'OPENCLAW_PROVIDER_NAME' "${OPENCLAW_PROVIDER_NAME:-}" 'clawbox'
   openclaw_provider_name_value="$REPLY"
-  derive_openclaw_model_id "$selected_model_name"
+  configured_or_default 'OPENCLAW_DEFAULT_MODEL' "${OPENCLAW_DEFAULT_MODEL:-}" 'local'
   openclaw_default_model_value="$REPLY"
   prompt_openclaw_autostart "${OPENCLAW_AUTOSTART:-}"
   openclaw_autostart_value="$REPLY"
