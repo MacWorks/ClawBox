@@ -60,7 +60,7 @@ test_legacy_alias_migration_can_target_vm_default_only() {
     prompt_yes_no() { prompt_count=$((prompt_count + 1)); printf '%s\n' "$1"; REPLY='true'; }
     write_env_from_template() { :; }
     source_env_file() { :; }
-    openclaw_runtime_is_active() { return 0; }
+    openclaw_runtime_has_launchd_gateway() { return 0; }
     ssh() {
       printf 'SSH:%s\n' "$*" >&2
       if [[ "$*" == *get* ]]; then
@@ -106,7 +106,7 @@ test_vm_openclaw_restart_requires_runtime_verification() {
     VM_RUNTIME_PATH='/Users/jimmy/ClawBox'
     prompt_yes_no() { REPLY='true'; }
     ssh() { return 0; }
-    openclaw_runtime_is_active() { return 0; }
+    openclaw_runtime_has_launchd_gateway() { return 0; }
     offer_vm_openclaw_gateway_restart
   } 2>&1)"
   assert_contains 'verified VM restart reports success' "$healthy_output" 'VM OpenClaw gateway restarted and is running.'
@@ -118,7 +118,7 @@ test_vm_openclaw_restart_requires_runtime_verification() {
     prompt_yes_no() { REPLY='true'; }
     ssh() { return 0; }
     sleep() { :; }
-    openclaw_runtime_is_active() { return 1; }
+    openclaw_runtime_has_launchd_gateway() { return 1; }
     offer_vm_openclaw_gateway_restart
   } 2>&1)"
   assert_contains 'unverified VM restart warns clearly' "$unhealthy_output" 'did not become healthy after restart'

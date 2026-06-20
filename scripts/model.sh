@@ -112,13 +112,23 @@ wait_for_vm_openclaw_gateway() {
   local attempt=1
 
   while [ "$attempt" -le 30 ]; do
-    if openclaw_runtime_is_active; then
+    if openclaw_runtime_has_launchd_gateway; then
       return 0
     fi
     attempt=$((attempt + 1))
     sleep 1
   done
   return 1
+}
+
+warn_vm_openclaw_external_owner() {
+  warn 'An OpenClaw gateway outside the ClawBox launchd service is already running.'
+  out 'ClawBox will not stop that gateway automatically from this model command.'
+  out 'To let ClawBox take over the gateway port, run on the VM:'
+  out '  openclaw gateway stop'
+  out '  launchctl bootout gui/$(id -u)/ai.openclaw.gateway'
+  out 'Then restart the ClawBox service with:'
+  print_vm_openclaw_restart_command
 }
 
 offer_vm_openclaw_gateway_restart() {
@@ -132,13 +142,7 @@ offer_vm_openclaw_gateway_restart() {
   fi
 
   if openclaw_runtime_has_manual_process; then
-    warn 'An OpenClaw gateway outside the ClawBox launchd service is already running.'
-    out 'ClawBox will not stop that gateway automatically from this model command.'
-    out 'To let ClawBox take over the gateway port, run on the VM:'
-    out '  openclaw gateway stop'
-    out '  launchctl bootout gui/$(id -u)/ai.openclaw.gateway'
-    out 'Then restart the ClawBox service with:'
-    print_vm_openclaw_restart_command
+    warn_vm_openclaw_external_owner
     print_vm_openclaw_restart_diagnostics
     return 0
   fi
@@ -150,6 +154,9 @@ offer_vm_openclaw_gateway_restart() {
       success 'VM OpenClaw gateway restarted and is running.'
     else
       warn 'VM OpenClaw gateway did not become healthy after restart.'
+      if openclaw_runtime_has_manual_process; then
+        warn_vm_openclaw_external_owner
+      fi
       print_vm_openclaw_restart_diagnostics
     fi
   else
