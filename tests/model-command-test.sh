@@ -57,7 +57,7 @@ test_legacy_alias_migration_can_target_vm_default_only() {
     OPENCLAW_DEFAULT_MODEL='legacy-model'
     VM_HOST='tester@vm.example'
     prompt_count=0
-    prompt_yes_no() { prompt_count=$((prompt_count + 1)); REPLY='true'; }
+    prompt_yes_no() { prompt_count=$((prompt_count + 1)); printf '%s\n' "$1"; REPLY='true'; }
     write_env_from_template() { :; }
     source_env_file() { :; }
     ssh() {
@@ -72,6 +72,29 @@ test_legacy_alias_migration_can_target_vm_default_only() {
   assert_contains 'VM alias sync validates the targeted config field' "$output" 'SSH:tester@vm.example'
   assert_not_contains 'VM alias sync does not use full config deployment' "$output" 'openclaw.json'
   assert_contains 'VM alias sync reports narrow field update' "$output" 'Only agents.defaults.model.primary was updated'
+  assert_contains 'VM alias sync offers gateway restart' "$output" 'Restart the VM OpenClaw gateway now to apply this change?'
+}
+
+test_vm_openclaw_restart_decline_and_failure_are_recoverable() {
+  local decline_output failure_output
+  decline_output="$({
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    VM_HOST='jimmy@192.168.64.8'
+    prompt_yes_no() { REPLY='false'; }
+    offer_vm_openclaw_gateway_restart
+  } 2>&1)"
+  assert_contains 'VM restart decline prints manual target command' "$decline_output" 'ssh jimmy@192.168.64.8'
+  assert_contains 'VM restart decline prints launchd kickstart command' "$decline_output" 'com.clawbox.openclaw'
+
+  failure_output="$({
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    VM_HOST='jimmy@192.168.64.8'
+    prompt_yes_no() { REPLY='true'; }
+    ssh() { return 1; }
+    offer_vm_openclaw_gateway_restart
+  } 2>&1)"
+  assert_contains 'VM restart failure prints recovery warning' "$failure_output" 'VM OpenClaw gateway restart failed.'
+  assert_contains 'VM restart failure prints manual command' "$failure_output" 'ssh jimmy@192.168.64.8'
 }
 
 test_local_alias_detects_vm_drift_and_requires_confirmation() {
@@ -94,6 +117,7 @@ run_test test_legacy_alias_migration_defaults_to_no
 run_test test_legacy_alias_migration_updates_only_local_env_state
 run_test test_legacy_alias_migration_can_target_vm_default_only
 run_test test_local_alias_detects_vm_drift_and_requires_confirmation
+run_test test_vm_openclaw_restart_decline_and_failure_are_recoverable
 
 if [ "$FAILURES" -eq 0 ]; then
   printf 'PASS: test suite succeeded\n'

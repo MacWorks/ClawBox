@@ -87,7 +87,35 @@ update_vm_openclaw_default_model() {
   fi
   success "VM OpenClaw default model changed from $old_reference to $new_reference."
   out 'Only agents.defaults.model.primary was updated; onboarding and custom settings were preserved.'
-  out 'Restart the OpenClaw gateway if it does not pick up the changed default automatically.'
+  offer_vm_openclaw_gateway_restart
+}
+
+vm_openclaw_restart_command() {
+  printf '%s\n' 'launchctl kickstart -k gui/$(id -u)/com.clawbox.openclaw'
+}
+
+print_vm_openclaw_restart_command() {
+  outf "  ssh %s 'zsh -lc \"launchctl kickstart -k gui/\$(id -u)/com.clawbox.openclaw\"'" "$VM_HOST"
+}
+
+offer_vm_openclaw_gateway_restart() {
+  local restart_command=''
+
+  prompt_yes_no 'Restart the VM OpenClaw gateway now to apply this change?' 'y'
+  if ! is_yes "$REPLY"; then
+    out 'Restart the VM OpenClaw gateway later with:'
+    print_vm_openclaw_restart_command
+    return 0
+  fi
+
+  restart_command="$(vm_openclaw_restart_command)"
+  if ssh "$VM_HOST" "zsh -lc $(printf '%q' "$restart_command")"; then
+    success 'VM OpenClaw gateway restart requested.'
+  else
+    warn 'VM OpenClaw gateway restart failed.'
+    out 'Restart it manually with:'
+    print_vm_openclaw_restart_command
+  fi
 }
 
 offer_vm_openclaw_alias_sync_if_drift() {
