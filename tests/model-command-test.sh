@@ -60,6 +60,7 @@ test_legacy_alias_migration_can_target_vm_default_only() {
     prompt_yes_no() { prompt_count=$((prompt_count + 1)); printf '%s\n' "$1"; REPLY='true'; }
     write_env_from_template() { :; }
     source_env_file() { :; }
+    openclaw_runtime_is_active() { return 0; }
     ssh() {
       printf 'SSH:%s\n' "$*" >&2
       if [[ "$*" == *get* ]]; then
@@ -97,6 +98,51 @@ test_vm_openclaw_restart_decline_and_failure_are_recoverable() {
   assert_contains 'VM restart failure prints manual command' "$failure_output" 'ssh jimmy@192.168.64.8'
 }
 
+test_vm_openclaw_restart_requires_runtime_verification() {
+  local healthy_output unhealthy_output
+  healthy_output="$({
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    VM_HOST='jimmy@192.168.64.8'
+    VM_RUNTIME_PATH='/Users/jimmy/ClawBox'
+    prompt_yes_no() { REPLY='true'; }
+    ssh() { return 0; }
+    openclaw_runtime_is_active() { return 0; }
+    offer_vm_openclaw_gateway_restart
+  } 2>&1)"
+  assert_contains 'verified VM restart reports success' "$healthy_output" 'VM OpenClaw gateway restarted and is running.'
+
+  unhealthy_output="$({
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    VM_HOST='jimmy@192.168.64.8'
+    VM_RUNTIME_PATH='/Users/jimmy/ClawBox'
+    prompt_yes_no() { REPLY='true'; }
+    ssh() { return 0; }
+    sleep() { :; }
+    openclaw_runtime_is_active() { return 1; }
+    offer_vm_openclaw_gateway_restart
+  } 2>&1)"
+  assert_contains 'unverified VM restart warns clearly' "$unhealthy_output" 'did not become healthy after restart'
+  assert_contains 'unverified VM restart shows diagnostics' "$unhealthy_output" 'openclaw.err.log'
+  assert_not_contains 'unverified VM restart does not report success' "$unhealthy_output" 'restarted and is running'
+}
+
+test_vm_openclaw_restart_warns_for_external_gateway_owner() {
+  local output
+  output="$({
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    VM_HOST='jimmy@192.168.64.8'
+    prompt_yes_no() { REPLY='true'; }
+    openclaw_runtime_has_manual_process() { return 0; }
+    ssh() { printf 'SSH_UNEXPECTED\n'; return 1; }
+    offer_vm_openclaw_gateway_restart
+  } 2>&1)"
+  assert_contains 'external gateway owner warning is explicit' "$output" 'outside the ClawBox launchd service'
+  assert_contains 'external gateway owner shows native stop command' "$output" 'openclaw gateway stop'
+  assert_contains 'external gateway owner shows native launchd bootout command' "$output" 'ai.openclaw.gateway'
+  assert_not_contains 'external gateway owner is not restarted automatically' "$output" 'SSH_UNEXPECTED'
+  assert_not_contains 'external gateway owner does not report success' "$output" 'restarted and is running'
+}
+
 test_local_alias_detects_vm_drift_and_requires_confirmation() {
   local output
   output="$({
@@ -118,6 +164,8 @@ run_test test_legacy_alias_migration_updates_only_local_env_state
 run_test test_legacy_alias_migration_can_target_vm_default_only
 run_test test_local_alias_detects_vm_drift_and_requires_confirmation
 run_test test_vm_openclaw_restart_decline_and_failure_are_recoverable
+run_test test_vm_openclaw_restart_requires_runtime_verification
+run_test test_vm_openclaw_restart_warns_for_external_gateway_owner
 
 if [ "$FAILURES" -eq 0 ]; then
   printf 'PASS: test suite succeeded\n'

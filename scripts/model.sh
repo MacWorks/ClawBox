@@ -15,6 +15,8 @@ source "$BASE_DIR/lib/setup-env.sh"
 source "$BASE_DIR/lib/setup-derive.sh"
 source "$BASE_DIR/lib/setup-models.sh"
 source "$BASE_DIR/lib/llama.sh"
+source "$BASE_DIR/lib/ssh.sh"
+source "$BASE_DIR/lib/runtime.sh"
 
 is_yes() {
   case "$1" in
@@ -98,6 +100,27 @@ print_vm_openclaw_restart_command() {
   outf "  ssh %s 'zsh -lc \"launchctl kickstart -k gui/\$(id -u)/com.clawbox.openclaw\"'" "$VM_HOST"
 }
 
+print_vm_openclaw_restart_diagnostics() {
+  out 'Diagnose the VM OpenClaw gateway with:'
+  outf "  ssh %s 'zsh -lc \"launchctl print gui/\$(id -u)/com.clawbox.openclaw\"'" "$VM_HOST"
+  outf "  ssh %s 'zsh -lc \"pgrep -fl openclaw; lsof -nP -iTCP:18789 -sTCP:LISTEN\"'" "$VM_HOST"
+  out "  VM logs: ${VM_RUNTIME_PATH:-<VM_RUNTIME_PATH>}/logs/runtime/openclaw.out.log"
+  out "           ${VM_RUNTIME_PATH:-<VM_RUNTIME_PATH>}/logs/runtime/openclaw.err.log"
+}
+
+wait_for_vm_openclaw_gateway() {
+  local attempt=1
+
+  while [ "$attempt" -le 30 ]; do
+    if openclaw_runtime_is_active; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  return 1
+}
+
 offer_vm_openclaw_gateway_restart() {
   local restart_command=''
 
@@ -108,13 +131,32 @@ offer_vm_openclaw_gateway_restart() {
     return 0
   fi
 
+  if openclaw_runtime_has_manual_process; then
+    warn 'An OpenClaw gateway outside the ClawBox launchd service is already running.'
+    out 'ClawBox will not stop that gateway automatically from this model command.'
+    out 'To let ClawBox take over the gateway port, run on the VM:'
+    out '  openclaw gateway stop'
+    out '  launchctl bootout gui/$(id -u)/ai.openclaw.gateway'
+    out 'Then restart the ClawBox service with:'
+    print_vm_openclaw_restart_command
+    print_vm_openclaw_restart_diagnostics
+    return 0
+  fi
+
   restart_command="$(vm_openclaw_restart_command)"
   if ssh "$VM_HOST" "zsh -lc $(printf '%q' "$restart_command")"; then
-    success 'VM OpenClaw gateway restart requested.'
+    step 'Waiting for VM OpenClaw gateway to restart...'
+    if wait_for_vm_openclaw_gateway; then
+      success 'VM OpenClaw gateway restarted and is running.'
+    else
+      warn 'VM OpenClaw gateway did not become healthy after restart.'
+      print_vm_openclaw_restart_diagnostics
+    fi
   else
     warn 'VM OpenClaw gateway restart failed.'
     out 'Restart it manually with:'
     print_vm_openclaw_restart_command
+    print_vm_openclaw_restart_diagnostics
   fi
 }
 
