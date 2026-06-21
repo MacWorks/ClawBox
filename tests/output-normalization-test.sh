@@ -282,7 +282,7 @@ test_model_selection_requires_explicit_file_path_when_directory_is_empty() {
   assert_contains 'empty model directory is reported' "$output" 'No supported .gguf model files were found in'
   assert_contains 'empty directory does not become a model path' "$output" 'Model path must be an existing .gguf file.'
   assert_contains 'manual file path is accepted as the model path' "$output" "MODEL_PATH=$valid_model_path"
-  assert_contains 'manual file path derives the model id from the file name' "$output" 'OPENCLAW_DEFAULT_MODEL=model-alpha'
+  assert_contains 'manual file path keeps the stable OpenClaw model alias' "$output" 'OPENCLAW_DEFAULT_MODEL=local'
 }
 
 test_model_selection_recovery_rescans_current_directory() {
@@ -2327,9 +2327,42 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
   output="$({
     load_setup_functions
     install_prompt_stubs
-    queue_prompt_answers 'y'
+    # Confirm VM-local provisioning, then explicitly decline the optional
+    # interactive onboarding action. This fixture must never contact a VM.
+    queue_prompt_answers 'y' 'n'
 
     detect_calls=0
+    vm_control_calls=0
+
+    ssh() {
+      vm_control_calls=$((vm_control_calls + 1))
+      printf 'UNEXPECTED_VM_CONTROL:ssh\n'
+      return 1
+    }
+
+    scp() {
+      vm_control_calls=$((vm_control_calls + 1))
+      printf 'UNEXPECTED_VM_CONTROL:scp\n'
+      return 1
+    }
+
+    utmctl() {
+      vm_control_calls=$((vm_control_calls + 1))
+      printf 'UNEXPECTED_VM_CONTROL:utmctl\n'
+      return 1
+    }
+
+    osascript() {
+      vm_control_calls=$((vm_control_calls + 1))
+      printf 'UNEXPECTED_VM_CONTROL:osascript\n'
+      return 1
+    }
+
+    open() {
+      vm_control_calls=$((vm_control_calls + 1))
+      printf 'UNEXPECTED_VM_CONTROL:open\n'
+      return 1
+    }
 
     user_has_sudo() {
       return 1
@@ -2403,6 +2436,7 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
     fi
     printf 'STATUS:%s\n' "$status"
     printf 'DETECT_CALLS:%s\n' "$detect_calls"
+    printf 'VM_CONTROL_CALLS:%s\n' "$vm_control_calls"
   } 2>&1)"
 
   assert_contains 'provisioning fallback flow shows provisioning section' "$output" ' > VM Provisioning'
@@ -2421,6 +2455,8 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
   assert_contains 'provisioning handoff provides the VM login-shell OpenClaw CLI command' "$output" "Get started with: ssh tester@192.168.64.2 'zsh -lc \"openclaw --help\"'"
   assert_contains 'provisioning handoff refreshes runtime state before continuing' "$output" 'DETECT_CALLS:2'
   assert_contains 'provisioning handoff completes without a second setup run' "$output" 'STATUS:0'
+  assert_contains 'provisioning handoff does not invoke VM control commands' "$output" 'VM_CONTROL_CALLS:0'
+  assert_not_contains 'provisioning handoff does not invoke a VM control command' "$output" 'UNEXPECTED_VM_CONTROL:'
   assert_not_contains 'provisioning fallback flow does not offer remote provisioning prompt' "$output" 'Proceed with VM provisioning? [Y/n]:'
   assert_not_contains 'provisioning fallback flow does not execute remote provisioning output' "$output" 'OpenClaw ready: /opt/homebrew/bin/openclaw'
   assert_not_contains 'provisioning handoff does not require a second setup run after confirmation' "$output" 'Then re-run ./clawbox setup on the host.'

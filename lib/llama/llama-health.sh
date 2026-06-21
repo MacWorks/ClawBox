@@ -129,9 +129,9 @@ llama_prompt_for_available_port() {
 
       if [ "$prompt_mode" = 'dedicated' ] && llama_existing_instance_is_current_user_managed; then
         managed_runtime_matches=false
-        if llama_files_match_mode user; then
+        if llama_runtime_env_matches_mode user; then
           managed_runtime_matches=true
-        elif user_has_sudo && llama_files_match_mode system; then
+        elif user_has_sudo && llama_runtime_env_matches_mode system; then
           managed_runtime_matches=true
         fi
         while true; do
@@ -346,6 +346,22 @@ llama_files_match_mode() {
   rm -f "$env_temp" "$plist_temp"
 
   [ "$matches" = true ]
+}
+
+llama_runtime_env_matches_mode() {
+  local mode="$1"
+  local env_dest
+  local env_temp
+
+  env_dest="$(llama_mode_env_dest "$mode")"
+  env_temp="$(mktemp)" || return 1
+  write_llama_runtime_env "$env_temp"
+  if [ -f "$env_dest" ] && cmp -s "$env_temp" "$env_dest"; then
+    rm -f "$env_temp"
+    return 0
+  fi
+  rm -f "$env_temp"
+  return 1
 }
 
 detect_existing_llama_install_mode() {

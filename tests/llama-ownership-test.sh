@@ -244,6 +244,51 @@ test_healthy_remote_api_is_detected_when_local_port_probe_misses() {
   assert_contains 'remote healthy API flow exits cleanly' "$output" 'STATUS:42'
 }
 
+test_dedicated_port_marks_runtime_env_drift_for_restart() {
+  local output=''
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    LLAMA_BIN='/opt/homebrew/bin/llama-server'
+    MODEL_PATH='/tmp/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf'
+    LLAMA_HOST='0.0.0.0'
+    LLAMA_PORT='11435'
+    LLAMA_CTX='32768'
+    LLAMA_EXTRA_ARGS='-ngl 99 --jinja -fa on'
+    CLAWBOX_LLAMA_USER_ENV_DEST="$TEMP_DIR/dedicated-drift-clawbox.env"
+
+    # Model an installed runtime env from before LLAMA_EXTRA_ARGS was added.
+    # The desired rendered env includes the configured extra arguments.
+    printf '%s\n' \
+      'LLAMA_BIN="/opt/homebrew/bin/llama-server"' \
+      'MODEL_PATH="/tmp/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"' \
+      'LLAMA_HOST="0.0.0.0"' \
+      'LLAMA_PORT="11435"' \
+      'LLAMA_CTX="32768"' > "$CLAWBOX_LLAMA_USER_ENV_DEST"
+
+    prompt_with_default() { prompt "$1 [$2]:"; REPLY='11435'; }
+    llama_api_responding() { [ "${2:-}" = '11435' ]; }
+    llama_describe_existing_instance() {
+      LLAMA_EXISTING_INSTANCE_RUNTIME='ClawBox-managed LaunchAgent'
+      LLAMA_EXISTING_INSTANCE_OWNER_LINE='Owner: testuser (ClawBox-managed LaunchAgent)'
+      LLAMA_EXISTING_INSTANCE_NOTE='This instance is managed by ClawBox for the current user.'
+      LLAMA_EXISTING_INSTANCE_LAUNCH_LABEL='com.clawbox.llama'
+      LLAMA_EXISTING_INSTANCE_BINARY_PATH="$LLAMA_BIN"
+      LLAMA_EXISTING_INSTANCE_RECOMMENDED=true
+      LLAMA_EXISTING_INSTANCE_CONTROLLABLE=true
+    }
+    queue_prompt_answers '1'
+    llama_read_choice() { prompt "$1"; take_prompt_answer; REPLY="$PROMPT_ANSWER"; printf '%s\n' "$REPLY"; }
+    llama_prompt_for_available_port '127.0.0.1' '11434' 'dedicated'
+  } 2>&1)"
+
+  assert_contains 'dedicated drift warns about current env mismatch' "$output" 'does not match the current .env runtime settings'
+  assert_contains 'dedicated drift makes reuse explicitly non-applying' "$output" 'without applying .env changes'
+  assert_contains 'dedicated drift recommends restart update' "$output" 'to apply .env changes (recommended)'
+  assert_not_contains 'dedicated drift does not recommend reuse' "$output" '1) Use the existing running llama-server on port 11435 (recommended)'
+}
+
 test_cross_user_option_two_uses_alternate_port_without_stop_attempt() {
   local output=''
 
@@ -336,6 +381,13 @@ test_dedicated_port_reuses_existing_current_user_managed_instance() {
     install_prompt_stubs
 
     LLAMA_BIN='/opt/homebrew/bin/llama-server'
+    MODEL_PATH='/tmp/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf'
+    LLAMA_HOST='0.0.0.0'
+    LLAMA_PORT='11435'
+    LLAMA_CTX='32768'
+    LLAMA_EXTRA_ARGS=''
+    CLAWBOX_LLAMA_USER_ENV_DEST="$TEMP_DIR/dedicated-clean-clawbox.env"
+    write_llama_runtime_env "$CLAWBOX_LLAMA_USER_ENV_DEST"
 
     prompt_calls=0
 
@@ -787,6 +839,7 @@ run_test test_hidden_owner_listener_is_classified_as_cross_user_session
 run_test test_healthy_remote_api_is_detected_when_local_port_probe_misses
 run_test test_cross_user_option_two_uses_alternate_port_without_stop_attempt
 run_test test_dedicated_port_reuses_existing_current_user_managed_instance
+run_test test_dedicated_port_marks_runtime_env_drift_for_restart
 run_test test_dedicated_port_can_restart_existing_current_user_managed_instance
 run_test test_dedicated_port_prompt_defaults_to_next_available_port
 run_test test_dedicated_port_prompt_skips_busy_sequential_ports

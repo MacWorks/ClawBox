@@ -31,10 +31,26 @@ assert_no_matches() {
   fail "$description"
 }
 
+assert_no_worktree_ds_store() {
+  local matches=''
+
+  matches="$(find "$ROOT_DIR" \
+    -path "$ROOT_DIR/.git" -prune -o \
+    -name '.DS_Store' -print)"
+
+  if [ -z "$matches" ]; then
+    pass 'repository working tree has no .DS_Store files'
+    return 0
+  fi
+
+  printf '%s\n' "$matches"
+  fail 'repository working tree has no .DS_Store files'
+}
+
 printf 'Running repository hygiene tests\n'
 
 assert_no_matches 'repository root has no generated .log files' -maxdepth 1 -name '*.log'
-assert_no_matches 'repository has no .DS_Store files' -name '.DS_Store'
+assert_no_worktree_ds_store
 assert_no_matches 'repository has no transient *.XXXXXX.sh shell artifacts' -name '*.XXXXXX.sh'
 assert_no_matches 'tests directory has no setup-reuse-only transient shell artifacts' -path "$ROOT_DIR/tests/setup-reuse-only*.sh"
 assert_no_matches 'logs tree contains only .log artifacts and .gitkeep placeholders' -path "$ROOT_DIR/logs/*" -type f ! -name '.gitkeep' ! -name '*.log'
