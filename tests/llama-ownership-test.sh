@@ -102,6 +102,10 @@ capture_llama_menu_output() {
       return 0
     }
 
+    llama_runtime_env_matches_mode() {
+      [ "$TEST_EXISTING_MODE" = 'user' ]
+    }
+
     llama_read_choice() {
       local prompt_label="$1"
 
@@ -287,6 +291,55 @@ test_dedicated_port_marks_runtime_env_drift_for_restart() {
   assert_contains 'dedicated drift makes reuse explicitly non-applying' "$output" 'without applying .env changes'
   assert_contains 'dedicated drift recommends restart update' "$output" 'to apply .env changes (recommended)'
   assert_not_contains 'dedicated drift does not recommend reuse' "$output" '1) Use the existing running llama-server on port 11435 (recommended)'
+}
+
+test_prestart_current_user_launchagent_marks_runtime_env_drift_for_restart() {
+  local output=''
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    LLAMA_BIN='/opt/homebrew/bin/llama-server'
+    MODEL_PATH='/tmp/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf'
+    LLAMA_HOST='0.0.0.0'
+    LLAMA_PORT='11434'
+    LLAMA_CTX='32768'
+    LLAMA_EXTRA_ARGS='-ngl 99 --jinja -fa on'
+    CLAWBOX_LLAMA_USER_ENV_DEST="$TEMP_DIR/prestart-drift-clawbox.env"
+
+    # The launchd process remains current-user managed, while its installed
+    # runtime env predates the configured extra arguments.
+    printf '%s\n' \
+      'LLAMA_BIN="/opt/homebrew/bin/llama-server"' \
+      'MODEL_PATH="/tmp/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"' \
+      'LLAMA_HOST="0.0.0.0"' \
+      'LLAMA_PORT="11434"' \
+      'LLAMA_CTX="32768"' > "$CLAWBOX_LLAMA_USER_ENV_DEST"
+
+    user_has_sudo() { return 1; }
+    llama_api_responding() { return 0; }
+    llama_describe_existing_instance() {
+      LLAMA_EXISTING_INSTANCE_RUNTIME='current user LaunchAgent'
+      LLAMA_EXISTING_INSTANCE_OWNER_LINE='Owner: testuser (current user LaunchAgent)'
+      LLAMA_EXISTING_INSTANCE_NOTE='This service is managed by launchd for the current user.'
+      LLAMA_EXISTING_INSTANCE_LAUNCH_LABEL='com.clawbox.llama'
+      LLAMA_EXISTING_INSTANCE_BINARY_PATH="$LLAMA_BIN"
+      LLAMA_EXISTING_INSTANCE_RECOMMENDED=true
+      LLAMA_EXISTING_INSTANCE_CONTROLLABLE=true
+    }
+    queue_prompt_answers '1'
+    llama_read_choice() { prompt "$1"; take_prompt_answer; REPLY="$PROMPT_ANSWER"; printf '%s\n' "$REPLY"; }
+
+    handle_prestart_llama_instance_choice '127.0.0.1' '11434'
+    printf 'USE_EXISTING:%s\n' "$LLAMA_USE_EXISTING_INSTANCE"
+  } 2>&1)"
+
+  assert_contains 'prestart drift warns about current env mismatch' "$output" 'does not match the current .env runtime settings'
+  assert_contains 'prestart drift makes reuse explicitly non-applying' "$output" '1) Use the existing running llama-server on port 11434 without applying .env changes'
+  assert_contains 'prestart drift recommends restart update' "$output" '2) Restart the existing llama-server on port 11434 to apply .env changes (recommended)'
+  assert_not_contains 'prestart drift does not recommend reuse' "$output" '1) Use the existing running llama-server on port 11434 (recommended)'
+  assert_contains 'prestart drift can still reuse without applying changes' "$output" 'USE_EXISTING:true'
 }
 
 test_cross_user_option_two_uses_alternate_port_without_stop_attempt() {
@@ -840,6 +893,7 @@ run_test test_healthy_remote_api_is_detected_when_local_port_probe_misses
 run_test test_cross_user_option_two_uses_alternate_port_without_stop_attempt
 run_test test_dedicated_port_reuses_existing_current_user_managed_instance
 run_test test_dedicated_port_marks_runtime_env_drift_for_restart
+run_test test_prestart_current_user_launchagent_marks_runtime_env_drift_for_restart
 run_test test_dedicated_port_can_restart_existing_current_user_managed_instance
 run_test test_dedicated_port_prompt_defaults_to_next_available_port
 run_test test_dedicated_port_prompt_skips_busy_sequential_ports

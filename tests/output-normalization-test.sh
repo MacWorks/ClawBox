@@ -1216,6 +1216,10 @@ test_existing_llama_instance_flow() {
       return 0
     }
 
+    llama_runtime_env_matches_mode() {
+      return 0
+    }
+
     llama_describe_existing_instance() {
       LLAMA_EXISTING_INSTANCE_LAUNCH_LABEL='com.clawbox.llama'
       LLAMA_EXISTING_INSTANCE_BINARY_PATH="$LLAMA_BIN"

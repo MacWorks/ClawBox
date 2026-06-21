@@ -96,6 +96,7 @@ handle_prestart_llama_instance_choice() {
   local managed_label='Stop existing instance and use ClawBox-managed instance'
   local managed_action='replace'
   local managed_instance_reuse_first=false
+  local managed_runtime_matches=true
 
   LLAMA_USE_EXISTING_INSTANCE=false
   LLAMA_EXTERNAL=false
@@ -108,6 +109,13 @@ handle_prestart_llama_instance_choice() {
       managed_label="Restart the existing llama-server on port $llama_port_value"
       managed_action='restart-managed'
       managed_instance_reuse_first=true
+
+      managed_runtime_matches=false
+      if llama_runtime_env_matches_mode user; then
+        managed_runtime_matches=true
+      elif user_has_sudo && llama_runtime_env_matches_mode system; then
+        managed_runtime_matches=true
+      fi
     elif [ "$LLAMA_EXISTING_INSTANCE_RUNTIME" = 'cross-user-session' ] \
       || [ "$LLAMA_EXISTING_INSTANCE_RUNTIME" = 'interactive user session' ] \
       || [ "$LLAMA_EXISTING_INSTANCE_RUNTIME" = 'LaunchAgent for another macOS user' ]; then
@@ -122,7 +130,12 @@ handle_prestart_llama_instance_choice() {
     fi
 
     if [ "$managed_instance_reuse_first" = true ]; then
-      reuse_label="$reuse_label (recommended)"
+      if [ "$managed_runtime_matches" = true ]; then
+        reuse_label="$reuse_label (recommended)"
+      else
+        reuse_label="$reuse_label without applying .env changes"
+        managed_label="$managed_label to apply .env changes (recommended)"
+      fi
     else
       case "$reuse_label" in
         *' (recommended)')
@@ -145,6 +158,10 @@ handle_prestart_llama_instance_choice() {
       llama_print_existing_instance_details "$llama_port_value"
       blank_line
       if [ "$managed_instance_reuse_first" = true ]; then
+        if [ "$managed_runtime_matches" != true ]; then
+          warn 'The running ClawBox service does not match the current .env runtime settings.'
+          out 'Reuse will not apply the current .env changes.'
+        fi
         out "1) $reuse_label"
         out "2) $managed_label"
       else
