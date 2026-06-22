@@ -2558,6 +2558,67 @@ test_runtime_service_existing_menu_wording() {
   assert_contains 'runtime service menu shows option four as skipping management' "$output" '4) Skip runtime service management during setup'
 }
 
+test_host_llama_restart_uses_install_mode_without_hidden_health_wait() {
+  local restart_output reuse_output failure_output
+
+  restart_output="$({
+    load_setup_functions
+    LLAMA_USE_EXISTING_INSTANCE=false
+    LLAMA_SERVICE_CHANGED=false
+    MODEL_PATH='/tmp/model.gguf'
+    LLAMA_PORT='11434'
+    detect_existing_llama_install_mode() { REPLY='user'; return 0; }
+    llama_api_responding() { return 1; }
+    llama_verify_service_health() { printf 'UNEXPECTED_HIDDEN_HEALTH_WAIT\n'; return 1; }
+    setup_user_llama_service() { LLAMA_SERVICE_CHANGED=true; printf 'USER_SERVICE_RESTARTED\n'; return 0; }
+    setup_host_inference_service_phase
+    printf 'STATUS:%s CHANGED:%s\n' "$?" "$LLAMA_SERVICE_CHANGED"
+  } 2>&1)"
+  assert_contains 'restart uses the detected user LaunchAgent mode' "$restart_output" 'USER_SERVICE_RESTARTED'
+  assert_contains 'restart reports the host service changed state after setup succeeds' "$restart_output" 'STATUS:0 CHANGED:true'
+  assert_not_contains 'restart does not enter a hidden health wait before restoring the service' "$restart_output" 'UNEXPECTED_HIDDEN_HEALTH_WAIT'
+
+  reuse_output="$({
+    load_setup_functions
+    LLAMA_USE_EXISTING_INSTANCE=false
+    LLAMA_SERVICE_CHANGED=false
+    MODEL_PATH='/tmp/model.gguf'
+    LLAMA_PORT='11434'
+    detect_existing_llama_install_mode() { REPLY='user'; return 0; }
+    llama_api_responding() { return 0; }
+    prompt_yes_no() { REPLY='false'; }
+    setup_user_llama_service() { printf 'UNEXPECTED_RECONFIGURE\n'; return 0; }
+    setup_host_inference_service_phase
+    printf 'STATUS:%s CHANGED:%s\n' "$?" "$LLAMA_SERVICE_CHANGED"
+  } 2>&1)"
+  assert_not_contains 'healthy existing service remains unchanged when reconfiguration is declined' "$reuse_output" 'UNEXPECTED_RECONFIGURE'
+  assert_contains 'healthy existing service preserves the unchanged host state' "$reuse_output" 'STATUS:0 CHANGED:false'
+
+  failure_output="$({
+    load_setup_functions
+    LLAMA_USE_EXISTING_INSTANCE=false
+    LLAMA_SERVICE_CHANGED=false
+    MODEL_PATH='/tmp/model.gguf'
+    LLAMA_PORT='11434'
+    detect_existing_llama_install_mode() { REPLY='user'; return 0; }
+    llama_api_responding() { return 1; }
+    setup_user_llama_service() { return 1; }
+    llama_show_recent_error_log() { printf 'HOST_LOG_GUIDANCE:%s\n' "$1"; }
+    ensure_vm_connectivity_or_repair() { printf 'UNEXPECTED_VM_FLOW\n'; return 0; }
+    offer_openclaw_restart_after_llama_update() { printf 'UNEXPECTED_OPENCLAW_RECOVERY\n'; return 0; }
+    if run_provisioning_and_deployment; then
+      printf 'STATUS:0\n'
+    else
+      printf 'STATUS:%s\n' "$?"
+    fi
+  } 2>&1)"
+  assert_contains 'failed host restart reports recovery guidance' "$failure_output" 'Host llama-server was not restored.'
+  assert_contains 'failed host restart reports the selected service log' "$failure_output" 'HOST_LOG_GUIDANCE:user'
+  assert_contains 'failed host restart returns failure instead of continuing' "$failure_output" 'STATUS:1'
+  assert_not_contains 'failed host restart does not continue into VM setup' "$failure_output" 'UNEXPECTED_VM_FLOW'
+  assert_not_contains 'failed host restart does not continue into OpenClaw recovery' "$failure_output" 'UNEXPECTED_OPENCLAW_RECOVERY'
+}
+
 test_openclaw_restart_recovery_is_limited_to_failed_post_update_inference() {
   local reused_output success_output unavailable_output ssh_unavailable_output
 
@@ -2717,6 +2778,7 @@ run_test test_provisioning_and_deployment_flow
 run_test test_provisioning_and_deployment_continues_after_vm_local_provisioning
 run_test test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete
 run_test test_runtime_service_existing_menu_wording
+run_test test_host_llama_restart_uses_install_mode_without_hidden_health_wait
 run_test test_openclaw_restart_recovery_is_limited_to_failed_post_update_inference
 run_test test_openclaw_restart_recovery_prompts_only_after_failed_inference
 run_test test_existing_llama_instance_flow
