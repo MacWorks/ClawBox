@@ -72,6 +72,9 @@ ENV_BACKUP_ENABLED=false
 LLAMA_USE_EXISTING_INSTANCE=false
 LLAMA_EXTERNAL=false
 VM_SKIP_DETECTED_UTM_FLOW=false
+# Preserve this dev-only switch before .env is sourced. The recovery helper
+# must not accept a value persisted in .env.
+CLAWBOX_DEV_FORCE_VM_LLAMA_INFERENCE_FAILURE_PROCESS_VALUE="${CLAWBOX_DEV_FORCE_VM_LLAMA_INFERENCE_FAILURE:-false}"
 
 error_exit() {
   error "$1"

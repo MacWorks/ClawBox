@@ -2619,6 +2619,101 @@ test_host_llama_restart_uses_install_mode_without_hidden_health_wait() {
   assert_not_contains 'failed host restart does not continue into OpenClaw recovery' "$failure_output" 'UNEXPECTED_OPENCLAW_RECOVERY'
 }
 
+test_dev_forced_vm_inference_failure_is_limited_to_recovery_probe() {
+  local normal_probe_output persisted_value_output forced_probe_output decline_output restart_output unchanged_output status_source
+
+  normal_probe_output="$({
+    unset CLAWBOX_DEV_FORCE_VM_LLAMA_INFERENCE_FAILURE
+    load_setup_functions
+    LLAMA_BASE_URL='http://192.168.64.1:11434/v1'
+    ssh_check_zsh() { printf 'REAL_VM_PROBE:%s\n' "$1"; return 0; }
+    if vm_llama_inference_available; then
+      printf 'STATUS:0\n'
+    else
+      printf 'STATUS:1\n'
+    fi
+  } 2>&1)"
+  assert_contains 'unset dev override uses the normal VM inference probe' "$normal_probe_output" 'REAL_VM_PROBE:'
+  assert_contains 'unset dev override preserves successful VM inference' "$normal_probe_output" 'STATUS:0'
+
+  persisted_value_output="$({
+    unset CLAWBOX_DEV_FORCE_VM_LLAMA_INFERENCE_FAILURE
+    load_setup_functions
+    # Simulate an unsupported .env assignment after setup captured process env.
+    CLAWBOX_DEV_FORCE_VM_LLAMA_INFERENCE_FAILURE=true
+    LLAMA_BASE_URL='http://192.168.64.1:11434/v1'
+    ssh_check_zsh() { printf 'REAL_VM_PROBE:%s\n' "$1"; return 0; }
+    if vm_llama_inference_available; then
+      printf 'STATUS:0\n'
+    else
+      printf 'STATUS:1\n'
+    fi
+  } 2>&1)"
+  assert_contains 'dev override ignores values introduced after process capture' "$persisted_value_output" 'REAL_VM_PROBE:'
+  assert_contains 'dev override cannot be enabled by a persisted env assignment' "$persisted_value_output" 'STATUS:0'
+
+  forced_probe_output="$({
+    CLAWBOX_DEV_FORCE_VM_LLAMA_INFERENCE_FAILURE=true
+    load_setup_functions
+    LLAMA_BASE_URL='http://192.168.64.1:11434/v1'
+    ssh_check_zsh() { printf 'UNEXPECTED_VM_PROBE\n'; return 0; }
+    if vm_llama_inference_available; then
+      printf 'STATUS:0\n'
+    else
+      printf 'STATUS:1\n'
+    fi
+  } 2>&1)"
+  assert_contains 'dev override forces only the recovery inference result to fail' "$forced_probe_output" 'STATUS:1'
+  assert_not_contains 'dev override does not perform the VM inference request' "$forced_probe_output" 'UNEXPECTED_VM_PROBE'
+
+  decline_output="$({
+    CLAWBOX_DEV_FORCE_VM_LLAMA_INFERENCE_FAILURE=true
+    load_setup_functions
+    LLAMA_SERVICE_CHANGED=true
+    NEEDS_PROVISIONING=false
+    IS_RUNNING=true
+    VM_HOST='tester@vm.example'
+    VM_RUNTIME_PATH='/Users/tester/ClawBox'
+    openclaw_runtime_has_running_gateway_service() { return 0; }
+    ssh_check_zsh() { printf 'UNEXPECTED_VM_PROBE\n'; return 0; }
+    prompt_yes_no() { printf '%s\n' "$1"; REPLY='false'; }
+    restart_clawbox_managed_openclaw_gateway() { printf 'UNEXPECTED_RESTART\n'; return 0; }
+    offer_openclaw_restart_after_llama_update
+  } 2>&1)"
+  assert_contains 'dev override offers the normal default-no recovery prompt' "$decline_output" 'Restart the VM OpenClaw gateway now?'
+  assert_not_contains 'dev override default-no path does not restart OpenClaw' "$decline_output" 'UNEXPECTED_RESTART'
+  assert_not_contains 'dev override recovery decision does not change VM SSH behavior' "$decline_output" 'UNEXPECTED_VM_PROBE'
+
+  restart_output="$({
+    CLAWBOX_DEV_FORCE_VM_LLAMA_INFERENCE_FAILURE=true
+    load_setup_functions
+    LLAMA_SERVICE_CHANGED=true
+    NEEDS_PROVISIONING=false
+    IS_RUNNING=true
+    openclaw_runtime_has_running_gateway_service() { return 0; }
+    prompt_yes_no() { REPLY='true'; }
+    restart_clawbox_managed_openclaw_gateway() { printf 'MANAGED_RESTART_VERIFIED\n'; return 0; }
+    offer_openclaw_restart_after_llama_update
+  } 2>&1)"
+  assert_contains 'dev override yes path uses the managed restart verification path' "$restart_output" 'MANAGED_RESTART_VERIFIED'
+  assert_contains 'dev override yes path reports success only after managed verification' "$restart_output" 'VM OpenClaw gateway restarted and is running.'
+
+  unchanged_output="$({
+    CLAWBOX_DEV_FORCE_VM_LLAMA_INFERENCE_FAILURE=true
+    load_setup_functions
+    LLAMA_SERVICE_CHANGED=false
+    NEEDS_PROVISIONING=false
+    IS_RUNNING=true
+    openclaw_runtime_has_running_gateway_service() { printf 'UNEXPECTED_GATEWAY_CHECK\n'; return 0; }
+    offer_openclaw_restart_after_llama_update
+  } 2>&1)"
+  assert_not_contains 'dev override does not prompt when host llama was reused' "$unchanged_output" 'UNEXPECTED_GATEWAY_CHECK'
+  assert_not_contains 'dev override does not prompt when host llama was reused' "$unchanged_output" 'Restart the VM OpenClaw gateway now?'
+
+  status_source="$(cat "$ROOT_DIR/scripts/status.sh")"
+  assert_not_contains 'dev override does not affect status checks' "$status_source" 'CLAWBOX_DEV_FORCE_VM_LLAMA_INFERENCE_FAILURE'
+}
+
 test_openclaw_restart_recovery_is_limited_to_failed_post_update_inference() {
   local reused_output success_output unavailable_output ssh_unavailable_output
 
@@ -2779,6 +2874,7 @@ run_test test_provisioning_and_deployment_continues_after_vm_local_provisioning
 run_test test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete
 run_test test_runtime_service_existing_menu_wording
 run_test test_host_llama_restart_uses_install_mode_without_hidden_health_wait
+run_test test_dev_forced_vm_inference_failure_is_limited_to_recovery_probe
 run_test test_openclaw_restart_recovery_is_limited_to_failed_post_update_inference
 run_test test_openclaw_restart_recovery_prompts_only_after_failed_inference
 run_test test_existing_llama_instance_flow

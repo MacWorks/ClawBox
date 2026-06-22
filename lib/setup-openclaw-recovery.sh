@@ -4,6 +4,13 @@
 vm_llama_inference_available() {
   local completion_url=''
 
+  # Deliberately process-environment-only, for manually exercising the
+  # recovery prompt. Its value is captured before .env is sourced. Never use
+  # it outside this probe.
+  if [ "${CLAWBOX_DEV_FORCE_VM_LLAMA_INFERENCE_FAILURE_PROCESS_VALUE:-false}" = true ]; then
+    return 1
+  fi
+
   [ -n "${LLAMA_BASE_URL:-}" ] || return 1
   completion_url="${LLAMA_BASE_URL%/v1}/completion"
 
