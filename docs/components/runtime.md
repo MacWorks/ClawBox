@@ -74,6 +74,13 @@ chooses to restart the VM gateway, ClawBox waits for a live gateway before
 reporting success. A failed verification prints launchd, process, and log
 diagnostics without changing broader VM configuration.
 
+After setup actually restarts or updates the managed host `llama-server`, it
+checks whether a verified ClawBox-managed VM gateway can still make a minimal
+inference request to the host. A successful probe makes no VM change. A failed
+probe offers a default-no restart of only that managed gateway; declining leaves
+OpenClaw untouched and prints manual recovery guidance. This path never deploys
+or replaces `openclaw.json`.
+
 The VM's noninteractive SSH environment may not include Homebrew or Node in
 `PATH`. ClawBox still resolves an absolute `openclaw` binary path for launchd,
 while completion guidance uses `zsh -lc` so the VM user's `.zprofile` supplies

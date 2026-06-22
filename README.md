@@ -126,6 +126,10 @@ What to expect:
 - after you confirm provisioning completed, setup refreshes VM runtime state,
   offers to run the interactive OpenClaw onboarding flow, and then continues
   into launchd/runtime service setup
+- after an actual managed `llama-server` restart/update, setup may offer a
+  default-no VM OpenClaw gateway restart only when the running, ClawBox-managed
+  gateway cannot complete a VM-to-host inference probe; this does not rewrite
+  VM OpenClaw configuration
 
 The default `llama-server` port for new setups is `11434`. Existing `.env` values are preserved.
 

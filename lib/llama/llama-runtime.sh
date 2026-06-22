@@ -345,6 +345,7 @@ setup_llama_service_for_mode() {
     rm -f "$env_temp" "$plist_temp"
 
     if [ "$wrapper_matches" = false ] || [ "$env_matches" = false ] || [ "$plist_matches" = false ] || [ "$service_loaded" = false ] || [ "$force_restart" = true ]; then
+      LLAMA_SERVICE_CHANGED=true
       step "Starting llama-server $service_name"
       if [ "$service_loaded" = true ]; then
         llama_maybe_sudo "$mode" launchctl bootout "$(llama_mode_domain "$mode")" "$plist_dest" >/dev/null 2>&1 || true

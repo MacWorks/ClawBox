@@ -9,6 +9,8 @@ setup_host_inference_service_phase() {
   local model_name
   local status=0
 
+  LLAMA_SERVICE_CHANGED=false
+
   section "Host Inference Service"
   if [ "$LLAMA_USE_EXISTING_INSTANCE" = true ]; then
     out "Using existing llama-server at $LLAMA_BASE_URL"

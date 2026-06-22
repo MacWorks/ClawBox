@@ -2558,6 +2558,119 @@ test_runtime_service_existing_menu_wording() {
   assert_contains 'runtime service menu shows option four as skipping management' "$output" '4) Skip runtime service management during setup'
 }
 
+test_openclaw_restart_recovery_is_limited_to_failed_post_update_inference() {
+  local reused_output success_output unavailable_output ssh_unavailable_output
+
+  reused_output="$({
+    load_setup_functions
+    LLAMA_SERVICE_CHANGED=false
+    NEEDS_PROVISIONING=false
+    IS_RUNNING=true
+    openclaw_runtime_has_running_gateway_service() { printf 'UNEXPECTED_GATEWAY_CHECK\n'; return 0; }
+    offer_openclaw_restart_after_llama_update
+  } 2>&1)"
+  assert_not_contains 'reused llama does not check or prompt for gateway restart' "$reused_output" 'UNEXPECTED_GATEWAY_CHECK'
+  assert_not_contains 'reused llama does not prompt for gateway restart' "$reused_output" 'Restart the VM OpenClaw gateway now?'
+
+  success_output="$({
+    load_setup_functions
+    LLAMA_SERVICE_CHANGED=true
+    NEEDS_PROVISIONING=false
+    IS_RUNNING=true
+    openclaw_runtime_has_running_gateway_service() { return 0; }
+    vm_llama_inference_available() { return 0; }
+    prompt_yes_no() { printf 'UNEXPECTED_PROMPT\n'; REPLY='false'; }
+    offer_openclaw_restart_after_llama_update
+  } 2>&1)"
+  assert_not_contains 'healthy VM inference does not prompt for gateway restart' "$success_output" 'UNEXPECTED_PROMPT'
+
+  unavailable_output="$({
+    load_setup_functions
+    LLAMA_SERVICE_CHANGED=true
+    NEEDS_PROVISIONING=true
+    IS_RUNNING=false
+    openclaw_runtime_has_running_gateway_service() { printf 'UNEXPECTED_GATEWAY_CHECK\n'; return 0; }
+    offer_openclaw_restart_after_llama_update
+  } 2>&1)"
+  assert_not_contains 'unprovisioned OpenClaw does not prompt for gateway restart' "$unavailable_output" 'UNEXPECTED_GATEWAY_CHECK'
+
+  ssh_unavailable_output="$({
+    load_setup_functions
+    LLAMA_SERVICE_CHANGED=true
+    NEEDS_PROVISIONING=false
+    IS_RUNNING=true
+    openclaw_runtime_has_running_gateway_service() { printf 'VM_SSH_UNAVAILABLE\n'; return 1; }
+    prompt_yes_no() { printf 'UNEXPECTED_PROMPT\n'; REPLY='false'; }
+    offer_openclaw_restart_after_llama_update
+  } 2>&1)"
+  assert_contains 'unavailable VM SSH is detected before the recovery prompt' "$ssh_unavailable_output" 'VM_SSH_UNAVAILABLE'
+  assert_not_contains 'unavailable VM SSH does not prompt for gateway restart' "$ssh_unavailable_output" 'UNEXPECTED_PROMPT'
+}
+
+test_openclaw_restart_recovery_prompts_only_after_failed_inference() {
+  local decline_output success_output failure_output restart_helper_output
+
+  decline_output="$({
+    load_setup_functions
+    LLAMA_SERVICE_CHANGED=true
+    NEEDS_PROVISIONING=false
+    IS_RUNNING=true
+    VM_HOST='tester@vm.example'
+    VM_RUNTIME_PATH='/Users/tester/ClawBox'
+    openclaw_runtime_has_running_gateway_service() { return 0; }
+    vm_llama_inference_available() { return 1; }
+    prompt_yes_no() { printf '%s\n' "$1"; REPLY='false'; }
+    restart_clawbox_managed_openclaw_gateway() { printf 'UNEXPECTED_RESTART\n'; return 0; }
+    offer_openclaw_restart_after_llama_update
+  } 2>&1)"
+  assert_contains 'failed post-update inference warns before recovery prompt' "$decline_output" 'Host llama-server was restarted, but VM → host inference is failing.'
+  assert_contains 'failed post-update inference offers default-no restart prompt' "$decline_output" 'Restart the VM OpenClaw gateway now?'
+  assert_contains 'declined recovery prints manual launchd guidance' "$decline_output" 'com.clawbox.openclaw'
+  assert_not_contains 'declined recovery does not restart OpenClaw' "$decline_output" 'UNEXPECTED_RESTART'
+
+  success_output="$({
+    load_setup_functions
+    LLAMA_SERVICE_CHANGED=true
+    NEEDS_PROVISIONING=false
+    IS_RUNNING=true
+    openclaw_runtime_has_running_gateway_service() { return 0; }
+    vm_llama_inference_available() { return 1; }
+    prompt_yes_no() { REPLY='true'; }
+    restart_clawbox_managed_openclaw_gateway() { printf 'RESTART_VERIFIED\n'; return 0; }
+    offer_openclaw_restart_after_llama_update
+  } 2>&1)"
+  assert_contains 'accepted recovery invokes the verified managed restart path' "$success_output" 'RESTART_VERIFIED'
+  assert_contains 'accepted recovery reports success only after verification' "$success_output" 'VM OpenClaw gateway restarted and is running.'
+
+  failure_output="$({
+    load_setup_functions
+    LLAMA_SERVICE_CHANGED=true
+    NEEDS_PROVISIONING=false
+    IS_RUNNING=true
+    VM_HOST='tester@vm.example'
+    VM_RUNTIME_PATH='/Users/tester/ClawBox'
+    openclaw_runtime_has_running_gateway_service() { return 0; }
+    vm_llama_inference_available() { return 1; }
+    prompt_yes_no() { REPLY='true'; }
+    restart_clawbox_managed_openclaw_gateway() { return 1; }
+    offer_openclaw_restart_after_llama_update
+  } 2>&1)"
+  assert_contains 'unverified recovery warns clearly' "$failure_output" 'did not become healthy after restart'
+  assert_contains 'unverified recovery prints manual diagnostics' "$failure_output" 'openclaw.err.log'
+  assert_not_contains 'unverified recovery does not report success' "$failure_output" 'restarted and is running'
+
+  restart_helper_output="$(
+    {
+      load_setup_functions
+      ssh_exec_zsh() { printf 'KICKSTART=%s\n' "$1"; return 0; }
+      openclaw_runtime_has_running_gateway_service() { printf 'MANAGED_SERVICE_VERIFIED\n'; return 0; }
+      restart_clawbox_managed_openclaw_gateway
+    } 2>&1
+  )"
+  assert_contains 'recovery restart uses the ClawBox launchd label' "$restart_helper_output" 'com.clawbox.openclaw'
+  assert_contains 'recovery restart verifies the managed launchd service' "$restart_helper_output" 'MANAGED_SERVICE_VERIFIED'
+}
+
 printf 'Running output normalization tests\n'
 
 TEMP_DIR="$(mktemp -d)"
@@ -2604,6 +2717,8 @@ run_test test_provisioning_and_deployment_flow
 run_test test_provisioning_and_deployment_continues_after_vm_local_provisioning
 run_test test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete
 run_test test_runtime_service_existing_menu_wording
+run_test test_openclaw_restart_recovery_is_limited_to_failed_post_update_inference
+run_test test_openclaw_restart_recovery_prompts_only_after_failed_inference
 run_test test_existing_llama_instance_flow
 run_test test_external_llama_instance_cannot_be_managed_flow
 run_test test_cross_user_hidden_llama_instance_flow

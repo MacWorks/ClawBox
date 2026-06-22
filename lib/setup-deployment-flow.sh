@@ -97,5 +97,7 @@ run_provisioning_and_deployment() {
 
   handle_openclaw_runtime_state || return $?
 
+  offer_openclaw_restart_after_llama_update || return $?
+
   print_setup_completion_summary
 }
