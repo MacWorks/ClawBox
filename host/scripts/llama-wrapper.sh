@@ -18,6 +18,15 @@ else
   exit 1
 fi
 
+if [ "${CLAWBOX_LLAMA_INSTANCE:-primary}" = 'embeddings' ]; then
+  LLAMA_BIN="${EMBEDDINGS_LLAMA_BIN:-}"
+  MODEL_PATH="${EMBEDDINGS_MODEL_PATH:-}"
+  LLAMA_HOST="${EMBEDDINGS_LLAMA_HOST:-}"
+  LLAMA_PORT="${EMBEDDINGS_LLAMA_PORT:-}"
+  LLAMA_CTX="${EMBEDDINGS_LLAMA_CTX:-}"
+  LLAMA_EXTRA_ARGS="${EMBEDDINGS_LLAMA_EXTRA_ARGS:-}"
+fi
+
 ########################################
 # Prevent Duplicate Instances
 ########################################

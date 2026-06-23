@@ -71,6 +71,11 @@ clawbox_llama_user_stderr_log_default() {
   clawbox_named_log_path runtime 'clawbox-llama-user.err.log'
 }
 
+clawbox_llama_embeddings_system_stdout_log_default() { clawbox_named_log_path runtime 'clawbox-llama-embeddings-system.out.log'; }
+clawbox_llama_embeddings_system_stderr_log_default() { clawbox_named_log_path runtime 'clawbox-llama-embeddings-system.err.log'; }
+clawbox_llama_embeddings_user_stdout_log_default() { clawbox_named_log_path runtime 'clawbox-llama-embeddings-user.out.log'; }
+clawbox_llama_embeddings_user_stderr_log_default() { clawbox_named_log_path runtime 'clawbox-llama-embeddings-user.err.log'; }
+
 clawbox_startutmvm_stdout_log_default() {
   clawbox_named_log_path vm 'clawbox-startutmvm.out.log'
 }

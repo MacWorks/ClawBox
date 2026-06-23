@@ -2619,6 +2619,43 @@ test_host_llama_restart_uses_install_mode_without_hidden_health_wait() {
   assert_not_contains 'failed host restart does not continue into OpenClaw recovery' "$failure_output" 'UNEXPECTED_OPENCLAW_RECOVERY'
 }
 
+test_optional_embeddings_setup_is_host_only() {
+  local disabled_output enabled_output
+
+  disabled_output="$({
+    load_setup_functions
+    EMBEDDINGS_ENABLED=''
+    prompt_yes_no() { REPLY='false'; }
+    write_env_from_template() { printf 'ENV_WRITTEN:%s\n' "$EMBEDDINGS_ENABLED"; }
+    source_env_file() { return 0; }
+    setup_embeddings_llama_service_for_mode() { printf 'UNEXPECTED_EMBEDDINGS_SERVICE\n'; }
+    setup_embeddings_service_phase
+  } 2>&1)"
+  assert_contains 'declining embeddings persists disabled state' "$disabled_output" 'ENV_WRITTEN:false'
+  assert_not_contains 'declining embeddings does not start a service' "$disabled_output" 'UNEXPECTED_EMBEDDINGS_SERVICE'
+
+  enabled_output="$({
+    load_setup_functions
+    HOST_IP='192.168.64.1'
+    LLAMA_BIN='/tmp/llama-server'
+    LLAMA_PORT='11434'
+    EMBEDDINGS_ENABLED=false
+    prompt_yes_no() { REPLY='true'; }
+    select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH='/tmp/embeddings.gguf'; }
+    configured_or_default() { REPLY="$3"; }
+    prompt_with_default() { REPLY="$2"; }
+    llama_port_in_use() { return 1; }
+    write_env_from_template() { printf 'EMBEDDINGS_ENV:%s:%s:%s\n' "$EMBEDDINGS_ENABLED" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_LLAMA_PORT"; }
+    source_env_file() { return 0; }
+    detect_existing_llama_install_mode() { REPLY='user'; }
+    setup_embeddings_llama_service_for_mode() { printf 'EMBEDDINGS_SERVICE:%s\n' "$1"; }
+    setup_embeddings_service_phase
+  } 2>&1)"
+  assert_contains 'accepting embeddings writes independent embeddings config' "$enabled_output" 'EMBEDDINGS_ENV:true:/tmp/embeddings.gguf:11435'
+  assert_contains 'accepting embeddings starts the user service with a separate profile' "$enabled_output" 'EMBEDDINGS_SERVICE:user'
+  assert_not_contains 'embeddings setup does not invoke VM deployment' "$enabled_output" 'Deploying to VM'
+}
+
 test_dev_forced_vm_inference_failure_is_limited_to_recovery_probe() {
   local normal_probe_output persisted_value_output forced_probe_output decline_output restart_output unchanged_output status_source
 
@@ -2874,6 +2911,7 @@ run_test test_provisioning_and_deployment_continues_after_vm_local_provisioning
 run_test test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete
 run_test test_runtime_service_existing_menu_wording
 run_test test_host_llama_restart_uses_install_mode_without_hidden_health_wait
+run_test test_optional_embeddings_setup_is_host_only
 run_test test_dev_forced_vm_inference_failure_is_limited_to_recovery_probe
 run_test test_openclaw_restart_recovery_is_limited_to_failed_post_update_inference
 run_test test_openclaw_restart_recovery_prompts_only_after_failed_inference

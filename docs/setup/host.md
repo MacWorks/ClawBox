@@ -100,6 +100,9 @@ Important values:
 - `LLAMA_EXTERNAL` remains `false` when setup reuses an existing current-user ClawBox-managed instance on the configured port
 - `FIREWALL_SHARED_SUBNET`: shared-network hint used by VM SSH recovery and VM IP discovery; the legacy variable name remains for compatibility
 - `OPENCLAW_PROVIDER_NAME`, `OPENCLAW_DEFAULT_MODEL`, `OPENCLAW_AUTOSTART`: OpenClaw integration settings
+- `EMBEDDINGS_ENABLED`: optional second host-only llama-server; when enabled,
+  `EMBEDDINGS_MODEL_PATH`, host/port/context, and extra-args settings configure
+  a separate embeddings service (default port `11435`)
 
 Use `.env.example` as the reference for required keys and expected value formats.
 

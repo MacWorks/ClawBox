@@ -331,6 +331,20 @@ if ! $HOST_STATUS_EXPECTS_EXTERNAL; then
   fi
 fi
 
+# --- Optional embeddings LLaMA ---
+if [ "${EMBEDDINGS_ENABLED:-false}" = true ]; then
+  section 'Embeddings LLaMA Status'
+  EMBEDDINGS_MODE="$MANAGED_LLAMA_MODE"
+  EMBEDDINGS_PLIST_PATH="$(embeddings_llama_mode_plist_dest "$EMBEDDINGS_MODE")"
+  EMBEDDINGS_ENV_PATH="$(embeddings_llama_mode_env_dest "$EMBEDDINGS_MODE")"
+  EMBEDDINGS_TARGET="$(embeddings_llama_mode_target "$EMBEDDINGS_MODE")"
+  EMBEDDINGS_URL="${EMBEDDINGS_LLAMA_BASE_URL:-http://${HOST_IP}:${EMBEDDINGS_LLAMA_PORT:-11435}/v1}"
+  if launchctl print "$EMBEDDINGS_TARGET" >/dev/null 2>&1; then pass 'Embeddings LaunchAgent/LaunchDaemon is loaded'; else fail 'Embeddings LaunchAgent/LaunchDaemon not loaded'; fi
+  if [ -f "$EMBEDDINGS_PLIST_PATH" ]; then pass 'Embeddings plist exists'; else fail 'Embeddings plist missing'; fi
+  if [ -f "$EMBEDDINGS_ENV_PATH" ]; then pass 'Embeddings runtime env exists'; else fail 'Embeddings runtime env missing'; fi
+  if status_curl "${EMBEDDINGS_URL%/}/models" >/dev/null 2>&1; then pass "Embeddings llama-server is responding at $EMBEDDINGS_URL"; else fail "Embeddings llama-server is not responding at $EMBEDDINGS_URL"; fi
+fi
+
 # --- SSH ---
 section "VM SSH"
 if vm_ssh_exec 'echo ok' >/dev/null 2>&1; then

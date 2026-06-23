@@ -39,6 +39,16 @@ Relevant values:
   inside this value are not supported)
 - `LLAMA_BASE_URL`
 
+## Optional embeddings instance
+
+`./clawbox setup` can create one additional host-only embeddings instance. It
+uses `EMBEDDINGS_*` values, a separate `com.clawbox.llama.embeddings` launchd
+label, separate runtime env/plist files and logs, and default port `11435`.
+The embeddings GGUF and `EMBEDDINGS_LLAMA_EXTRA_ARGS` are independent of the
+primary model; extra args support only simple whitespace-separated values.
+Embeddings setup never changes VM or OpenClaw configuration. Status reports it
+only when `EMBEDDINGS_ENABLED=true`.
+
 New setups default `LLAMA_PORT` to `11434`. Existing `.env` values are kept as-is.
 
 Before ClawBox starts or reconfigures any managed host service, setup checks `http://HOST_IP:LLAMA_PORT/v1/models` and requires the response to parse as valid JSON. After starting a managed service, setup first waits for the TCP port to open and then keeps polling that API until it responds or the 120 second timeout expires.

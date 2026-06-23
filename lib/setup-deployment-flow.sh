@@ -60,6 +60,7 @@ run_provisioning_and_deployment() {
   local connectivity_status
 
   setup_host_inference_service_phase || return $?
+  setup_embeddings_service_phase || return $?
 
   section "VM Onboarding"
   step "Checking SSH access to the VM."

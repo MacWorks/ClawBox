@@ -169,6 +169,15 @@ To switch only the host GGUF model after setup, run `./clawbox model`. It
 updates `MODEL_PATH`, restarts the managed host `llama-server`, and leaves VM
 provisioning and OpenClaw configuration unchanged.
 
+### Optional embeddings server
+
+Setup can optionally manage a second, host-only `llama-server` for embeddings.
+It has a separate GGUF, launchd service, logs, and endpoint (default port
+`11435`), while the primary chat/inference server stays unchanged. It never
+changes VM provisioning, OpenClaw configuration, or onboarding. Its extra args
+default to `--embedding`; like primary `LLAMA_EXTRA_ARGS`, only simple
+whitespace-separated arguments are supported.
+
 For existing filename-derived aliases, `./clawbox model` offers a separate
 default-no migration to `clawbox/local`. That migration changes only `.env`;
 it then separately offers a targeted VM update for

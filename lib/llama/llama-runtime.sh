@@ -393,3 +393,75 @@ setup_system_llama_service() {
 setup_user_llama_service() {
   setup_llama_service_for_mode user
 }
+
+# Named sibling profile for the optional host-only embeddings server. Keeping
+# these resolvers separate makes a future profile loop possible without
+# changing the primary service contract.
+embeddings_llama_label() { printf '%s\n' 'com.clawbox.llama.embeddings'; }
+embeddings_llama_wrapper_src() { llama_wrapper_src; }
+embeddings_llama_system_wrapper_dest() { printf '%s\n' "${CLAWBOX_EMBEDDINGS_LLAMA_WRAPPER_DEST:-/usr/local/bin/clawbox-llama-embeddings-wrapper.sh}"; }
+embeddings_llama_system_env_dest() { printf '%s\n' "${CLAWBOX_EMBEDDINGS_LLAMA_ENV_DEST:-/usr/local/etc/clawbox-embeddings.env}"; }
+embeddings_llama_system_plist_dest() { printf '%s\n' "${CLAWBOX_EMBEDDINGS_LLAMA_PLIST_DEST:-/Library/LaunchDaemons/com.clawbox.llama.embeddings.plist}"; }
+embeddings_llama_user_wrapper_dest() { printf '%s\n' "${CLAWBOX_EMBEDDINGS_LLAMA_USER_WRAPPER_DEST:-$HOME/Library/Application Support/ClawBox/bin/clawbox-llama-embeddings-wrapper.sh}"; }
+embeddings_llama_user_env_dest() { printf '%s\n' "${CLAWBOX_EMBEDDINGS_LLAMA_USER_ENV_DEST:-$HOME/Library/Application Support/ClawBox/clawbox-embeddings.env}"; }
+embeddings_llama_user_plist_dest() { printf '%s\n' "${CLAWBOX_EMBEDDINGS_LLAMA_USER_PLIST_DEST:-$HOME/Library/LaunchAgents/com.clawbox.llama.embeddings.plist}"; }
+embeddings_llama_mode_wrapper_dest() { case "$1" in system) embeddings_llama_system_wrapper_dest;; user) embeddings_llama_user_wrapper_dest;; esac; }
+embeddings_llama_mode_env_dest() { case "$1" in system) embeddings_llama_system_env_dest;; user) embeddings_llama_user_env_dest;; esac; }
+embeddings_llama_mode_plist_dest() { case "$1" in system) embeddings_llama_system_plist_dest;; user) embeddings_llama_user_plist_dest;; esac; }
+embeddings_llama_mode_stdout_log() { case "$1" in system) printf '%s\n' "${CLAWBOX_EMBEDDINGS_LLAMA_OUT_LOG:-$(clawbox_llama_embeddings_system_stdout_log_default)}";; user) printf '%s\n' "${CLAWBOX_EMBEDDINGS_LLAMA_USER_OUT_LOG:-$(clawbox_llama_embeddings_user_stdout_log_default)}";; esac; }
+embeddings_llama_mode_stderr_log() { case "$1" in system) printf '%s\n' "${CLAWBOX_EMBEDDINGS_LLAMA_ERR_LOG:-$(clawbox_llama_embeddings_system_stderr_log_default)}";; user) printf '%s\n' "${CLAWBOX_EMBEDDINGS_LLAMA_USER_ERR_LOG:-$(clawbox_llama_embeddings_user_stderr_log_default)}";; esac; }
+embeddings_llama_mode_target() { printf '%s/%s\n' "$(llama_mode_domain "$1")" "$(embeddings_llama_label)"; }
+
+write_embeddings_llama_runtime_env() {
+  local output_path="$1" key value
+  : > "$output_path"
+  printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\n' >> "$output_path"
+  printf 'EMBEDDINGS_LLAMA_BIN="%s"\n' "$(llama_escape_env_value "${LLAMA_BIN:-}")" >> "$output_path"
+  for key in EMBEDDINGS_MODEL_PATH EMBEDDINGS_LLAMA_HOST EMBEDDINGS_LLAMA_PORT EMBEDDINGS_LLAMA_CTX EMBEDDINGS_LLAMA_EXTRA_ARGS; do
+    value="${!key:-}"
+    printf '%s="%s"\n' "$key" "$(llama_escape_env_value "$value")" >> "$output_path"
+  done
+}
+
+embeddings_llama_render_plist() {
+  local output_path="$1" wrapper_path="$2" env_path="$3" stdout_path="$4" stderr_path="$5"
+  cat > "$output_path" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>Label</key><string>$(embeddings_llama_label)</string><key>ProgramArguments</key><array><string>$wrapper_path</string></array><key>EnvironmentVariables</key><dict><key>CLAWBOX_ENV_FILE</key><string>$env_path</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>StandardOutPath</key><string>$stdout_path</string><key>StandardErrorPath</key><string>$stderr_path</string></dict></plist>
+EOF
+}
+
+embeddings_llama_service_loaded() { launchctl print "$(embeddings_llama_mode_target "$1")" >/dev/null 2>&1; }
+
+setup_embeddings_llama_service_for_mode() {
+  local mode="$1" wrapper_src wrapper_dest env_dest plist_dest stdout_path stderr_path env_temp plist_temp target wrapper_matches=false env_matches=false plist_matches=false service_loaded=false
+  wrapper_src="$(embeddings_llama_wrapper_src)"; wrapper_dest="$(embeddings_llama_mode_wrapper_dest "$mode")"; env_dest="$(embeddings_llama_mode_env_dest "$mode")"; plist_dest="$(embeddings_llama_mode_plist_dest "$mode")"; stdout_path="$(embeddings_llama_mode_stdout_log "$mode")"; stderr_path="$(embeddings_llama_mode_stderr_log "$mode")"; target="$(embeddings_llama_mode_target "$mode")"
+  [ -x "${LLAMA_BIN:-}" ] && [ -f "${EMBEDDINGS_MODEL_PATH:-}" ] || { llama_fail 'Embeddings llama-server binary or model is unavailable'; return 1; }
+  env_temp="$(mktemp)"; plist_temp="$(mktemp)"
+  write_embeddings_llama_runtime_env "$env_temp"; embeddings_llama_render_plist "$plist_temp" "$wrapper_dest" "$env_dest" "$stdout_path" "$stderr_path"
+  [ -f "$wrapper_dest" ] && cmp -s "$wrapper_src" "$wrapper_dest" && wrapper_matches=true
+  [ -f "$env_dest" ] && cmp -s "$env_temp" "$env_dest" && env_matches=true
+  [ -f "$plist_dest" ] && cmp -s "$plist_temp" "$plist_dest" && plist_matches=true
+  embeddings_llama_service_loaded "$mode" && service_loaded=true
+  if [ "$wrapper_matches" = true ] && [ "$env_matches" = true ] && [ "$plist_matches" = true ] && [ "$service_loaded" = true ]; then
+    rm -f "$env_temp" "$plist_temp"
+    step "Existing embeddings llama-server $(llama_mode_display_name "$mode") matches expected configuration"
+  else
+  llama_maybe_sudo "$mode" mkdir -p "$(dirname "$wrapper_dest")" "$(dirname "$env_dest")" "$(dirname "$plist_dest")" "$(dirname "$stdout_path")"
+  llama_maybe_sudo "$mode" install -m 755 "$wrapper_src" "$wrapper_dest"; llama_maybe_sudo "$mode" install -m 644 "$env_temp" "$env_dest"; llama_maybe_sudo "$mode" install -m 644 "$plist_temp" "$plist_dest"
+  [ "$mode" != system ] || llama_maybe_sudo "$mode" chown root:wheel "$plist_dest"
+  rm -f "$env_temp" "$plist_temp"
+  if [ "$service_loaded" = true ]; then llama_maybe_sudo "$mode" launchctl bootout "$(llama_mode_domain "$mode")" "$plist_dest" >/dev/null 2>&1 || true; fi
+  step "Starting embeddings llama-server $(llama_mode_display_name "$mode")"
+  llama_maybe_sudo "$mode" launchctl bootstrap "$(llama_mode_domain "$mode")" "$plist_dest" || return 1
+  llama_maybe_sudo "$mode" launchctl kickstart -k "$target" >/dev/null 2>&1 || true
+  fi
+  local attempt=1 url="${EMBEDDINGS_LLAMA_BASE_URL%/v1}/models"
+  while [ "$attempt" -le 30 ]; do
+    if curl -sS --fail --connect-timeout 1 --max-time 2 "$url" >/dev/null 2>&1; then return 0; fi
+    attempt=$((attempt + 1)); sleep 1
+  done
+  llama_fail "Embeddings llama-server did not respond at $url"
+  return 1
+}
