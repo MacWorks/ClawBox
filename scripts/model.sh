@@ -14,6 +14,7 @@ source "$BASE_DIR/lib/prompt.sh"
 source "$BASE_DIR/lib/setup-env.sh"
 source "$BASE_DIR/lib/setup-derive.sh"
 source "$BASE_DIR/lib/setup-models.sh"
+source "$BASE_DIR/lib/setup-embeddings.sh"
 source "$BASE_DIR/lib/llama.sh"
 source "$BASE_DIR/lib/ssh.sh"
 source "$BASE_DIR/lib/runtime.sh"
@@ -198,7 +199,7 @@ offer_vm_openclaw_alias_sync_if_drift() {
   fi
 }
 
-main() {
+switch_primary_model() {
   [ -f "$ENV_FILE" ] || { error 'Missing .env. Run ./clawbox setup first.'; return 1; }
   source_env_file || return $?
 
@@ -233,6 +234,26 @@ main() {
   out "llama-server API: ${LLAMA_BASE_URL:-not configured}"
   out 'OpenClaw configuration and VM runtime were not changed.'
   out 'Check status with: ./clawbox status'
+}
+
+main() {
+  local target="${1:-}"
+  [ -f "$ENV_FILE" ] || { error 'Missing .env. Run ./clawbox setup first.'; return 1; }
+  source_env_file || return $?
+  case "$target" in
+    embedding|embeddings) switch_embeddings_model ;;
+    primary) switch_primary_model ;;
+    '')
+      section 'Host Models'
+      out "Primary model: ${MODEL_PATH:-not configured}"
+      out "Embeddings model: ${EMBEDDINGS_MODEL_PATH:-not configured}"
+      out '1) Switch primary chat/inference model'
+      out '2) Configure or switch embeddings model'
+      prompt_with_suffix 'Choose model operation' '[1-2]'
+      case "$REPLY" in 1|'') switch_primary_model;; 2) switch_embeddings_model;; *) error 'Invalid model operation.'; return 1;; esac
+      ;;
+    *) error 'Usage: ./clawbox model [primary|embedding|embeddings]'; return 1;;
+  esac
 }
 
 if [ "${CLAWBOX_MODEL_LIB_ONLY:-false}" != true ]; then

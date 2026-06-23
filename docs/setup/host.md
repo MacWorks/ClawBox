@@ -104,6 +104,11 @@ Important values:
   `EMBEDDINGS_MODEL_PATH`, host/port/context, and extra-args settings configure
   a separate embeddings service (default port `11435`)
 
+After setup, `./clawbox model primary` switches only the primary model, while
+`./clawbox model embeddings` (or `./clawbox model embedding`) configures or
+switches only the optional embeddings model. Neither command changes VM or
+OpenClaw configuration.
+
 Use `.env.example` as the reference for required keys and expected value formats.
 
 Install mode behavior:

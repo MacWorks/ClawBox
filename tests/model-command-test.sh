@@ -159,6 +159,139 @@ test_local_alias_detects_vm_drift_and_requires_confirmation() {
   assert_contains 'local alias drift decline preserves VM config' "$output" 'OpenClaw may continue using the old alias'
 }
 
+test_model_help_lists_instance_subcommands() {
+  local output
+  output="$(bash "$ROOT_DIR/clawbox" help 2>&1)"
+  assert_contains 'model help lists primary subcommand' "$output" './clawbox model primary'
+  assert_contains 'model help lists embedding alias' "$output" './clawbox model embedding'
+  assert_contains 'model help lists embeddings subcommand' "$output" './clawbox model embeddings'
+}
+
+test_primary_model_subcommand_preserves_embeddings_state() {
+  local output
+  output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      MODEL_PATH='/models/primary-old.gguf'
+      EMBEDDINGS_ENABLED=true
+      EMBEDDINGS_MODEL_PATH='/models/embeddings.gguf'
+      OPENCLAW_DEFAULT_MODEL='local'
+      OPENCLAW_PROVIDER_NAME='clawbox'
+      source_env_file() { :; }
+      offer_openclaw_alias_migration() { :; }
+      offer_vm_openclaw_alias_sync_if_drift() { :; }
+      prompt_yes_no() { REPLY=true; }
+      setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
+      write_env_from_template() { printf 'WRITE_PRIMARY:%s:%s:%s\n' "$MODEL_PATH" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_ENABLED"; }
+      detect_model_llama_mode() { REPLY=user; }
+      setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE:%s\n' "$1"; }
+      setup_embeddings_llama_service_for_mode() { printf 'EMBEDDINGS_SERVICE_UNEXPECTED\n'; }
+      ssh() { printf 'SSH_UNEXPECTED\n'; }
+      main primary
+      printf 'FINAL:%s:%s:%s\n' "$MODEL_PATH" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_ENABLED"
+    }
+  2>&1)"
+  assert_contains 'primary subcommand updates only primary model path' "$output" 'FINAL:/models/primary-new.gguf:/models/embeddings.gguf:true'
+  assert_contains 'primary subcommand restarts primary service' "$output" 'PRIMARY_SERVICE:user'
+  assert_not_contains 'primary subcommand does not restart embeddings service' "$output" 'EMBEDDINGS_SERVICE_UNEXPECTED'
+  assert_not_contains 'primary subcommand does not contact VM' "$output" 'SSH_UNEXPECTED'
+}
+
+test_embeddings_model_subcommands_are_isolated() {
+  local embeddings_output alias_output
+  embeddings_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      MODEL_PATH='/models/primary.gguf'
+      EMBEDDINGS_ENABLED=true
+      EMBEDDINGS_MODEL_PATH='/models/embeddings-old.gguf'
+      EMBEDDINGS_LLAMA_BASE_URL='http://127.0.0.1:11435/v1'
+      OPENCLAW_DEFAULT_MODEL='local'
+      source_env_file() { :; }
+      prompt_yes_no() { REPLY=true; }
+      select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH='/models/embeddings-new.gguf'; }
+      write_env_from_template() { printf 'WRITE_EMBEDDINGS:%s:%s:%s\n' "$MODEL_PATH" "$EMBEDDINGS_MODEL_PATH" "$OPENCLAW_DEFAULT_MODEL"; }
+      detect_existing_llama_install_mode() { REPLY=user; }
+      setup_embeddings_llama_service_for_mode() { printf 'EMBEDDINGS_SERVICE:%s\n' "$1"; }
+      setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE_UNEXPECTED\n'; }
+      ssh() { printf 'SSH_UNEXPECTED\n'; }
+      main embeddings
+      printf 'FINAL:%s:%s:%s:%s:%s\n' "$MODEL_PATH" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_ENABLED" "$EMBEDDINGS_LLAMA_BASE_URL" "$OPENCLAW_DEFAULT_MODEL"
+    }
+  2>&1)"
+  assert_contains 'embeddings subcommand updates only embeddings model path and endpoint' "$embeddings_output" 'FINAL:/models/primary.gguf:/models/embeddings-new.gguf:true:http://127.0.0.1:11435/v1:local'
+  assert_contains 'embeddings subcommand restarts embeddings service' "$embeddings_output" 'EMBEDDINGS_SERVICE:user'
+  assert_not_contains 'embeddings subcommand does not restart primary service' "$embeddings_output" 'PRIMARY_SERVICE_UNEXPECTED'
+  assert_not_contains 'embeddings subcommand does not contact VM' "$embeddings_output" 'SSH_UNEXPECTED'
+  assert_contains 'embeddings subcommand reports its existing endpoint' "$embeddings_output" 'Embeddings llama-server API: http://127.0.0.1:11435/v1'
+
+  alias_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      source_env_file() { :; }
+      switch_embeddings_model() { printf 'EMBEDDINGS_ALIAS_DISPATCH\n'; }
+      switch_primary_model() { printf 'PRIMARY_UNEXPECTED\n'; }
+      main embedding
+    }
+  2>&1)"
+  assert_contains 'embedding alias dispatches to embeddings model flow' "$alias_output" 'EMBEDDINGS_ALIAS_DISPATCH'
+  assert_not_contains 'embedding alias does not dispatch primary flow' "$alias_output" 'PRIMARY_UNEXPECTED'
+}
+
+test_embeddings_model_subcommand_can_enable_disabled_embeddings() {
+  local output
+  output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      MODEL_PATH='/models/primary.gguf'
+      EMBEDDINGS_ENABLED=false
+      EMBEDDINGS_MODEL_PATH=''
+      OPENCLAW_DEFAULT_MODEL='local'
+      HOST_IP='127.0.0.1'
+      LLAMA_PORT=11434
+      source_env_file() { :; }
+      prompt_yes_no() { REPLY=true; }
+      select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH='/models/embeddings.gguf'; }
+      configured_or_default() { REPLY="$3"; }
+      prompt_with_default() { REPLY="$2"; }
+      llama_port_in_use() { return 1; }
+      write_env_from_template() { printf 'WRITE_ENABLED:%s:%s:%s\n' "$EMBEDDINGS_ENABLED" "$MODEL_PATH" "$EMBEDDINGS_MODEL_PATH"; }
+      detect_existing_llama_install_mode() { REPLY=user; }
+      setup_embeddings_llama_service_for_mode() { printf 'EMBEDDINGS_SERVICE:%s\n' "$1"; }
+      setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE_UNEXPECTED\n'; }
+      ssh() { printf 'SSH_UNEXPECTED\n'; }
+      main embeddings
+    }
+  2>&1)"
+  assert_contains 'disabled embeddings subcommand enables embeddings only' "$output" 'WRITE_ENABLED:true:/models/primary.gguf:/models/embeddings.gguf'
+  assert_contains 'disabled embeddings subcommand starts embeddings service' "$output" 'EMBEDDINGS_SERVICE:user'
+  assert_not_contains 'disabled embeddings subcommand does not restart primary service' "$output" 'PRIMARY_SERVICE_UNEXPECTED'
+  assert_not_contains 'disabled embeddings subcommand does not contact VM' "$output" 'SSH_UNEXPECTED'
+}
+
+test_default_model_flow_explicitly_selects_one_instance() {
+  local output
+  output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      source_env_file() { :; }
+      prompt_with_suffix() { REPLY=2; }
+      switch_primary_model() { printf 'PRIMARY_UNEXPECTED\n'; }
+      switch_embeddings_model() { printf 'EMBEDDINGS_SELECTED\n'; }
+      main
+    }
+  2>&1)"
+  assert_contains 'default model flow shows separate primary option' "$output" 'Switch primary chat/inference model'
+  assert_contains 'default model flow shows separate embeddings option' "$output" 'Configure or switch embeddings model'
+  assert_contains 'default model flow dispatches only selected embeddings instance' "$output" 'EMBEDDINGS_SELECTED'
+  assert_not_contains 'default model flow does not switch primary implicitly' "$output" 'PRIMARY_UNEXPECTED'
+}
+
 run_test test_legacy_alias_migration_defaults_to_no
 run_test test_legacy_alias_migration_updates_only_local_env_state
 run_test test_legacy_alias_migration_can_target_vm_default_only
@@ -166,6 +299,11 @@ run_test test_local_alias_detects_vm_drift_and_requires_confirmation
 run_test test_vm_openclaw_restart_decline_and_failure_are_recoverable
 run_test test_vm_openclaw_restart_requires_runtime_verification
 run_test test_vm_openclaw_restart_warns_for_external_gateway_owner
+run_test test_model_help_lists_instance_subcommands
+run_test test_primary_model_subcommand_preserves_embeddings_state
+run_test test_embeddings_model_subcommands_are_isolated
+run_test test_embeddings_model_subcommand_can_enable_disabled_embeddings
+run_test test_default_model_flow_explicitly_selects_one_instance
 
 if [ "$FAILURES" -eq 0 ]; then
   printf 'PASS: test suite succeeded\n'

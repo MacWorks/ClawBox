@@ -2,9 +2,12 @@
 
 `llama-server` is the host-side inference component for ClawBox.
 
-Use `./clawbox model` to switch the managed host GGUF after setup. It changes
-only `MODEL_PATH` and restarts the managed host service; it does not deploy VM
-artifacts or replace OpenClaw configuration. New ClawBox setups advertise the
+Use `./clawbox model` after setup to choose which host model to manage.
+`./clawbox model primary` changes only `MODEL_PATH` and restarts only the
+primary managed host service. `./clawbox model embeddings` (or
+`./clawbox model embedding`) configures or changes only the optional embeddings
+instance. Neither path deploys VM artifacts or replaces OpenClaw configuration.
+New ClawBox setups advertise the
 stable OpenClaw model alias `clawbox/local`; the actual GGUF remains selected by
 the host service.
 

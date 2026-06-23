@@ -68,3 +68,26 @@ setup_embeddings_service_phase() {
   setup_embeddings_llama_service_for_mode "$mode" || return $?
   success "Embeddings llama-server is responding at $EMBEDDINGS_LLAMA_BASE_URL"
 }
+
+switch_embeddings_model() {
+  local mode=''
+  if [ "${EMBEDDINGS_ENABLED:-false}" != true ]; then
+    out 'Embeddings server is not configured.'
+    setup_embeddings_service_phase
+    return $?
+  fi
+  section 'Embeddings Model'
+  out "Current embeddings model: ${EMBEDDINGS_MODEL_PATH:-not configured}"
+  out "Embeddings llama-server API: ${EMBEDDINGS_LLAMA_BASE_URL:-not configured}"
+  prompt_yes_no 'Switch embeddings model?' 'n'
+  is_yes "$REPLY" || { out 'Embeddings model is unchanged.'; return 0; }
+  select_embeddings_model_path || return $?
+  write_env_from_template; source_env_file || return $?
+  detect_existing_llama_install_mode >/dev/null 2>&1 || true; mode="$REPLY"
+  [ -n "$mode" ] || mode=user
+  setup_embeddings_llama_service_for_mode "$mode" || return $?
+  success "Embeddings llama-server now uses ${EMBEDDINGS_MODEL_PATH##*/}."
+  out "Embeddings llama-server API: ${EMBEDDINGS_LLAMA_BASE_URL:-not configured}"
+  out 'OpenClaw configuration and VM runtime were not changed.'
+  out 'Check status with: ./clawbox status'
+}

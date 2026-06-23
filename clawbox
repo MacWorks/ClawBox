@@ -13,7 +13,7 @@ Usage:
 Commands:
   setup       Run interactive setup
   status      Show system status
-  model       Switch the host llama-server model
+  model       Switch a host model (primary or embeddings)
   help        Show this help message
 
 Options:
@@ -23,6 +23,9 @@ Examples:
   ./clawbox setup
   ./clawbox status
   ./clawbox model
+  ./clawbox model primary
+  ./clawbox model embedding
+  ./clawbox model embeddings
 EOF
 }
 

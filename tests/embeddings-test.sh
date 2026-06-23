@@ -43,11 +43,12 @@ test_wrapper_arguments_are_profile_specific() {
 }
 
 test_disabled_status_and_model_preservation_contract() {
-  local status_source model_source
-  status_source="$(cat "$ROOT_DIR/scripts/status.sh")"; model_source="$(cat "$ROOT_DIR/scripts/model.sh")"
+  local status_source model_source embeddings_source
+  status_source="$(cat "$ROOT_DIR/scripts/status.sh")"; model_source="$(cat "$ROOT_DIR/scripts/model.sh")"; embeddings_source="$(cat "$ROOT_DIR/lib/setup-embeddings.sh")"
   assert_contains 'status gates embeddings checks on enabled true only' "$status_source" '[ "${EMBEDDINGS_ENABLED:-false}" = true ]'
-  assert_not_contains 'model command does not reference embeddings model path' "$model_source" 'EMBEDDINGS_MODEL_PATH'
-  assert_not_contains 'model command does not manage embeddings service' "$model_source" 'setup_embeddings_llama_service_for_mode'
+  assert_contains 'model command exposes an embeddings-only dispatch path' "$model_source" 'embedding|embeddings) switch_embeddings_model'
+  assert_contains 'embeddings model flow uses only embeddings service helper' "$embeddings_source" 'setup_embeddings_llama_service_for_mode'
+  assert_not_contains 'embeddings helper does not use primary service helper' "$(sed -n '/^switch_embeddings_model()/,/^}/p' "$ROOT_DIR/lib/setup-embeddings.sh")" 'setup_llama_service_for_mode'
 }
 
 test_port_selection_contract() {

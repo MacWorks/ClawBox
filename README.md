@@ -178,6 +178,10 @@ changes VM provisioning, OpenClaw configuration, or onboarding. Its extra args
 default to `--embedding`; like primary `LLAMA_EXTRA_ARGS`, only simple
 whitespace-separated arguments are supported.
 
+Use `./clawbox model primary` to switch only the primary model, or
+`./clawbox model embeddings` (or `./clawbox model embedding`) to configure/switch only the
+embeddings model. The embeddings command never changes VM/OpenClaw config.
+
 For existing filename-derived aliases, `./clawbox model` offers a separate
 default-no migration to `clawbox/local`. That migration changes only `.env`;
 it then separately offers a targeted VM update for
