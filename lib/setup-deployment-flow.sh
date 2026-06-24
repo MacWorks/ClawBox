@@ -27,6 +27,9 @@ print_setup_completion_summary() {
     'managed by VM launchd')
       out 'OpenClaw runtime: managed by VM launchd.'
       ;;
+    'managed by native OpenClaw LaunchAgent')
+      out 'OpenClaw runtime: managed by native OpenClaw LaunchAgent (ai.openclaw.gateway).'
+      ;;
     'running manually')
       out 'OpenClaw runtime: running manually in the VM.'
       ;;
@@ -40,7 +43,7 @@ print_setup_completion_summary() {
 
   out 'Check status with: ./clawbox status'
   case "${OPENCLAW_RUNTIME_MANAGEMENT_STATE:-unknown}" in
-    'managed by VM launchd'|'running manually')
+    'managed by VM launchd'|'managed by native OpenClaw LaunchAgent'|'running manually')
       out 'OpenClaw gateway is running in the VM.'
       openclaw_bin="${OPENCLAW_BIN:-}"
       if [ -z "$openclaw_bin" ] && resolve_vm_openclaw_bin_path; then

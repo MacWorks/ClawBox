@@ -64,6 +64,9 @@ setup_status_test_mocks() {
   unset CLAWBOX_TEST_SSH_LOG
   unset CLAWBOX_TEST_SSH_OPENCLAW_LAUNCHD_OUTPUT
   unset CLAWBOX_TEST_SSH_OPENCLAW_LAUNCHD_EXIT_CODE
+  unset CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_LAUNCHD_OUTPUT
+  unset CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_LAUNCHD_EXIT_CODE
+  unset CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_PROCESS_EXIT_CODE
   unset CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE
   unset CLAWBOX_TEST_SSH_VM_COMPLETION_EXIT_CODE
   unset CLAWBOX_TEST_SSH_VM_COMPLETION_OUTPUT
@@ -149,6 +152,20 @@ shift || true
     echo\ ok)
       exit "${CLAWBOX_TEST_SSH_ECHO_EXIT_CODE:-0}"
       ;;
+    *"launchctl print \"gui/"*"ai.openclaw.gateway"*)
+      if [ "${CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_LAUNCHD_EXIT_CODE:-1}" -ne 0 ]; then
+        exit "${CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_LAUNCHD_EXIT_CODE:-1}"
+      fi
+      printf "%s\n" "${CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_LAUNCHD_OUTPUT:-}"
+      launchd_output="${CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_LAUNCHD_OUTPUT:-}"
+      if printf "%s\n" "$launchd_output" | grep -Eq "^[[:space:]]*(state|job state) = running[[:space:]]*$" \
+        && printf "%s\n" "$launchd_output" | grep -Eq "^[[:space:]]*pid = [0-9]+" \
+        && printf "%s\n" "$launchd_output" | grep -Fq "openclaw" \
+        && printf "%s\n" "$launchd_output" | grep -Eq "(^|[[:space:]])gateway([[:space:]]|$)"; then
+        exit 0
+      fi
+      exit 1
+      ;;
     *"launchctl print \"gui/"*"com.clawbox.openclaw"*)
       if [ "${CLAWBOX_TEST_SSH_OPENCLAW_LAUNCHD_EXIT_CODE:-1}" -ne 0 ]; then
         exit "${CLAWBOX_TEST_SSH_OPENCLAW_LAUNCHD_EXIT_CODE:-1}"
@@ -162,6 +179,9 @@ shift || true
         exit 0
       fi
       exit 1
+      ;;
+    *\$0\ \~\ /openclaw/*)
+      exit "${CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_PROCESS_EXIT_CODE:-1}"
       ;;
     *"ps -axo pid=,comm=,args= | awk "*)
       exit "${CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE:-0}"
@@ -1082,8 +1102,101 @@ test_status_accepts_launchd_managed_openclaw_gateway_when_ps_args_are_truncated(
 
   assert_equals 'status launchd-managed openclaw gateway path stays healthy when ps omits gateway args' "$status" '0'
   assert_contains 'status launchd-managed openclaw gateway path inspects vm launchd service first' "$(cat "$ssh_log")" 'launchctl print "gui/$(id -u)/com.clawbox.openclaw"'
-  assert_contains 'status launchd-managed openclaw gateway path reports the process as running' "$output" 'PASS: OpenClaw process is running'
+  assert_contains 'status launchd-managed openclaw gateway path reports the gateway as running' "$output" 'PASS: OpenClaw gateway is running'
+  assert_contains 'status launchd-managed openclaw gateway path identifies ClawBox ownership' "$output" 'managed by ClawBox LaunchAgent'
   assert_contains 'status launchd-managed openclaw gateway path preserves the healthy summary' "$output" 'RESULT: HEALTHY'
+}
+
+test_status_accepts_native_openclaw_launchagent_when_clawbox_job_is_exited() {
+  local output
+  local status=0
+  local ssh_log="$TEMP_DIR/status-openclaw-native-launchd-ssh.log"
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  export CLAWBOX_TEST_SSH_LOG="$ssh_log"
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_LAUNCHD_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_LAUNCHD_OUTPUT='gui/501/com.clawbox.openclaw = {
+  state = not running
+  job state = exited
+  last exit code = 0
+}'
+  export CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_LAUNCHD_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_LAUNCHD_OUTPUT='gui/501/ai.openclaw.gateway = {
+  state = running
+  program = /Users/user/.openclaw/service-env/ai.openclaw.gateway-env-wrapper.sh
+  arguments = {
+    /opt/homebrew/opt/node/bin/node
+    /opt/homebrew/lib/node_modules/openclaw/dist/index.js
+    gateway
+    --port
+    18789
+  }
+  pid = 13222
+  job state = running
+}'
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/openclaw-native-launchd-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/openclaw-native-launchd-system.err.log"
+
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG" "$ssh_log"
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status native launchagent path stays healthy when VM inference succeeds' "$status" '0'
+  assert_contains 'status native launchagent path checks the native launchd label' "$(cat "$ssh_log")" 'ai.openclaw.gateway'
+  assert_contains 'status native launchagent path reports the gateway as running' "$output" 'PASS: OpenClaw gateway is running'
+  assert_contains 'status native launchagent path identifies native ownership' "$output" 'managed by native OpenClaw LaunchAgent (ai.openclaw.gateway)'
+  assert_not_contains 'status native launchagent path does not report OpenClaw down' "$output" 'FAIL: OpenClaw process NOT running'
+  assert_contains 'status native launchagent path preserves the healthy summary' "$output" 'RESULT: HEALTHY'
+}
+
+test_status_accepts_native_openclaw_gateway_process_without_launchagent() {
+  local output
+  local status=0
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_LAUNCHD_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_LAUNCHD_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_OPENCLAW_NATIVE_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/openclaw-native-process-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/openclaw-native-process-system.err.log"
+
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG"
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status native gateway process path stays healthy when VM inference succeeds' "$status" '0'
+  assert_contains 'status native gateway process path reports the gateway as running' "$output" 'PASS: OpenClaw gateway is running'
+  assert_contains 'status native gateway process path identifies non-ClawBox ownership' "$output" 'native OpenClaw gateway process detected outside ClawBox management'
+  assert_not_contains 'status native gateway process path does not report OpenClaw down' "$output" 'FAIL: OpenClaw process NOT running'
+  assert_contains 'status native gateway process path preserves the healthy summary' "$output" 'RESULT: HEALTHY'
 }
 
 test_status_rejects_stale_launchd_openclaw_service_without_running_job() {
@@ -1525,9 +1638,9 @@ test_status_uses_bounded_noninteractive_ssh_for_all_vm_checks() {
   set -e
 
   assert_equals 'status bounded ssh path stays healthy when all probes succeed' "$status" '0'
-  assert_equals 'status bounded ssh path issues six SSH calls' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '6'
-  assert_equals 'status bounded ssh path applies BatchMode to every SSH call' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '6'
-  assert_equals 'status bounded ssh path applies ConnectTimeout to every SSH call' "$(/usr/bin/grep -Fc -- '-o ConnectTimeout=3' "$ssh_log")" '6'
+  assert_equals 'status bounded ssh path issues seven SSH calls' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '7'
+  assert_equals 'status bounded ssh path applies BatchMode to every SSH call' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '7'
+  assert_equals 'status bounded ssh path applies ConnectTimeout to every SSH call' "$(/usr/bin/grep -Fc -- '-o ConnectTimeout=3' "$ssh_log")" '7'
   assert_contains 'status bounded ssh path reports a healthy summary' "$output" 'RESULT: HEALTHY'
 }
 
@@ -1551,6 +1664,8 @@ run_test test_status_reports_vm_openclaw_runtime_failures
 run_test test_status_validates_vm_openclaw_config_with_configured_provider_name
 run_test test_status_reports_live_openclaw_gateway_process_as_healthy
 run_test test_status_accepts_launchd_managed_openclaw_gateway_when_ps_args_are_truncated
+run_test test_status_accepts_native_openclaw_launchagent_when_clawbox_job_is_exited
+run_test test_status_accepts_native_openclaw_gateway_process_without_launchagent
 run_test test_status_rejects_stale_launchd_openclaw_service_without_running_job
 run_test test_status_rejects_generic_non_gateway_openclaw_process
 run_test test_status_managed_local_host_probe_ignores_custom_llama_base_url_when_external_is_false

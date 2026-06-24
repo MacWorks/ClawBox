@@ -156,7 +156,7 @@ vm_ssh_exec() {
   ssh -o BatchMode=yes -o ConnectTimeout=3 "$VM_HOST" "$@"
 }
 
-vm_openclaw_launchd_gateway_running() {
+vm_openclaw_clawbox_launchd_gateway_running() {
   vm_ssh_exec "launchd_output=\"\$(launchctl print \"gui/\$(id -u)/com.clawbox.openclaw\" 2>/dev/null)\" || exit 1
 printf '%s\n' \"\$launchd_output\" | grep -Eq '^[[:space:]]*(state|job state) = running[[:space:]]*$' || exit 1
 printf '%s\n' \"\$launchd_output\" | grep -Eq '^[[:space:]]*pid = [0-9]+' || exit 1
@@ -164,12 +164,20 @@ printf '%s\n' \"\$launchd_output\" | grep -Fq 'openclaw' || exit 1
 printf '%s\n' \"\$launchd_output\" | grep -Eq '(^|[[:space:]])gateway([[:space:]]|$)' || exit 1"
 }
 
+vm_openclaw_native_launchd_gateway_running() {
+  vm_ssh_exec "launchd_output=\"\$(launchctl print \"gui/\$(id -u)/ai.openclaw.gateway\" 2>/dev/null)\" || exit 1
+printf '%s\n' \"\$launchd_output\" | grep -Eq '^[[:space:]]*(state|job state) = running[[:space:]]*$' || exit 1
+printf '%s\n' \"\$launchd_output\" | grep -Eq '^[[:space:]]*pid = [0-9]+' || exit 1
+printf '%s\n' \"\$launchd_output\" | grep -Fq 'openclaw' || exit 1
+printf '%s\n' \"\$launchd_output\" | grep -Eq '(^|[[:space:]])gateway([[:space:]]|$)'"
+}
+
 vm_openclaw_process_gateway_running() {
   vm_ssh_exec "ps -axo pid=,comm=,args= | awk '\$2 == \"openclaw\" && \$0 ~ /(^|[[:space:]])gateway([[:space:]]|$)/ { found=1 } END { exit(found ? 0 : 1) }'"
 }
 
-vm_openclaw_gateway_running() {
-  vm_openclaw_launchd_gateway_running || vm_openclaw_process_gateway_running
+vm_openclaw_native_process_gateway_running() {
+  vm_ssh_exec "ps -axo pid=,comm=,args= | awk '\$0 ~ /openclaw/ && \$0 ~ /(^|[[:space:]])gateway([[:space:]]|$)/ { found=1 } END { exit(found ? 0 : 1) }'"
 }
 
 vm_llama_inference_probe() {
@@ -359,8 +367,17 @@ show_recent_llama_errors
 
 # --- VM checks ---
 section "VM OpenClaw Process"
-if vm_openclaw_gateway_running >/dev/null 2>&1; then
+if vm_openclaw_clawbox_launchd_gateway_running >/dev/null 2>&1; then
+  pass "OpenClaw gateway is running"
+  out 'OpenClaw runtime: managed by ClawBox LaunchAgent (com.clawbox.openclaw)'
+elif vm_openclaw_native_launchd_gateway_running >/dev/null 2>&1; then
+  pass "OpenClaw gateway is running"
+  out 'OpenClaw runtime: managed by native OpenClaw LaunchAgent (ai.openclaw.gateway)'
+elif vm_openclaw_process_gateway_running >/dev/null 2>&1; then
   pass "OpenClaw process is running"
+elif vm_openclaw_native_process_gateway_running >/dev/null 2>&1; then
+  pass "OpenClaw gateway is running"
+  out 'OpenClaw runtime: native OpenClaw gateway process detected outside ClawBox management'
 else
   fail "OpenClaw process NOT running"
 fi

@@ -45,11 +45,17 @@ settings and restart a running gateway.
 
 Detection is performed over SSH inside a login shell.
 
-`already running` now requires a live `openclaw gateway` process.
+`already running` requires a verified live gateway. ClawBox recognizes either
+its own `com.clawbox.openclaw` service or OpenClaw's native
+`ai.openclaw.gateway` LaunchAgent when the service has a running state, PID,
+and gateway command evidence.
 
 An active `com.clawbox.openclaw` launchd service is still inspected as supporting runtime state, but launchctl-loaded state alone does not count as an active runtime.
 
 Stale artifacts alone do not count. A leftover plist, dead prior session, stale PID-like state, or other non-running residue must not be reported as an active runtime.
+When the native OpenClaw LaunchAgent owns the gateway, setup and status report
+that ownership and do not automatically stop it, replace it, or start the
+ClawBox-managed service into its port.
 
 ## Restart behavior
 

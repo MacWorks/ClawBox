@@ -28,6 +28,10 @@ openclaw_runtime_service_label() {
   printf '%s\n' 'com.clawbox.openclaw'
 }
 
+openclaw_runtime_native_service_label() {
+  printf '%s\n' 'ai.openclaw.gateway'
+}
+
 openclaw_runtime_has_live_process() {
   openclaw_runtime_zsh_check \
     'ps -axo pid=,comm=,args= | awk '\''$2 == "openclaw" && $0 ~ /(^|[[:space:]])gateway([[:space:]]|$)/ { found=1 } END { exit(found ? 0 : 1) }'\'''
@@ -53,6 +57,21 @@ openclaw_runtime_has_running_gateway_service() {
   local label=''
 
   label="$(openclaw_runtime_service_label)"
+  openclaw_runtime_launchctl_domain_command
+  openclaw_runtime_zsh_check \
+    "label=$(printf '%q' "$label")
+$(printf '%s\n' "$REPLY")
+gateway_service_output=\$(launchctl print \"\$domain/\$label\" 2>/dev/null) || exit 1
+printf '%s\n' \"\$gateway_service_output\" | grep -Eq '(^|[[:space:]])(state|job state) = running'
+printf '%s\n' \"\$gateway_service_output\" | grep -Eq 'pid = [1-9][0-9]*'
+printf '%s\n' \"\$gateway_service_output\" | grep -Fq 'openclaw'
+printf '%s\n' \"\$gateway_service_output\" | grep -Eq '(^|[[:space:]])gateway([[:space:]]|\$)'"
+}
+
+openclaw_runtime_has_running_native_gateway_service() {
+  local label=''
+
+  label="$(openclaw_runtime_native_service_label)"
   openclaw_runtime_launchctl_domain_command
   openclaw_runtime_zsh_check \
     "label=$(printf '%q' "$label")
@@ -94,6 +113,11 @@ openclaw_runtime_is_active() {
     return 0
   fi
 
+  if openclaw_runtime_has_running_native_gateway_service; then
+    OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by native OpenClaw LaunchAgent'
+    return 0
+  fi
+
   if openclaw_runtime_has_manual_process; then
     OPENCLAW_RUNTIME_MANAGEMENT_STATE='running manually'
     return 0
@@ -125,6 +149,14 @@ detect_openclaw_runtime_state() {
 
 handle_openclaw_runtime_state() {
   local manage_manual_choice=''
+
+  if [ "$CONFIG_OVERWRITTEN" = true ] && openclaw_runtime_has_running_native_gateway_service; then
+    success 'Config updated.'
+    warn 'OpenClaw is already running under the native OpenClaw LaunchAgent.'
+    out 'ClawBox will not stop or replace the native gateway automatically.'
+    OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by native OpenClaw LaunchAgent'
+    return 0
+  fi
 
   if [ "$CONFIG_OVERWRITTEN" = true ]; then
     stop_openclaw
@@ -169,6 +201,8 @@ handle_openclaw_runtime_state() {
     out "OpenClaw is already running on the VM."
     if [ "${OPENCLAW_RUNTIME_MANAGEMENT_STATE:-}" = 'managed by VM launchd' ]; then
       out 'OpenClaw runtime: managed by VM launchd.'
+    elif [ "${OPENCLAW_RUNTIME_MANAGEMENT_STATE:-}" = 'managed by native OpenClaw LaunchAgent' ]; then
+      out 'OpenClaw runtime: managed by native OpenClaw LaunchAgent (ai.openclaw.gateway).'
     fi
   else
     warn "OpenClaw is installed but not running."

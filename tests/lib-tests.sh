@@ -481,6 +481,9 @@ $1"
       *'command -v openclaw'*)
         [ "$MODULE_OPENCLAW_INSTALLED" = true ]
         ;;
+      *'ai.openclaw.gateway'*)
+        [ "${MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING:-false}" = true ]
+        ;;
       *'gateway_service_output='*)
         [ "$MODULE_OPENCLAW_SERVICE_RUNNING" = true ]
         ;;
@@ -506,6 +509,7 @@ $1"
   MODULE_OPENCLAW_PROCESS_RUNNING=false
   MODULE_OPENCLAW_SERVICE_PRESENT=false
   MODULE_OPENCLAW_SERVICE_RUNNING=false
+  MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING=false
   NEEDS_PROVISIONING=false
   IS_RUNNING=false
   detect_openclaw_runtime_state
@@ -519,6 +523,7 @@ $1"
   MODULE_OPENCLAW_PROCESS_RUNNING=false
   MODULE_OPENCLAW_SERVICE_PRESENT=false
   MODULE_OPENCLAW_SERVICE_RUNNING=false
+  MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING=false
   NEEDS_PROVISIONING=false
   IS_RUNNING=false
   detect_openclaw_runtime_state
@@ -532,6 +537,7 @@ $1"
   MODULE_OPENCLAW_PROCESS_RUNNING=true
   MODULE_OPENCLAW_SERVICE_PRESENT=true
   MODULE_OPENCLAW_SERVICE_RUNNING=false
+  MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING=false
   NEEDS_PROVISIONING=false
   IS_RUNNING=false
   detect_openclaw_runtime_state
@@ -548,6 +554,7 @@ $1"
   MODULE_OPENCLAW_PROCESS_RUNNING=true
   MODULE_OPENCLAW_SERVICE_PRESENT=false
   MODULE_OPENCLAW_SERVICE_RUNNING=false
+  MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING=false
   NEEDS_PROVISIONING=false
   IS_RUNNING=false
   detect_openclaw_runtime_state
@@ -560,6 +567,7 @@ $1"
   MODULE_OPENCLAW_INSTALLED=true
   MODULE_OPENCLAW_PROCESS_RUNNING=false
   MODULE_OPENCLAW_SERVICE_RUNNING=true
+  MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING=false
   NEEDS_PROVISIONING=false
   IS_RUNNING=false
   detect_openclaw_runtime_state
@@ -578,6 +586,7 @@ $1"
   MODULE_OPENCLAW_INSTALLED=true
   MODULE_OPENCLAW_PROCESS_RUNNING=false
   MODULE_OPENCLAW_SERVICE_RUNNING=false
+  MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING=false
   NEEDS_PROVISIONING=false
   IS_RUNNING=true
   detect_openclaw_runtime_state
@@ -590,6 +599,7 @@ $1"
   MODULE_OPENCLAW_INSTALLED=true
   MODULE_OPENCLAW_PROCESS_RUNNING=false
   MODULE_OPENCLAW_SERVICE_RUNNING=true
+  MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING=false
   NEEDS_PROVISIONING=false
   IS_RUNNING=true
   detect_openclaw_runtime_state
@@ -616,6 +626,7 @@ $1"
   MODULE_OPENCLAW_INSTALLED=true
   MODULE_OPENCLAW_PROCESS_RUNNING=false
   MODULE_OPENCLAW_SERVICE_RUNNING=false
+  MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING=false
   NEEDS_PROVISIONING=false
   IS_RUNNING=false
   detect_openclaw_runtime_state
@@ -623,6 +634,23 @@ $1"
     pass "runtime detection ignores stale prior OpenClaw artifacts without a live runtime"
   else
     fail "runtime detection should ignore stale prior OpenClaw artifacts without a live runtime"
+  fi
+
+  MODULE_OPENCLAW_INSTALLED=true
+  MODULE_OPENCLAW_PROCESS_RUNNING=false
+  MODULE_OPENCLAW_SERVICE_PRESENT=true
+  MODULE_OPENCLAW_SERVICE_RUNNING=false
+  MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING=true
+  NEEDS_PROVISIONING=false
+  IS_RUNNING=false
+  detect_openclaw_runtime_state
+  if [ "$NEEDS_PROVISIONING" = false ] \
+    && [ "$IS_RUNNING" = true ] \
+    && [ "${OPENCLAW_RUNTIME_MANAGEMENT_STATE:-}" = 'managed by native OpenClaw LaunchAgent' ] \
+    && openclaw_runtime_has_running_native_gateway_service; then
+    pass "runtime detection recognizes a running native OpenClaw LaunchAgent"
+  else
+    fail "runtime detection should recognize a running native OpenClaw LaunchAgent"
   fi
 
   if [[ "$OPENCLAW_RUNTIME_CHECK_LOG" != *'pgrep -f openclaw'* ]] \
@@ -644,6 +672,8 @@ test_runtime_handle_module() {
   local saved_success=''
   local saved_out=''
   local saved_warn=''
+  local saved_native_gateway_check=''
+  local saved_manual_process_check=''
 
   # shellcheck source=/dev/null
   . "$ROOT_DIR/lib/runtime.sh"
@@ -651,6 +681,8 @@ test_runtime_handle_module() {
   saved_success="$(declare -f success)"
   saved_out="$(declare -f out)"
   saved_warn="$(declare -f warn)"
+  saved_native_gateway_check="$(declare -f openclaw_runtime_has_running_native_gateway_service)"
+  saved_manual_process_check="$(declare -f openclaw_runtime_has_manual_process)"
 
   start_openclaw() {
     start_attempts=$((start_attempts + 1))
@@ -732,6 +764,27 @@ test_runtime_handle_module() {
     fail "runtime handler should start OpenClaw instead of claiming launchctl-only state is already running"
   fi
 
+  openclaw_runtime_has_running_native_gateway_service() {
+    return 0
+  }
+
+  : > "$output_log"
+  start_attempts=0
+  stop_attempts=0
+  CONFIG_OVERWRITTEN=true
+  IS_RUNNING=true
+  OPENCLAW_AUTOSTART=true
+  if handle_openclaw_runtime_state >/dev/null 2>&1 \
+    && [ "$start_attempts" -eq 0 ] \
+    && [ "$stop_attempts" -eq 0 ] \
+    && grep -Fq 'native OpenClaw LaunchAgent' "$output_log" \
+    && grep -Fq 'will not stop or replace the native gateway automatically' "$output_log"; then
+    pass "runtime handler preserves a running native OpenClaw gateway during config updates"
+  else
+    fail "runtime handler should not start ClawBox OpenClaw into a native gateway port"
+  fi
+  eval "$saved_native_gateway_check"
+
   openclaw_runtime_has_manual_process() {
     return 0
   }
@@ -761,7 +814,7 @@ test_runtime_handle_module() {
   unset -f stop_openclaw
   unset -f prompt_yes_no
   unset -f is_yes
-  unset -f openclaw_runtime_has_manual_process
+  eval "$saved_manual_process_check"
   eval "$saved_success"
   eval "$saved_out"
   eval "$saved_warn"
