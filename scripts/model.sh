@@ -18,6 +18,13 @@ source "$BASE_DIR/lib/setup-embeddings.sh"
 source "$BASE_DIR/lib/llama.sh"
 source "$BASE_DIR/lib/ssh.sh"
 source "$BASE_DIR/lib/runtime.sh"
+source "$BASE_DIR/lib/deploy.sh"
+
+RUNTIME_DIR="$BASE_DIR/vm/runtime"
+CONFIG_PATH="$RUNTIME_DIR/openclaw.json"
+REMOTE_CONFIG_DIR='~/.openclaw'
+REMOTE_CONFIG_PATH='~/.openclaw/openclaw.json'
+GENERATE_SCRIPT="$BASE_DIR/host/scripts/generate-openclaw-config.sh"
 
 is_yes() {
   case "$1" in
@@ -199,6 +206,13 @@ offer_vm_openclaw_alias_sync_if_drift() {
   fi
 }
 
+sync_model_openclaw_config_scope() {
+  local scope="$1"
+
+  sync_openclaw_config_targeted_only "$scope" || return $?
+  offer_targeted_openclaw_config_restart || return $?
+}
+
 switch_primary_model() {
   [ -f "$ENV_FILE" ] || { error 'Missing .env. Run ./clawbox setup first.'; return 1; }
   source_env_file || return $?
@@ -228,11 +242,12 @@ switch_primary_model() {
     out 'Review the llama-server logs, correct the host service, then run ./clawbox model again.'
     return 1
   fi
+  sync_model_openclaw_config_scope primary || return $?
   success "Host llama-server now uses ${MODEL_PATH##*/}."
   out "Selected GGUF: $MODEL_PATH"
   out "Advertised OpenClaw model: ${OPENCLAW_PROVIDER_NAME:-clawbox}/${OPENCLAW_DEFAULT_MODEL:-local}"
   out "llama-server API: ${LLAMA_BASE_URL:-not configured}"
-  out 'OpenClaw configuration and VM runtime were not changed.'
+  out 'OpenClaw config was not replaced; only ClawBox-managed primary keys may have been synced.'
   out 'Check status with: ./clawbox status'
 }
 

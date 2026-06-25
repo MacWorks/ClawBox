@@ -82,41 +82,47 @@ esac
 
 mkdir -p "$RUNTIME_DIR"
 
-MODEL_REF="${OPENCLAW_PROVIDER_NAME}/${OPENCLAW_DEFAULT_MODEL}"
+export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE
 
-cat > "$CONFIG_PATH" <<EOF
-{
-  "gateway": {
-    "mode": $(json_escape "$OPENCLAW_GATEWAY_MODE_VALUE")
-  },
-  "agents": {
-    "defaults": {
-      "model": {
-        "primary": $(json_escape "$MODEL_REF")
-      }
-    }
-  },
-  "models": {
-    "providers": {
-      $(json_escape "$OPENCLAW_PROVIDER_NAME"): {
-        "baseUrl": $(json_escape "$LLAMA_BASE_URL"),
-        "api": "openai-responses",
-        "models": [
-          {
-            "id": $(json_escape "$OPENCLAW_DEFAULT_MODEL"),
-            "name": $(json_escape "$OPENCLAW_DEFAULT_MODEL"),
-            "contextWindow": $LLAMA_CONTEXT_WINDOW_VALUE,
+python3 - "$CONFIG_PATH" <<'PY'
+import json
+import os
+import sys
+
+provider = os.environ["OPENCLAW_PROVIDER_NAME"]
+model = os.environ["OPENCLAW_DEFAULT_MODEL"]
+config = {
+    "gateway": {"mode": os.environ["OPENCLAW_GATEWAY_MODE_VALUE"]},
+    "agents": {"defaults": {"model": {"primary": f"{provider}/{model}"}}},
+    "models": {"providers": {provider: {
+        "baseUrl": os.environ["LLAMA_BASE_URL"],
+        "api": "openai-completions",
+        "models": [{
+            "id": model,
+            "name": model,
+            "contextWindow": int(os.environ["LLAMA_CONTEXT_WINDOW_VALUE"]),
             "maxTokens": 2048,
-            "compat": {
-              "supportsDeveloperRole": false
-            }
-          }
-        ]
-      }
-    }
-  }
+            "compat": {"supportsDeveloperRole": False},
+            "api": "openai-completions",
+        }],
+    }}},
 }
-EOF
+
+if os.environ.get("EMBEDDINGS_ENABLED", "false") == "true" and os.environ.get("EMBEDDINGS_MODEL_PATH"):
+    config["agents"]["defaults"]["memorySearch"] = {
+        "enabled": True,
+        "provider": "openai-compatible",
+        "model": os.path.basename(os.environ["EMBEDDINGS_MODEL_PATH"]),
+        "remote": {
+            "baseUrl": os.environ.get("EMBEDDINGS_LLAMA_BASE_URL", ""),
+            "apiKey": "ollama-local",
+        },
+    }
+
+with open(sys.argv[1], "w", encoding="utf-8") as output:
+    json.dump(config, output, indent=2)
+    output.write("\n")
+PY
 
 validate_json_file "$CONFIG_PATH"
 

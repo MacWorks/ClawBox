@@ -1,5 +1,7 @@
-# Optional host-only embeddings llama-server setup. It deliberately has no VM,
-# OpenClaw configuration, deployment, or gateway lifecycle responsibilities.
+# Optional host-only embeddings llama-server setup. Normal setup performs
+# OpenClaw config sync later in the deployment phase. The model command may
+# provide sync_model_openclaw_config_scope to update only memorySearch keys
+# after an embeddings model switch.
 
 select_embeddings_model_path() {
   local default_dir='' selected='' choice='' index=1 model='' models=()
@@ -73,8 +75,11 @@ switch_embeddings_model() {
   local mode=''
   if [ "${EMBEDDINGS_ENABLED:-false}" != true ]; then
     out 'Embeddings server is not configured.'
-    setup_embeddings_service_phase
-    return $?
+    setup_embeddings_service_phase || return $?
+    if command -v sync_model_openclaw_config_scope >/dev/null 2>&1; then
+      sync_model_openclaw_config_scope memorySearch || return $?
+    fi
+    return 0
   fi
   section 'Embeddings Model'
   out "Current embeddings model: ${EMBEDDINGS_MODEL_PATH:-not configured}"
@@ -86,8 +91,11 @@ switch_embeddings_model() {
   detect_existing_llama_install_mode >/dev/null 2>&1 || true; mode="$REPLY"
   [ -n "$mode" ] || mode=user
   setup_embeddings_llama_service_for_mode "$mode" || return $?
+  if command -v sync_model_openclaw_config_scope >/dev/null 2>&1; then
+    sync_model_openclaw_config_scope memorySearch || return $?
+  fi
   success "Embeddings llama-server now uses ${EMBEDDINGS_MODEL_PATH##*/}."
   out "Embeddings llama-server API: ${EMBEDDINGS_LLAMA_BASE_URL:-not configured}"
-  out 'OpenClaw configuration and VM runtime were not changed.'
+  out 'OpenClaw config was not replaced; only ClawBox-managed memorySearch keys may have been synced.'
   out 'Check status with: ./clawbox status'
 }

@@ -118,8 +118,8 @@ What to expect:
 - the script installs the wrapper, runtime env file, and launchd plist for the selected mode
 - the script starts the host `llama-server` service and verifies that the process is running and the port is open
 - the script validates host tools and SSH access before doing remote work
-- the script generates `vm/runtime/openclaw.json` on the host
-- the script compares that config semantically against `~/.openclaw/openclaw.json` on the VM
+- if the VM has no `~/.openclaw/openclaw.json`, the script installs an initial minimal OpenClaw config
+- if the VM already has `~/.openclaw/openclaw.json`, the script preserves it and updates only ClawBox-managed keys with `openclaw config set`
 - the script copies `vm-provision.sh` to `VM_RUNTIME_PATH` when needed
 - if OpenClaw is not installed, the script prints VM-local provisioning
   instructions and prompts `Provisioning completed inside the VM? [Y/n]:`
@@ -167,26 +167,42 @@ are not supported.
 
 To switch only the host GGUF model after setup, run `./clawbox model`. It
 updates `MODEL_PATH`, restarts the managed host `llama-server`, and leaves VM
-provisioning and OpenClaw configuration unchanged.
+provisioning and the OpenClaw config file intact. It may verify and correct
+only ClawBox-managed OpenClaw provider keys such as `clawbox/local` with
+targeted `openclaw config set` calls.
 
 ### Optional embeddings server
 
 Setup can optionally manage a second, host-only `llama-server` for embeddings.
 It has a separate GGUF, launchd service, logs, and endpoint (default port
 `11435`), while the primary chat/inference server stays unchanged. It never
-changes VM provisioning, OpenClaw configuration, or onboarding. Its extra args
-default to `--embedding`; like primary `LLAMA_EXTRA_ARGS`, only simple
-whitespace-separated arguments are supported.
+changes VM provisioning, replaces OpenClaw configuration, or alters onboarding.
+When enabled, ClawBox can sync only OpenClaw `memorySearch` keys to point at the
+embeddings endpoint. Its extra args default to `--embedding`; like primary
+`LLAMA_EXTRA_ARGS`, only simple whitespace-separated arguments are supported.
 
 Use `./clawbox model primary` to switch only the primary model, or
 `./clawbox model embeddings` (or `./clawbox model embedding`) to configure/switch only the
-embeddings model. The embeddings command never changes VM/OpenClaw config.
+embeddings model. The embeddings command does not replace VM/OpenClaw config;
+it may update only the ClawBox-managed OpenClaw `memorySearch` values. The
+memory-search remote API key is set to `ollama-local` as ClawBox's local/LAN
+embeddings marker.
 
 For existing filename-derived aliases, `./clawbox model` offers a separate
 default-no migration to `clawbox/local`. That migration changes only `.env`;
 it then separately offers a targeted VM update for
-`agents.defaults.model.primary`. Full setup config sync remains separate and
-may replace broader VM configuration only after confirmation.
+`agents.defaults.model.primary`.
+
+Normal setup preserves an existing VM `~/.openclaw/openclaw.json`. The explicit
+full-reset path is:
+
+```bash
+./clawbox openclaw reset
+```
+
+That command warns loudly, defaults to No, backs up the existing VM config when
+present, and then replaces it with ClawBox's minimal generated config only if
+you confirm.
 
 Host checks:
 

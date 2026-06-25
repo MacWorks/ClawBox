@@ -2275,6 +2275,10 @@ test_provisioning_and_deployment_flow() {
       step 'Configured llama-server for this user'
     }
 
+    setup_embeddings_service_phase() {
+      return 0
+    }
+
     ensure_vm_connectivity_or_repair() {
       return 0
     }
@@ -2284,12 +2288,8 @@ test_provisioning_and_deployment_flow() {
       IS_RUNNING=false
     }
 
-    generate_openclaw_config() {
-      step 'Generating OpenClaw config...'
-    }
-
     sync_openclaw_config() {
-      out 'Uploading config...'
+      out 'OpenClaw config already matches ClawBox-managed settings.'
     }
 
     ensure_vm_provision_script() {
@@ -2309,6 +2309,14 @@ test_provisioning_and_deployment_flow() {
       out 'Start with: openclaw gateway'
     }
 
+    offer_targeted_openclaw_config_restart() {
+      return 0
+    }
+
+    offer_openclaw_restart_after_llama_update() {
+      return 0
+    }
+
     MODEL_PATH='/tmp/model.gguf'
     LLAMA_PORT='11434'
 
@@ -2320,7 +2328,7 @@ test_provisioning_and_deployment_flow() {
   assert_contains 'provisioning flow shows openclaw section' "$output" ' > OpenClaw Configuration'
   assert_contains 'provisioning flow shows deployment section' "$output" ' > Deployment'
   assert_contains 'provisioning flow shows runtime section' "$output" ' > Runtime'
-  assert_contains 'provisioning flow shows config generation step' "$output" 'Generating OpenClaw config...'
+  assert_contains 'provisioning flow reports targeted config sync state' "$output" 'OpenClaw config already matches ClawBox-managed settings.'
   assert_contains 'provisioning flow shows runtime callout' "$output" 'OpenClaw is installed but not running.'
   assert_no_excessive_blank_lines 'provisioning flow avoids excessive blank lines' "$output"
 }
@@ -2386,6 +2394,10 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
       step 'Configured llama-server for this user'
     }
 
+    setup_embeddings_service_phase() {
+      return 0
+    }
+
     ensure_vm_connectivity_or_repair() {
       return 0
     }
@@ -2421,6 +2433,14 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
       warn 'OpenClaw is installed but not running.'
       out 'Start with: openclaw gateway'
       OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by VM launchd'
+    }
+
+    offer_targeted_openclaw_config_restart() {
+      return 0
+    }
+
+    offer_openclaw_restart_after_llama_update() {
+      return 0
     }
 
     resolve_vm_openclaw_bin_path() {
@@ -2478,6 +2498,10 @@ test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete(
       return 0
     }
 
+    setup_embeddings_service_phase() {
+      return 0
+    }
+
     ensure_vm_connectivity_or_repair() {
       return 0
     }
@@ -2505,6 +2529,14 @@ test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete(
 
     handle_openclaw_runtime_state() {
       out 'UNEXPECTED RUNTIME HANDLER'
+    }
+
+    offer_targeted_openclaw_config_restart() {
+      return 0
+    }
+
+    offer_openclaw_restart_after_llama_update() {
+      return 0
     }
 
     VM_RUNTIME_PATH='/Users/tester/ClawBox'
@@ -2603,6 +2635,7 @@ test_host_llama_restart_uses_install_mode_without_hidden_health_wait() {
     detect_existing_llama_install_mode() { REPLY='user'; return 0; }
     llama_api_responding() { return 1; }
     setup_user_llama_service() { return 1; }
+    setup_embeddings_service_phase() { printf 'UNEXPECTED_EMBEDDINGS_FLOW\n'; return 0; }
     llama_show_recent_error_log() { printf 'HOST_LOG_GUIDANCE:%s\n' "$1"; }
     ensure_vm_connectivity_or_repair() { printf 'UNEXPECTED_VM_FLOW\n'; return 0; }
     offer_openclaw_restart_after_llama_update() { printf 'UNEXPECTED_OPENCLAW_RECOVERY\n'; return 0; }
@@ -2616,6 +2649,7 @@ test_host_llama_restart_uses_install_mode_without_hidden_health_wait() {
   assert_contains 'failed host restart reports the selected service log' "$failure_output" 'HOST_LOG_GUIDANCE:user'
   assert_contains 'failed host restart returns failure instead of continuing' "$failure_output" 'STATUS:1'
   assert_not_contains 'failed host restart does not continue into VM setup' "$failure_output" 'UNEXPECTED_VM_FLOW'
+  assert_not_contains 'failed host restart does not continue into embeddings setup' "$failure_output" 'UNEXPECTED_EMBEDDINGS_FLOW'
   assert_not_contains 'failed host restart does not continue into OpenClaw recovery' "$failure_output" 'UNEXPECTED_OPENCLAW_RECOVERY'
 }
 

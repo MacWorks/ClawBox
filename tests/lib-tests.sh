@@ -828,7 +828,9 @@ test_deploy_module() {
   local last_ssh_exec=''
   local last_scp_target=''
   local remote_exists=true
-  local configs_equal=true
+  local managed_primary='clawbox/local'
+  local managed_base_url='http://127.0.0.1:11434/v1'
+  local set_log=''
   local prompt_answer='n'
 
   ssh_run_quiet() {
@@ -856,10 +858,6 @@ test_deploy_module() {
         return 0
         ;;
     esac
-  }
-
-  configs_match() {
-    [ "$configs_equal" = true ]
   }
 
   prompt_yes_no() {
@@ -899,11 +897,32 @@ test_deploy_module() {
   # shellcheck source=/dev/null
   . "$ROOT_DIR/lib/deploy.sh"
 
+  openclaw_config_desired_entries_for_scope() {
+    printf 'agents.defaults.model.primary\tclawbox/local\n'
+    printf 'models.providers.clawbox.baseUrl\thttp://127.0.0.1:11434/v1\n'
+  }
+
+  openclaw_config_remote_get() {
+    case "$1" in
+      agents.defaults.model.primary) printf '%s\n' "$managed_primary" ;;
+      models.providers.clawbox.baseUrl) printf '%s\n' "$managed_base_url" ;;
+      *) return 1 ;;
+    esac
+  }
+
+  openclaw_config_remote_set() {
+    set_log="${set_log}$1=$2\n"
+    case "$1" in
+      agents.defaults.model.primary) managed_primary="$2" ;;
+      models.providers.clawbox.baseUrl) managed_base_url="$2" ;;
+    esac
+  }
+
   sync_openclaw_config
-  if [ -f "$mkdir_marker" ] && [ ! -f "$prompt_marker" ] && [ ! -f "$upload_marker" ] && [ "$CONFIG_OVERWRITTEN" = false ]; then
-    pass "deploy logic skips overwrite when configs are identical"
+  if [ -f "$mkdir_marker" ] && [ ! -f "$prompt_marker" ] && [ ! -f "$upload_marker" ] && [ -z "$set_log" ] && [ "$CONFIG_OVERWRITTEN" = false ]; then
+    pass "deploy logic skips config mutation when managed settings match"
   else
-    fail "deploy logic should skip overwrite when configs are identical"
+    fail "deploy logic should skip config mutation when managed settings match"
   fi
 
   if [ "$last_ssh_run_quiet" = 'mkdir -p ~/.openclaw' ] && [ "$last_ssh_exec" = 'test -f ~/.openclaw/openclaw.json' ]; then
@@ -914,22 +933,43 @@ test_deploy_module() {
 
   rm -f "$prompt_marker" "$upload_marker" "$mkdir_marker"
   remote_exists=true
-  configs_equal=false
+  managed_primary='clawbox/legacy'
   prompt_answer='y'
   CONFIG_OVERWRITTEN=false
   last_scp_target=''
+  set_log=''
 
   sync_openclaw_config
-  if [ -f "$prompt_marker" ] && [ -f "$upload_marker" ] && [ "$CONFIG_OVERWRITTEN" = true ]; then
-    pass "deploy logic triggers overwrite path when configs differ"
+  if [ -f "$prompt_marker" ] && [ ! -f "$upload_marker" ] && [[ "$set_log" == *'agents.defaults.model.primary=clawbox/local'* ]] && [ "$CONFIG_OVERWRITTEN" = false ]; then
+    pass "deploy logic applies targeted updates when managed settings differ"
   else
-    fail "deploy logic did not trigger the overwrite path when configs differed"
+    fail "deploy logic should apply targeted updates when managed settings differ"
   fi
 
-  if [ "$last_scp_target" = 'test-vm:~/.openclaw/openclaw.json' ]; then
-    pass "deploy logic uploads to the VM-resolved config path"
+  if [ -z "$last_scp_target" ]; then
+    pass "deploy logic preserves existing VM config file"
   else
-    fail "deploy logic should upload to the VM-resolved config path"
+    fail "deploy logic should not upload an existing VM config file"
+  fi
+
+  rm -f "$upload_marker"
+  remote_exists=false
+  generate_openclaw_config() { : > "$CONFIG_PATH"; }
+  sync_openclaw_config
+  if [ -f "$upload_marker" ] && [ "$last_scp_target" = 'test-vm:~/.openclaw/openclaw.json' ]; then
+    pass "deploy logic bootstraps missing VM config"
+  else
+    fail "deploy logic should bootstrap missing VM config"
+  fi
+
+  rm -f "$upload_marker" "$prompt_marker" "$mkdir_marker"
+  remote_exists=false
+  set_log=''
+  sync_openclaw_config_targeted_only primary
+  if [ ! -f "$upload_marker" ] && [ ! -f "$prompt_marker" ] && [ -z "$set_log" ]; then
+    pass "targeted-only deploy sync does not bootstrap or replace missing VM config"
+  else
+    fail "targeted-only deploy sync should not bootstrap or replace missing VM config"
   fi
 }
 

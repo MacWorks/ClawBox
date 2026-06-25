@@ -14,6 +14,7 @@ Commands:
   setup       Run interactive setup
   status      Show system status
   model       Switch a host model (primary or embeddings)
+  openclaw    OpenClaw maintenance commands
   help        Show this help message
 
 Options:
@@ -26,6 +27,7 @@ Examples:
   ./clawbox model primary
   ./clawbox model embedding
   ./clawbox model embeddings
+  ./clawbox openclaw reset
 EOF
 }
 
@@ -43,6 +45,9 @@ case "$cmd" in
     ;;
   model)
     exec "$BASE_DIR/scripts/model.sh" "$@"
+    ;;
+  openclaw)
+    exec "$BASE_DIR/scripts/openclaw.sh" "$@"
     ;;
   help|-h|--help)
     show_help

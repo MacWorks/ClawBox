@@ -7,7 +7,9 @@ This document describes the host side of ClawBox.
 After setup, use `./clawbox model` to switch the host GGUF without redeploying
 VM artifacts or replacing OpenClaw configuration. New setups normally advertise
 the stable `clawbox/local` model reference to OpenClaw, so a GGUF change does
-not require OpenClaw re-onboarding.
+not require OpenClaw re-onboarding. Model commands may run targeted
+`openclaw config set` updates for ClawBox-managed provider or memory-search
+keys, but they do not replace `~/.openclaw/openclaw.json`.
 
 `./clawbox setup` is the main host entry point. It does the following:
 
@@ -42,9 +44,9 @@ not require OpenClaw re-onboarding.
 - when a chosen models directory contains no supported `.gguf` files, keeps setup in an explicit recovery menu that allows entering a different directory, entering a full model path manually, re-scanning the current directory, or exiting setup gracefully instead of silently collapsing into manual file mode
 - checks SSH connectivity to the VM
 - detects whether OpenClaw is installed and running on the VM
-- generates `vm/runtime/openclaw.json` on the host
-- compares the generated config to the VM's authoritative config at `~/.openclaw/openclaw.json`
-- uploads the config only when needed
+- installs an initial minimal OpenClaw config only when the VM has no `~/.openclaw/openclaw.json`
+- preserves an existing VM `~/.openclaw/openclaw.json` and updates only ClawBox-managed keys with `openclaw config set`
+- exposes `./clawbox openclaw reset` as the explicit, default-no full config replacement path
 - copies `vm-provision.sh` to the VM runtime path when missing
 - if OpenClaw is not installed yet, presents VM-local provisioning guidance and
   prompts for confirmation when provisioning has completed inside the VM
@@ -106,8 +108,11 @@ Important values:
 
 After setup, `./clawbox model primary` switches only the primary model, while
 `./clawbox model embeddings` (or `./clawbox model embedding`) configures or
-switches only the optional embeddings model. Neither command changes VM or
-OpenClaw configuration.
+switches only the optional embeddings model. Neither command replaces VM or
+OpenClaw configuration. The primary model command may verify/correct only the
+stable provider keys for `clawbox/local`; the embeddings command may sync only
+OpenClaw `memorySearch` keys, using `ollama-local` as the local/LAN remote API
+key marker.
 
 Use `.env.example` as the reference for required keys and expected value formats.
 
@@ -136,6 +141,7 @@ A successful run of `./clawbox setup` should:
 - if provisioning is required, present VM-local provisioning guidance and wait
   for the user to confirm completion
 - ensure the VM's authoritative OpenClaw config is present at `~/.openclaw/openclaw.json`
+  without replacing an existing config during normal setup
 - report whether OpenClaw is missing, stopped, or already running
 
 When `OPENCLAW_AUTOSTART=true`, setup writes or refreshes a per-user OpenClaw launchd plist in the VM, starts it with `launchctl`, and waits for that service to become active before continuing.

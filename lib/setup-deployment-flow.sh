@@ -80,11 +80,8 @@ run_provisioning_and_deployment() {
 
   detect_openclaw_runtime_state
 
-  generate_openclaw_config
-
-  # Config sync uses semantic comparison rather than byte-for-byte file
-  # comparison, so runtime-managed auth/meta fields and formatting differences
-  # do not trigger an unnecessary overwrite prompt.
+  # Existing VM config is user/OpenClaw-owned. Normal setup makes only
+  # targeted OpenClaw CLI updates; the generator is used only for bootstrap.
   sync_openclaw_config
 
   section "Deployment"
@@ -100,6 +97,8 @@ run_provisioning_and_deployment() {
   setup_launchagent
 
   handle_openclaw_runtime_state || return $?
+
+  offer_targeted_openclaw_config_restart || return $?
 
   offer_openclaw_restart_after_llama_update || return $?
 

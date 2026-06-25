@@ -7,6 +7,9 @@ Use `./clawbox model` after setup to choose which host model to manage.
 primary managed host service. `./clawbox model embeddings` (or
 `./clawbox model embedding`) configures or changes only the optional embeddings
 instance. Neither path deploys VM artifacts or replaces OpenClaw configuration.
+They may run targeted OpenClaw config sync for ClawBox-managed keys only:
+primary sync covers the stable provider/model alias, and embeddings sync covers
+OpenClaw `memorySearch`.
 New ClawBox setups advertise the
 stable OpenClaw model alias `clawbox/local`; the actual GGUF remains selected by
 the host service.
@@ -49,8 +52,12 @@ uses `EMBEDDINGS_*` values, a separate `com.clawbox.llama.embeddings` launchd
 label, separate runtime env/plist files and logs, and default port `11435`.
 The embeddings GGUF and `EMBEDDINGS_LLAMA_EXTRA_ARGS` are independent of the
 primary model; extra args support only simple whitespace-separated values.
-Embeddings setup never changes VM or OpenClaw configuration. Status reports it
-only when `EMBEDDINGS_ENABLED=true`.
+Embeddings setup never replaces VM or OpenClaw configuration. Status reports it
+only when `EMBEDDINGS_ENABLED=true`. When embeddings are enabled, ClawBox can
+target OpenClaw memory search at the embeddings server with
+`provider=openai-compatible`, the embeddings model filename as `model`,
+`remote.baseUrl=EMBEDDINGS_LLAMA_BASE_URL`, and `remote.apiKey=ollama-local`.
+Those targeted updates do not replace `~/.openclaw/openclaw.json`.
 
 New setups default `LLAMA_PORT` to `11434`. Existing `.env` values are kept as-is.
 

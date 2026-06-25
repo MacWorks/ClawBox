@@ -9,8 +9,8 @@ Normal runtime work is limited to:
 - validating host prerequisites
 - checking SSH connectivity to the VM
 - detecting whether OpenClaw is installed and running
-- generating a local OpenClaw config
-- syncing the authoritative VM config when needed
+- generating a local OpenClaw config for first-run bootstrap or explicit reset
+- syncing only ClawBox-managed OpenClaw keys when an authoritative VM config already exists
 - copying `vm-provision.sh` to the VM runtime path when needed
 - optionally starting OpenClaw as a VM user launchd service according to current state and `OPENCLAW_AUTOSTART`
 
@@ -20,7 +20,12 @@ Runtime does not install Homebrew, Node, or OpenClaw.
 
 The authoritative VM config is `~/.openclaw/openclaw.json`.
 
-ClawBox compares configs semantically, not byte for byte.
+For existing configs, ClawBox no longer compares or replaces the whole file.
+It reads only ClawBox-managed keys with `openclaw config get` and updates drift
+with `openclaw config set`.
+
+Legacy semantic comparison helpers compare configs semantically, not byte for
+byte.
 
 That comparison deliberately ignores:
 
@@ -31,9 +36,33 @@ That comparison deliberately ignores:
 
 Those exclusions matter because OpenClaw mutates runtime-managed fields after startup. Without normalization, the same effective config would look different on every run.
 
-When a meaningful difference remains, setup requires explicit confirmation
-before replacing the whole VM config. That replacement can remove user-managed
-settings and restart a running gateway.
+Normal setup never replaces an existing VM config. It reads and updates only
+ClawBox-managed provider, primary-model, and optional embeddings memory-search
+keys through `openclaw config get` and `openclaw config set`. All other
+OpenClaw settings remain user/OpenClaw-owned.
+
+The managed primary keys are:
+
+- `agents.defaults.model.primary`
+- `models.providers.<provider>.baseUrl`
+- `models.providers.<provider>.api`
+- `models.providers.<provider>.models`
+
+When embeddings are enabled, the managed memory-search keys are:
+
+- `agents.defaults.memorySearch.enabled`
+- `agents.defaults.memorySearch.provider`
+- `agents.defaults.memorySearch.model`
+- `agents.defaults.memorySearch.remote.baseUrl`
+- `agents.defaults.memorySearch.remote.apiKey`
+
+The memory-search provider is `openai-compatible`, the model value is the
+embeddings GGUF basename, and the remote API key is `ollama-local` as ClawBox's
+local/LAN marker.
+
+`./clawbox openclaw reset` is the separate, default-no command for an
+intentional full replacement; it backs up the existing config first when
+present.
 
 ## Runtime states
 
@@ -59,9 +88,11 @@ ClawBox-managed service into its port.
 
 ## Restart behavior
 
-When the config is replaced and `OPENCLAW_AUTOSTART=true`, `./clawbox setup` may restart OpenClaw as a VM user launchd service so the new config takes effect.
+Normal setup does not replace an existing config. If targeted settings changed,
+setup reports that OpenClaw may reload automatically and offers an explicit,
+default-no gateway restart prompt.
 
-When the config is unchanged:
+When targeted settings are unchanged:
 
 - no overwrite prompt appears
 - no restart is triggered for formatting-only or runtime-managed differences

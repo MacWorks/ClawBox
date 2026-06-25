@@ -187,6 +187,7 @@ test_primary_model_subcommand_preserves_embeddings_state() {
       detect_model_llama_mode() { REPLY=user; }
       setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE:%s\n' "$1"; }
       setup_embeddings_llama_service_for_mode() { printf 'EMBEDDINGS_SERVICE_UNEXPECTED\n'; }
+      sync_model_openclaw_config_scope() { printf 'TARGETED_SYNC:%s\n' "$1"; }
       ssh() { printf 'SSH_UNEXPECTED\n'; }
       main primary
       printf 'FINAL:%s:%s:%s\n' "$MODEL_PATH" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_ENABLED"
@@ -194,8 +195,9 @@ test_primary_model_subcommand_preserves_embeddings_state() {
   2>&1)"
   assert_contains 'primary subcommand updates only primary model path' "$output" 'FINAL:/models/primary-new.gguf:/models/embeddings.gguf:true'
   assert_contains 'primary subcommand restarts primary service' "$output" 'PRIMARY_SERVICE:user'
+  assert_contains 'primary subcommand invokes targeted primary OpenClaw sync' "$output" 'TARGETED_SYNC:primary'
   assert_not_contains 'primary subcommand does not restart embeddings service' "$output" 'EMBEDDINGS_SERVICE_UNEXPECTED'
-  assert_not_contains 'primary subcommand does not contact VM' "$output" 'SSH_UNEXPECTED'
+  assert_not_contains 'primary subcommand does not directly overwrite OpenClaw config' "$output" 'openclaw.json'
 }
 
 test_embeddings_model_subcommands_are_isolated() {
@@ -216,6 +218,7 @@ test_embeddings_model_subcommands_are_isolated() {
       detect_existing_llama_install_mode() { REPLY=user; }
       setup_embeddings_llama_service_for_mode() { printf 'EMBEDDINGS_SERVICE:%s\n' "$1"; }
       setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE_UNEXPECTED\n'; }
+      sync_model_openclaw_config_scope() { printf 'TARGETED_SYNC:%s:%s\n' "$1" "$(basename "$EMBEDDINGS_MODEL_PATH")"; }
       ssh() { printf 'SSH_UNEXPECTED\n'; }
       main embeddings
       printf 'FINAL:%s:%s:%s:%s:%s\n' "$MODEL_PATH" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_ENABLED" "$EMBEDDINGS_LLAMA_BASE_URL" "$OPENCLAW_DEFAULT_MODEL"
@@ -223,8 +226,9 @@ test_embeddings_model_subcommands_are_isolated() {
   2>&1)"
   assert_contains 'embeddings subcommand updates only embeddings model path and endpoint' "$embeddings_output" 'FINAL:/models/primary.gguf:/models/embeddings-new.gguf:true:http://127.0.0.1:11435/v1:local'
   assert_contains 'embeddings subcommand restarts embeddings service' "$embeddings_output" 'EMBEDDINGS_SERVICE:user'
+  assert_contains 'embeddings subcommand invokes targeted memorySearch sync with basename' "$embeddings_output" 'TARGETED_SYNC:memorySearch:embeddings-new.gguf'
   assert_not_contains 'embeddings subcommand does not restart primary service' "$embeddings_output" 'PRIMARY_SERVICE_UNEXPECTED'
-  assert_not_contains 'embeddings subcommand does not contact VM' "$embeddings_output" 'SSH_UNEXPECTED'
+  assert_not_contains 'embeddings subcommand does not directly overwrite OpenClaw config' "$embeddings_output" 'openclaw.json'
   assert_contains 'embeddings subcommand reports its existing endpoint' "$embeddings_output" 'Embeddings llama-server API: http://127.0.0.1:11435/v1'
 
   alias_output="$(
@@ -263,14 +267,48 @@ test_embeddings_model_subcommand_can_enable_disabled_embeddings() {
       detect_existing_llama_install_mode() { REPLY=user; }
       setup_embeddings_llama_service_for_mode() { printf 'EMBEDDINGS_SERVICE:%s\n' "$1"; }
       setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE_UNEXPECTED\n'; }
+      sync_model_openclaw_config_scope() { printf 'TARGETED_SYNC:%s:%s\n' "$1" "$(basename "$EMBEDDINGS_MODEL_PATH")"; }
       ssh() { printf 'SSH_UNEXPECTED\n'; }
       main embeddings
     }
   2>&1)"
   assert_contains 'disabled embeddings subcommand enables embeddings only' "$output" 'WRITE_ENABLED:true:/models/primary.gguf:/models/embeddings.gguf'
   assert_contains 'disabled embeddings subcommand starts embeddings service' "$output" 'EMBEDDINGS_SERVICE:user'
+  assert_contains 'disabled embeddings subcommand syncs memorySearch after enabling' "$output" 'TARGETED_SYNC:memorySearch:embeddings.gguf'
   assert_not_contains 'disabled embeddings subcommand does not restart primary service' "$output" 'PRIMARY_SERVICE_UNEXPECTED'
-  assert_not_contains 'disabled embeddings subcommand does not contact VM' "$output" 'SSH_UNEXPECTED'
+  assert_not_contains 'disabled embeddings subcommand does not directly overwrite OpenClaw config' "$output" 'openclaw.json'
+}
+
+test_model_targeted_sync_scopes_are_narrow() {
+  local primary_entries memory_entries
+  primary_entries="$({
+    . "$ROOT_DIR/lib/deploy.sh"
+    OPENCLAW_PROVIDER_NAME='clawbox'
+    OPENCLAW_DEFAULT_MODEL='local'
+    LLAMA_BASE_URL='http://127.0.0.1:11434/v1'
+    LLAMA_CTX=32768
+    EMBEDDINGS_ENABLED=true
+    EMBEDDINGS_MODEL_PATH='/models/embed.gguf'
+    EMBEDDINGS_LLAMA_BASE_URL='http://127.0.0.1:11435/v1'
+    openclaw_config_desired_entries_for_scope primary
+  })"
+  memory_entries="$({
+    . "$ROOT_DIR/lib/deploy.sh"
+    OPENCLAW_PROVIDER_NAME='clawbox'
+    OPENCLAW_DEFAULT_MODEL='local'
+    LLAMA_BASE_URL='http://127.0.0.1:11434/v1'
+    EMBEDDINGS_ENABLED=true
+    EMBEDDINGS_MODEL_PATH='/models/embed.gguf'
+    EMBEDDINGS_LLAMA_BASE_URL='http://127.0.0.1:11435/v1'
+    openclaw_config_desired_entries_for_scope memorySearch
+  })"
+  assert_contains 'primary targeted sync includes default model primary key' "$primary_entries" 'agents.defaults.model.primary'
+  assert_contains 'primary targeted sync includes provider models' "$primary_entries" 'models.providers.clawbox.models'
+  assert_not_contains 'primary targeted sync excludes memorySearch keys' "$primary_entries" 'memorySearch'
+  assert_contains 'embeddings targeted sync includes memorySearch model basename' "$memory_entries" $'agents.defaults.memorySearch.model\tembed.gguf'
+  assert_contains 'embeddings targeted sync uses ollama-local memory API marker' "$memory_entries" $'agents.defaults.memorySearch.remote.apiKey\tollama-local'
+  assert_not_contains 'embeddings targeted sync excludes primary model key' "$memory_entries" 'agents.defaults.model.primary'
+  assert_not_contains 'embeddings targeted sync excludes primary provider keys' "$memory_entries" 'models.providers.clawbox'
 }
 
 test_default_model_flow_explicitly_selects_one_instance() {
@@ -303,6 +341,7 @@ run_test test_model_help_lists_instance_subcommands
 run_test test_primary_model_subcommand_preserves_embeddings_state
 run_test test_embeddings_model_subcommands_are_isolated
 run_test test_embeddings_model_subcommand_can_enable_disabled_embeddings
+run_test test_model_targeted_sync_scopes_are_narrow
 run_test test_default_model_flow_explicitly_selects_one_instance
 
 if [ "$FAILURES" -eq 0 ]; then
