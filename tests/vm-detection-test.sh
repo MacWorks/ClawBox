@@ -41,6 +41,8 @@ test_detected_vm_selection_flow() {
     install_prompt_stubs
 
     queue_prompt_answers 'y'
+    HOME="$TEMP_DIR/detected-vm-home"
+    mkdir -p "$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 
     uname() {
       printf 'arm64\n'

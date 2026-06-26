@@ -16,6 +16,9 @@ prepare_vm_state_mocks() {
   local process_output_file="$TEMP_DIR/process-list.txt"
 
   setup_mock_bin_dir
+  HOME="$TEMP_DIR/home"
+  mkdir -p "$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
+  export HOME
 
   write_mock_command utmctl '#!/bin/bash
 if [ "$1" = "list" ]; then
@@ -114,8 +117,17 @@ test_selected_detected_vm_name_reaches_startup_path() {
     return 0
   }
 
+  capture_vm_ip_discovery_baseline() {
+    return 0
+  }
+
   start_vm_with_utm() {
     started_vm_name="${VM_MACHINE_NAME:-}"
+    return 1
+  }
+
+  wait_for_vm_running() {
+    fail 'selected-vm startup path should not enter the long runtime wait after failed start'
     return 1
   }
 

@@ -54,14 +54,17 @@ fi
 # Start Server
 ########################################
 
-LLAMA_EXTRA_ARGS_ARRAY=()
-if [ -n "${LLAMA_EXTRA_ARGS:-}" ]; then
+LLAMA_ARGS=(
+  -m "$MODEL_PATH"
+  --host "$LLAMA_HOST"
+  --port "$LLAMA_PORT"
+  --ctx-size "$LLAMA_CTX"
+)
+
+if [[ "${LLAMA_EXTRA_ARGS:-}" == *[![:space:]]* ]]; then
+  LLAMA_EXTRA_ARGS_ARRAY=()
   read -r -a LLAMA_EXTRA_ARGS_ARRAY <<< "$LLAMA_EXTRA_ARGS"
+  exec "$LLAMA_BIN" "${LLAMA_ARGS[@]}" "${LLAMA_EXTRA_ARGS_ARRAY[@]}"
 fi
 
-exec "$LLAMA_BIN" \
-  -m "$MODEL_PATH" \
-  --host "$LLAMA_HOST" \
-  --port "$LLAMA_PORT" \
-  --ctx-size "$LLAMA_CTX" \
-  "${LLAMA_EXTRA_ARGS_ARRAY[@]}"
+exec "$LLAMA_BIN" "${LLAMA_ARGS[@]}"

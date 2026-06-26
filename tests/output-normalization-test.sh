@@ -911,6 +911,8 @@ test_single_detected_utm_vm_flow() {
     install_prompt_stubs
 
     queue_prompt_answers 'y'
+    HOME="$TEMP_DIR/single-detected-vm-home"
+    mkdir -p "$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 
     uname() {
       printf 'arm64\n'
@@ -954,6 +956,8 @@ test_multiple_detected_utm_vms_flow() {
     install_prompt_stubs
 
     queue_prompt_answers '2'
+    HOME="$TEMP_DIR/multiple-detected-vm-home"
+    mkdir -p "$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 
     uname() {
       printf 'arm64\n'
@@ -1041,6 +1045,8 @@ test_vm_platform_ready_existing_flow() {
     install_prompt_stubs
 
     queue_prompt_answers 'y'
+    HOME="$TEMP_DIR/platform-ready-vm-home"
+    mkdir -p "$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 
     uname() {
       printf 'arm64\n'
