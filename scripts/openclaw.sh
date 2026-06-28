@@ -24,12 +24,32 @@ show_openclaw_help() {
   out '  reset  Back up and replace the VM OpenClaw config after confirmation.'
 }
 
+resolve_remote_openclaw_config_paths() {
+  local remote_home="${VM_USER_PATH:-}"
+
+  if [ -z "$remote_home" ]; then
+    remote_home="$(ssh_exec 'printf %s "$HOME"')" || {
+      error 'Unable to resolve VM home directory for OpenClaw config reset.'
+      return 1
+    }
+  fi
+
+  [ -n "$remote_home" ] || {
+    error 'Unable to resolve VM home directory for OpenClaw config reset.'
+    return 1
+  }
+
+  REMOTE_CONFIG_DIR="$remote_home/.openclaw"
+  REMOTE_CONFIG_PATH="$REMOTE_CONFIG_DIR/openclaw.json"
+}
+
 reset_openclaw_config() {
-  local backup_command=''
+  local backup_path=''
   [ -f "$ENV_FILE" ] || { error 'Missing .env. Run ./clawbox setup first.'; return 1; }
   set -a; . "$ENV_FILE"; set +a
   [ -n "${VM_HOST:-}" ] || { error 'VM_HOST is not configured.'; return 1; }
   ssh_check 'echo ok' >/dev/null || { error 'VM SSH connectivity is required for reset.'; return 1; }
+  resolve_remote_openclaw_config_paths || return $?
 
   warn 'WARNING'
   blank_line
@@ -39,14 +59,25 @@ reset_openclaw_config() {
   prompt_yes_no 'Replace the VM OpenClaw config now?' 'n'
   is_yes "$REPLY" || { out 'OpenClaw config reset cancelled.'; return 0; }
 
-  if ssh_exec "test -f $REMOTE_CONFIG_PATH"; then
-    backup_command="backup=\"$REMOTE_CONFIG_PATH.clawbox-backup-\$(date +%Y%m%d-%H%M%S)\"; cp $REMOTE_CONFIG_PATH \"\$backup\"; printf '%s\\n' \"\$backup\""
-    out "Creating VM backup: $(ssh_exec "$backup_command")"
+  if ssh_exec "test -f $(printf '%q' "$REMOTE_CONFIG_PATH")"; then
+    backup_path="$REMOTE_CONFIG_PATH.clawbox-backup-$(date +%Y%m%d-%H%M%S)"
+    out "Creating VM backup: $backup_path"
+    if ! ssh_exec "cp $(printf '%q' "$REMOTE_CONFIG_PATH") $(printf '%q' "$backup_path")"; then
+      error "Failed to create VM OpenClaw config backup: $backup_path"
+      error 'OpenClaw config was not replaced.'
+      return 1
+    fi
+    if ! ssh_exec "test -f $(printf '%q' "$backup_path")"; then
+      error "VM OpenClaw config backup was not found after copy: $backup_path"
+      error 'OpenClaw config was not replaced.'
+      return 1
+    fi
+    out "Created VM backup: $backup_path"
   fi
   "$GENERATE_SCRIPT"
-  ssh_run_quiet "mkdir -p $REMOTE_CONFIG_DIR"
+  ssh_run_quiet "mkdir -p $(printf '%q' "$REMOTE_CONFIG_DIR")"
   scp -O -q "$CONFIG_PATH" "$VM_HOST:$REMOTE_CONFIG_PATH" </dev/null
-  ssh_exec "test -f $REMOTE_CONFIG_PATH"
+  ssh_exec "test -f $(printf '%q' "$REMOTE_CONFIG_PATH")"
   success 'VM OpenClaw config was replaced from the minimal ClawBox config.'
   out 'OpenClaw was not restarted. Restart it explicitly if required.'
 }
