@@ -116,10 +116,97 @@ test_port_selection_contract() {
   assert_contains 'busy embeddings default port selects alternate port and URL' "$output" 'PORT=11436 URL=http://127.0.0.1:11436/v1'
 }
 
+test_setup_rerun_preserves_existing_embeddings_service() {
+  local output
+  output="$({
+    export TEMP_DIR ROOT_DIR
+    . "$ROOT_DIR/tests/helpers/setup-harness.sh"
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers '1'
+    HOST_IP=127.0.0.1
+    LLAMA_BIN=/opt/homebrew/bin/llama-server
+    LLAMA_PORT=11434
+    EMBEDDINGS_ENABLED=true
+    EMBEDDINGS_MODEL_PATH=/models/embed.gguf
+    EMBEDDINGS_LLAMA_PORT=11435
+    EMBEDDINGS_LLAMA_BASE_URL=http://127.0.0.1:11435/v1
+    embeddings_llama_service_loaded() { [ "$1" = user ]; }
+    llama_port_in_use() { return 0; }
+    write_env_from_template() { printf 'WRITE_ENV_UNEXPECTED\n'; }
+    source_env_file() { :; }
+    setup_embeddings_llama_service_for_mode() { printf 'RESTART_UNEXPECTED\n'; }
+    setup_embeddings_service_phase
+    printf 'FINAL:%s:%s:%s:%s\n' "$EMBEDDINGS_ENABLED" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_LLAMA_PORT" "$EMBEDDINGS_LLAMA_BASE_URL"
+  } 2>&1)"
+  assert_contains 'existing embeddings rerun detects configured endpoint' "$output" 'embeddings llama-server detected at http://127.0.0.1:11435/v1'
+  assert_contains 'existing embeddings rerun offers reuse path' "$output" 'Use the existing running embeddings llama-server on port 11435 (recommended)'
+  assert_contains 'existing embeddings rerun preserves enabled config on reuse' "$output" 'FINAL:true:/models/embed.gguf:11435:http://127.0.0.1:11435/v1'
+  assert_not_contains 'existing embeddings rerun does not show fresh configure prompt' "$output" 'Configure a separate host llama-server for embeddings?'
+  assert_not_contains 'existing embeddings rerun does not claim embeddings are unconfigured' "$output" 'Embeddings server is not configured.'
+  assert_not_contains 'existing embeddings reuse does not restart service' "$output" 'RESTART_UNEXPECTED'
+  assert_not_contains 'existing embeddings reuse does not rewrite env' "$output" 'WRITE_ENV_UNEXPECTED'
+}
+
+test_setup_rerun_stopped_embeddings_offers_repair_not_fresh_enable() {
+  local output
+  output="$({
+    export TEMP_DIR ROOT_DIR
+    . "$ROOT_DIR/tests/helpers/setup-harness.sh"
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers '5'
+    HOST_IP=127.0.0.1
+    LLAMA_BIN=/opt/homebrew/bin/llama-server
+    LLAMA_PORT=11434
+    EMBEDDINGS_ENABLED=true
+    EMBEDDINGS_MODEL_PATH=/models/embed.gguf
+    EMBEDDINGS_LLAMA_PORT=11435
+    EMBEDDINGS_LLAMA_BASE_URL=http://127.0.0.1:11435/v1
+    embeddings_llama_service_loaded() { return 1; }
+    llama_port_in_use() { return 1; }
+    setup_embeddings_service_phase
+  } 2>&1)"
+  assert_contains 'stopped configured embeddings rerun still detects embeddings config' "$output" 'embeddings llama-server detected at http://127.0.0.1:11435/v1'
+  assert_contains 'stopped configured embeddings rerun offers restart repair path' "$output" 'Restart/update the existing embeddings llama-server on port 11435'
+  assert_contains 'stopped configured embeddings rerun offers skip path' "$output" 'Skip embeddings management during setup'
+  assert_not_contains 'stopped configured embeddings rerun avoids fresh enable prompt' "$output" 'Configure a separate host llama-server for embeddings?'
+  assert_not_contains 'stopped configured embeddings rerun avoids unconfigured message' "$output" 'Embeddings server is not configured.'
+}
+
+test_disabled_embeddings_keeps_fresh_enable_prompt() {
+  local output
+  output="$({
+    export TEMP_DIR ROOT_DIR
+    . "$ROOT_DIR/tests/helpers/setup-harness.sh"
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers 'n'
+    HOST_IP=127.0.0.1
+    LLAMA_PORT=11434
+    EMBEDDINGS_ENABLED=false
+    unset EMBEDDINGS_MODEL_PATH
+    unset EMBEDDINGS_LLAMA_PORT
+    unset EMBEDDINGS_LLAMA_BASE_URL
+    embeddings_llama_service_loaded() { return 1; }
+    llama_port_in_use() { return 1; }
+    write_env_from_template() { printf 'WRITE_ENV_UNEXPECTED\n'; }
+    source_env_file() { :; }
+    setup_embeddings_service_phase
+  } 2>&1)"
+  assert_contains 'disabled embeddings still uses fresh opt-in prompt' "$output" 'Configure a separate host llama-server for embeddings?'
+  assert_contains 'disabled embeddings decline reports unconfigured' "$output" 'Embeddings server is not configured.'
+  assert_not_contains 'disabled embeddings does not show existing service menu' "$output" 'Use the existing running embeddings llama-server'
+  assert_not_contains 'disabled embeddings decline does not rewrite env when already false' "$output" 'WRITE_ENV_UNEXPECTED'
+}
+
 run_test test_runtime_artifacts_are_distinct
 run_test test_wrapper_arguments_are_profile_specific
 run_test test_runtime_env_writes_empty_extra_args_for_fresh_users
 run_test test_disabled_status_and_model_preservation_contract
 run_test test_port_selection_contract
+run_test test_setup_rerun_preserves_existing_embeddings_service
+run_test test_setup_rerun_stopped_embeddings_offers_repair_not_fresh_enable
+run_test test_disabled_embeddings_keeps_fresh_enable_prompt
 [ "$FAILURES" -eq 0 ] && { echo 'PASS: embeddings test suite succeeded'; exit 0; }
 echo "FAIL: embeddings test suite failed with $FAILURES issues"; exit 1

@@ -897,6 +897,69 @@ test_deploy_module() {
   # shellcheck source=/dev/null
   . "$ROOT_DIR/lib/deploy.sh"
 
+  local desired_models=''
+  local reordered_models=''
+  local extra_models=''
+  local conflicting_model=''
+
+  OPENCLAW_DEFAULT_MODEL=local
+  LLAMA_CTX=32768
+  desired_models="$(openclaw_config_model_array)"
+  reordered_models='[{"cost":{"input":0,"output":0},"compat":{"supportsDeveloperRole":false},"maxTokens":2048,"contextWindow":32768,"api":"openai-completions","name":"local","id":"local"}]'
+  extra_models='[{"id":"legacy","name":"legacy","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
+
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$reordered_models" "$desired_models"; then
+    pass "OpenClaw provider model comparison ignores field order"
+  else
+    fail "OpenClaw provider model comparison should ignore field order"
+  fi
+
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$extra_models" "$desired_models"; then
+    pass "OpenClaw provider model comparison tolerates compatible extra fields"
+  else
+    fail "OpenClaw provider model comparison should tolerate compatible extra fields"
+  fi
+
+  conflicting_model='[{"id":"not-local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}}]'
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
+    fail "OpenClaw provider model comparison should detect conflicting model id"
+  else
+    pass "OpenClaw provider model comparison detects conflicting model id"
+  fi
+
+  conflicting_model='[{"id":"local","name":"local","api":"openai-chat","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}}]'
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
+    fail "OpenClaw provider model comparison should detect conflicting API"
+  else
+    pass "OpenClaw provider model comparison detects conflicting API"
+  fi
+
+  conflicting_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":4096,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}}]'
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
+    fail "OpenClaw provider model comparison should detect conflicting context window"
+  else
+    pass "OpenClaw provider model comparison detects conflicting context window"
+  fi
+
+  conflicting_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":true}}]'
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
+    fail "OpenClaw provider model comparison should detect conflicting developer-role support"
+  else
+    pass "OpenClaw provider model comparison detects conflicting developer-role support"
+  fi
+
+  if openclaw_config_value_matches_for_key 'agents.defaults.memorySearch.remote.apiKey' '__OPENCLAW_REDACTED__' 'ollama-local'; then
+    pass "OpenClaw memorySearch API key comparison accepts redacted readback"
+  else
+    fail "OpenClaw memorySearch API key comparison should accept redacted readback"
+  fi
+
+  if openclaw_config_value_matches_for_key 'agents.defaults.memorySearch.remote.apiKey' '' 'ollama-local'; then
+    fail "OpenClaw memorySearch API key comparison should detect missing key"
+  else
+    pass "OpenClaw memorySearch API key comparison detects missing key"
+  fi
+
   openclaw_config_desired_entries_for_scope() {
     printf 'agents.defaults.model.primary\tclawbox/local\n'
     printf 'models.providers.clawbox.baseUrl\thttp://127.0.0.1:11434/v1\n'
@@ -930,6 +993,45 @@ test_deploy_module() {
   else
     fail "deploy logic should use VM-resolved remote config paths"
   fi
+
+  rm -f "$prompt_marker" "$upload_marker" "$mkdir_marker"
+  remote_exists=true
+  prompt_answer='y'
+  set_log=''
+  CONFIG_OVERWRITTEN=false
+
+  openclaw_config_desired_entries_for_scope() {
+    printf 'models.providers.clawbox.models\t%s\n' "$desired_models"
+    printf 'agents.defaults.memorySearch.remote.apiKey\tollama-local\n'
+  }
+
+  openclaw_config_remote_get() {
+    case "$1" in
+      models.providers.clawbox.models) printf '%s\n' "$extra_models" ;;
+      agents.defaults.memorySearch.remote.apiKey) printf '%s\n' '__OPENCLAW_REDACTED__' ;;
+      *) return 1 ;;
+    esac
+  }
+
+  sync_openclaw_config
+  if [ ! -f "$prompt_marker" ] && [ ! -f "$upload_marker" ] && [ -z "$set_log" ] && [ "$CONFIG_OVERWRITTEN" = false ]; then
+    pass "deploy logic treats redacted secrets and semantic model arrays as no drift"
+  else
+    fail "deploy logic should not prompt for redacted secrets or semantic model array matches"
+  fi
+
+  openclaw_config_desired_entries_for_scope() {
+    printf 'agents.defaults.model.primary\tclawbox/local\n'
+    printf 'models.providers.clawbox.baseUrl\thttp://127.0.0.1:11434/v1\n'
+  }
+
+  openclaw_config_remote_get() {
+    case "$1" in
+      agents.defaults.model.primary) printf '%s\n' "$managed_primary" ;;
+      models.providers.clawbox.baseUrl) printf '%s\n' "$managed_base_url" ;;
+      *) return 1 ;;
+    esac
+  }
 
   rm -f "$prompt_marker" "$upload_marker" "$mkdir_marker"
   remote_exists=true

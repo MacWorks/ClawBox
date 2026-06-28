@@ -25,6 +25,74 @@ except Exception:
 PY
 }
 
+openclaw_config_model_array_matches() {
+  local current="$1" desired="$2"
+  python3 - "$current" "$desired" <<'PY' >/dev/null 2>&1
+import json, sys
+
+try:
+    current = json.loads(sys.argv[1])
+    desired = json.loads(sys.argv[2])
+except Exception:
+    raise SystemExit(1)
+
+if not isinstance(current, list) or not isinstance(desired, list) or not desired:
+    raise SystemExit(1)
+
+required = desired[0]
+required_id = required.get("id")
+required_name = required.get("name")
+required_api = required.get("api")
+required_context = required.get("contextWindow")
+required_max_tokens = required.get("maxTokens")
+required_developer_role = required.get("compat", {}).get("supportsDeveloperRole")
+
+for model in current:
+    if not isinstance(model, dict):
+        continue
+    compat = model.get("compat", {})
+    if not isinstance(compat, dict):
+        compat = {}
+    try:
+        context_matches = int(model.get("contextWindow")) == int(required_context)
+    except Exception:
+        context_matches = model.get("contextWindow") == required_context
+    try:
+        max_tokens_matches = int(model.get("maxTokens")) == int(required_max_tokens)
+    except Exception:
+        max_tokens_matches = model.get("maxTokens") == required_max_tokens
+
+    if (
+        model.get("id") == required_id
+        and model.get("name") == required_name
+        and model.get("api") == required_api
+        and context_matches
+        and max_tokens_matches
+        and compat.get("supportsDeveloperRole") == required_developer_role
+    ):
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+openclaw_config_value_matches_for_key() {
+  local key="$1" current="$2" desired="$3"
+
+  case "$key" in
+    agents.defaults.memorySearch.remote.apiKey)
+      if [ "$current" = '__OPENCLAW_REDACTED__' ]; then
+        return 0
+      fi
+      ;;
+    models.providers.*.models)
+      openclaw_config_model_array_matches "$current" "$desired" && return 0
+      ;;
+  esac
+
+  openclaw_config_value_matches "$current" "$desired"
+}
+
 openclaw_config_model_array() {
   python3 - "${OPENCLAW_DEFAULT_MODEL:-local}" "${LLAMA_CTX:-16384}" <<'PY'
 import json, sys
@@ -75,7 +143,7 @@ apply_targeted_openclaw_config_updates() {
   while IFS=$'\t' read -r key desired; do
     [ -n "$key" ] || continue
     current="$(openclaw_config_remote_get "$key" 2>/dev/null || true)"
-    if ! openclaw_config_value_matches "$current" "$desired"; then
+    if ! openclaw_config_value_matches_for_key "$key" "$current" "$desired"; then
       drift="${drift}${key}\n"
     fi
   done <<EOF
@@ -98,14 +166,14 @@ EOF
   while IFS=$'\t' read -r key desired; do
     [ -n "$key" ] || continue
     current="$(openclaw_config_remote_get "$key" 2>/dev/null || true)"
-    openclaw_config_value_matches "$current" "$desired" && continue
+    openclaw_config_value_matches_for_key "$key" "$current" "$desired" && continue
     if ! openclaw_config_remote_set "$key" "$desired"; then
       error "OpenClaw config update failed for $key."
       outf 'Run manually: openclaw config set %s %q' "$key" "$desired"
       return 1
     fi
     current="$(openclaw_config_remote_get "$key" 2>/dev/null || true)"
-    if ! openclaw_config_value_matches "$current" "$desired"; then
+    if ! openclaw_config_value_matches_for_key "$key" "$current" "$desired"; then
       error "OpenClaw config verification failed for $key."
       return 1
     fi

@@ -32,17 +32,39 @@ EOF
   EMBEDDINGS_MODEL_PATH="$selected"
 }
 
-setup_embeddings_service_phase() {
-  local choice='' mode='' port_default='' port='' host='' ctx='' args=''
-  section 'Optional Embeddings Service'
-  prompt_yes_no 'Configure a separate host llama-server for embeddings?' 'n'
-  choice="$REPLY"
-  if ! is_yes "$choice"; then
-    if [ -z "${EMBEDDINGS_ENABLED:-}" ]; then EMBEDDINGS_ENABLED=false; write_env_from_template; source_env_file || return $?; fi
-    out 'Embeddings server is not configured.'
+embeddings_service_configured() {
+  [ "${EMBEDDINGS_ENABLED:-false}" = true ] && return 0
+  [ -n "${EMBEDDINGS_MODEL_PATH:-}" ] && [ -n "${EMBEDDINGS_LLAMA_PORT:-}" ] && return 0
+  if command -v embeddings_llama_service_loaded >/dev/null 2>&1; then
+    embeddings_llama_service_loaded user && return 0
+    if command -v user_has_sudo >/dev/null 2>&1 && user_has_sudo; then
+      embeddings_llama_service_loaded system && return 0
+    fi
+  fi
+  return 1
+}
+
+detect_embeddings_llama_install_mode() {
+  if command -v embeddings_llama_service_loaded >/dev/null 2>&1 && embeddings_llama_service_loaded user; then
+    REPLY=user
     return 0
   fi
+  if command -v user_has_sudo >/dev/null 2>&1 && user_has_sudo \
+    && command -v embeddings_llama_service_loaded >/dev/null 2>&1 \
+    && embeddings_llama_service_loaded system
+  then
+    REPLY=system
+    return 0
+  fi
+  if [ -n "${EMBEDDINGS_LLAMA_PORT:-}" ] && llama_port_in_use "$EMBEDDINGS_LLAMA_PORT"; then
+    REPLY=user
+    return 0
+  fi
+  detect_existing_llama_install_mode >/dev/null 2>&1 || true
+}
 
+configure_embeddings_service() {
+  local mode='' port_default='' port='' host='' ctx='' args=''
   EMBEDDINGS_ENABLED=true
   select_embeddings_model_path || return $?
   configured_or_default 'EMBEDDINGS_LLAMA_HOST' "${EMBEDDINGS_LLAMA_HOST:-}" '0.0.0.0'; host="$REPLY"
@@ -65,10 +87,101 @@ setup_embeddings_service_phase() {
   prompt_with_default 'Embeddings llama-server extra args (whitespace-separated)' "$args"; args="$REPLY"
   EMBEDDINGS_LLAMA_HOST="$host"; EMBEDDINGS_LLAMA_PORT="$port"; EMBEDDINGS_LLAMA_CTX="$ctx"; EMBEDDINGS_LLAMA_EXTRA_ARGS="$args"; EMBEDDINGS_LLAMA_BASE_URL="http://${HOST_IP}:${port}/v1"
   write_env_from_template; source_env_file || return $?
-  detect_existing_llama_install_mode >/dev/null 2>&1 || true; mode="$REPLY"
+  detect_embeddings_llama_install_mode >/dev/null 2>&1 || true; mode="${REPLY:-}"
   [ -n "$mode" ] || mode=user
   setup_embeddings_llama_service_for_mode "$mode" || return $?
   success "Embeddings llama-server is responding at $EMBEDDINGS_LLAMA_BASE_URL"
+}
+
+restart_existing_embeddings_service() {
+  local mode=''
+  EMBEDDINGS_ENABLED=true
+  write_env_from_template; source_env_file || return $?
+  detect_embeddings_llama_install_mode >/dev/null 2>&1 || true; mode="${REPLY:-}"
+  [ -n "$mode" ] || mode=user
+  setup_embeddings_llama_service_for_mode "$mode" || return $?
+  success "Embeddings llama-server is responding at ${EMBEDDINGS_LLAMA_BASE_URL:-http://${HOST_IP}:${EMBEDDINGS_LLAMA_PORT:-11435}/v1}"
+}
+
+setup_existing_embeddings_service_phase() {
+  local choice='' label='' mode='' endpoint=''
+  endpoint="${EMBEDDINGS_LLAMA_BASE_URL:-http://${HOST_IP}:${EMBEDDINGS_LLAMA_PORT:-11435}/v1}"
+  label="$(embeddings_llama_label 2>/dev/null || printf '%s' 'com.clawbox.llama.embeddings')"
+  mode='ClawBox-managed LaunchAgent'
+  if command -v embeddings_llama_service_loaded >/dev/null 2>&1; then
+    if embeddings_llama_service_loaded system; then
+      mode='ClawBox-managed LaunchDaemon'
+    elif ! embeddings_llama_service_loaded user && ! llama_port_in_use "${EMBEDDINGS_LLAMA_PORT:-}"; then
+      mode='configured but not currently running'
+    fi
+  fi
+
+  outf 'embeddings llama-server detected at %s' "$endpoint"
+  blank_line
+  outf 'Port: %s' "${EMBEDDINGS_LLAMA_PORT:-11435}"
+  outf 'Launch label: %s' "$label"
+  outf 'Binary: %s' "${LLAMA_BIN:-unknown}"
+  outf 'Owner: %s' "$mode"
+  out 'This instance is managed separately from the primary llama-server.'
+  menu_begin 'Options:'
+  outf '1) Use the existing running embeddings llama-server on port %s (recommended)' "${EMBEDDINGS_LLAMA_PORT:-11435}"
+  outf '2) Restart/update the existing embeddings llama-server on port %s' "${EMBEDDINGS_LLAMA_PORT:-11435}"
+  out '3) Reconfigure embeddings model/port'
+  out '4) Disable embeddings'
+  out '5) Skip embeddings management during setup'
+  menu_end
+
+  while true; do
+    prompt_with_suffix 'Choose' '[1-5]'
+    choice="${REPLY:-1}"
+    case "$choice" in
+      1)
+        EMBEDDINGS_ENABLED=true
+        out 'Using existing embeddings llama-server.'
+        return 0
+        ;;
+      2)
+        restart_existing_embeddings_service
+        return $?
+        ;;
+      3)
+        configure_embeddings_service
+        return $?
+        ;;
+      4)
+        EMBEDDINGS_ENABLED=false
+        write_env_from_template; source_env_file || return $?
+        out 'Embeddings disabled in ClawBox configuration. Existing services are not stopped automatically.'
+        return 0
+        ;;
+      5)
+        out 'Skipping embeddings management during setup.'
+        return 0
+        ;;
+      *)
+        error 'Invalid selection. Enter a number between 1 and 5.'
+        ;;
+    esac
+  done
+}
+
+setup_embeddings_service_phase() {
+  local choice=''
+  section 'Optional Embeddings Service'
+  if embeddings_service_configured; then
+    setup_existing_embeddings_service_phase
+    return $?
+  fi
+
+  prompt_yes_no 'Configure a separate host llama-server for embeddings?' 'n'
+  choice="$REPLY"
+  if ! is_yes "$choice"; then
+    if [ -z "${EMBEDDINGS_ENABLED:-}" ]; then EMBEDDINGS_ENABLED=false; write_env_from_template; source_env_file || return $?; fi
+    out 'Embeddings server is not configured.'
+    return 0
+  fi
+
+  configure_embeddings_service
 }
 
 switch_embeddings_model() {
