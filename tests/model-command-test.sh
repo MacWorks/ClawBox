@@ -200,6 +200,45 @@ test_primary_model_subcommand_preserves_embeddings_state() {
   assert_not_contains 'primary subcommand does not directly overwrite OpenClaw config' "$output" 'openclaw.json'
 }
 
+test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure() {
+  local output
+  output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      MODEL_PATH='/models/primary-old.gguf'
+      EMBEDDINGS_ENABLED=true
+      EMBEDDINGS_MODEL_PATH='/models/embeddings.gguf'
+      OPENCLAW_DEFAULT_MODEL='local'
+      OPENCLAW_PROVIDER_NAME='clawbox'
+      LLAMA_BASE_URL='http://127.0.0.1:11434/v1'
+      source_env_file() { :; }
+      offer_openclaw_alias_migration() { :; }
+      offer_vm_openclaw_alias_sync_if_drift() { :; }
+      prompt_yes_no() { REPLY=true; }
+      setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
+      write_env_from_template() { printf 'WRITE_PRIMARY:%s\n' "$MODEL_PATH"; }
+      detect_model_llama_mode() { REPLY=user; }
+      setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE:%s\n' "$1"; }
+      sync_openclaw_config_targeted_only() {
+        printf 'OPTIONAL_SYNC_ATTEMPT:%s\n' "$1"
+        error 'OpenClaw config update failed for models.providers.clawbox.models.'
+        out 'OpenClaw config was not replaced.'
+        return 1
+      }
+      offer_targeted_openclaw_config_restart() { printf 'RESTART_PROMPT_UNEXPECTED\n'; }
+      main primary
+      printf 'FINAL:%s\n' "$MODEL_PATH"
+    }
+  2>&1)"
+  assert_contains 'primary subcommand attempts optional targeted sync' "$output" 'OPTIONAL_SYNC_ATTEMPT:primary'
+  assert_contains 'primary subcommand still reports switched host model' "$output" 'Host llama-server now uses primary-new.gguf.'
+  assert_contains 'primary subcommand leaves host model switched after optional sync failure' "$output" 'FINAL:/models/primary-new.gguf'
+  assert_contains 'primary subcommand confirms OpenClaw stable model remains configured' "$output" 'Advertised OpenClaw model: clawbox/local'
+  assert_not_contains 'primary subcommand does not print raw escaped manual command' "$output" 'Run manually: openclaw config set'
+  assert_not_contains 'primary subcommand does not prompt restart after failed sync' "$output" 'RESTART_PROMPT_UNEXPECTED'
+}
+
 test_embeddings_model_subcommands_are_isolated() {
   local embeddings_output alias_output
   embeddings_output="$(
@@ -339,6 +378,7 @@ run_test test_vm_openclaw_restart_requires_runtime_verification
 run_test test_vm_openclaw_restart_warns_for_external_gateway_owner
 run_test test_model_help_lists_instance_subcommands
 run_test test_primary_model_subcommand_preserves_embeddings_state
+run_test test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure
 run_test test_embeddings_model_subcommands_are_isolated
 run_test test_embeddings_model_subcommand_can_enable_disabled_embeddings
 run_test test_model_targeted_sync_scopes_are_narrow

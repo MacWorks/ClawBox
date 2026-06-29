@@ -10,7 +10,14 @@ openclaw_config_remote_get() {
 
 openclaw_config_remote_set() {
   local key="$1" value="$2"
-  ssh_exec "zsh -lc $(printf '%q' "openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")")"
+  case "$key" in
+    models.providers.*.models)
+      ssh_exec "zsh -lc $(printf '%q' "openclaw config set --merge $(printf '%q' "$key") $(printf '%q' "$value")")"
+      ;;
+    *)
+      ssh_exec "zsh -lc $(printf '%q' "openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")")"
+      ;;
+  esac
 }
 
 openclaw_config_value_matches() {
@@ -47,9 +54,9 @@ required_context = required.get("contextWindow")
 required_max_tokens = required.get("maxTokens")
 required_developer_role = required.get("compat", {}).get("supportsDeveloperRole")
 
-for model in current:
+def managed_fields_match(model, require_local_identity):
     if not isinstance(model, dict):
-        continue
+        return False
     compat = model.get("compat", {})
     if not isinstance(compat, dict):
         compat = {}
@@ -62,14 +69,36 @@ for model in current:
     except Exception:
         max_tokens_matches = model.get("maxTokens") == required_max_tokens
 
-    if (
-        model.get("id") == required_id
-        and model.get("name") == required_name
-        and model.get("api") == required_api
+    if require_local_identity and (
+        model.get("id") != required_id or model.get("name") != required_name
+    ):
+        return False
+
+    return (
+        model.get("api") == required_api
         and context_matches
         and max_tokens_matches
         and compat.get("supportsDeveloperRole") == required_developer_role
-    ):
+    )
+
+local_entries = [
+    model for model in current
+    if isinstance(model, dict) and model.get("id") == required_id
+]
+
+if local_entries:
+    for model in local_entries:
+        if managed_fields_match(model, True):
+            raise SystemExit(0)
+    raise SystemExit(1)
+
+# Older ClawBox/OpenClaw configs may contain only a filename-derived provider
+# model entry while agents.defaults.model.primary already points at
+# clawbox/local. Treat a compatible legacy entry as acceptable metadata instead
+# of forcing a replacement during ordinary model switching. The explicit reset
+# command remains the full-replacement path.
+for model in current:
+    if managed_fields_match(model, False):
         raise SystemExit(0)
 
 raise SystemExit(1)
@@ -169,7 +198,8 @@ EOF
     openclaw_config_value_matches_for_key "$key" "$current" "$desired" && continue
     if ! openclaw_config_remote_set "$key" "$desired"; then
       error "OpenClaw config update failed for $key."
-      outf 'Run manually: openclaw config set %s %q' "$key" "$desired"
+      out 'OpenClaw config was not replaced.'
+      out 'Run ./clawbox setup to retry targeted config sync, or ./clawbox openclaw reset for an explicit full reset.'
       return 1
     fi
     current="$(openclaw_config_remote_get "$key" 2>/dev/null || true)"

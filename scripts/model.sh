@@ -209,8 +209,16 @@ offer_vm_openclaw_alias_sync_if_drift() {
 sync_model_openclaw_config_scope() {
   local scope="$1"
 
-  sync_openclaw_config_targeted_only "$scope" || return $?
-  offer_targeted_openclaw_config_restart || return $?
+  if ! sync_openclaw_config_targeted_only "$scope"; then
+    warn 'Host model switch completed, but optional OpenClaw provider metadata sync did not finish.'
+    out 'OpenClaw remains pointed at the configured stable model reference.'
+    out 'Run ./clawbox setup to retry targeted config sync, or ./clawbox openclaw reset for an explicit full reset.'
+    return 0
+  fi
+  if ! offer_targeted_openclaw_config_restart; then
+    warn 'OpenClaw restart guidance did not complete, but host model switching is finished.'
+    return 0
+  fi
 }
 
 switch_primary_model() {
@@ -242,7 +250,7 @@ switch_primary_model() {
     out 'Review the llama-server logs, correct the host service, then run ./clawbox model again.'
     return 1
   fi
-  sync_model_openclaw_config_scope primary || return $?
+  sync_model_openclaw_config_scope primary
   success "Host llama-server now uses ${MODEL_PATH##*/}."
   out "Selected GGUF: $MODEL_PATH"
   out "Advertised OpenClaw model: ${OPENCLAW_PROVIDER_NAME:-clawbox}/${OPENCLAW_DEFAULT_MODEL:-local}"

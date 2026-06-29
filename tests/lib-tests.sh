@@ -900,6 +900,7 @@ test_deploy_module() {
   local desired_models=''
   local reordered_models=''
   local extra_models=''
+  local legacy_only_models=''
   local conflicting_model=''
 
   OPENCLAW_DEFAULT_MODEL=local
@@ -907,6 +908,7 @@ test_deploy_module() {
   desired_models="$(openclaw_config_model_array)"
   reordered_models='[{"cost":{"input":0,"output":0},"compat":{"supportsDeveloperRole":false},"maxTokens":2048,"contextWindow":32768,"api":"openai-completions","name":"local","id":"local"}]'
   extra_models='[{"id":"legacy","name":"legacy","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
+  legacy_only_models='[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
 
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$reordered_models" "$desired_models"; then
     pass "OpenClaw provider model comparison ignores field order"
@@ -920,11 +922,17 @@ test_deploy_module() {
     fail "OpenClaw provider model comparison should tolerate compatible extra fields"
   fi
 
-  conflicting_model='[{"id":"not-local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}}]'
-  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
-    fail "OpenClaw provider model comparison should detect conflicting model id"
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$legacy_only_models" "$desired_models"; then
+    pass "OpenClaw provider model comparison accepts compatible legacy-only model arrays"
   else
-    pass "OpenClaw provider model comparison detects conflicting model id"
+    fail "OpenClaw provider model comparison should accept compatible legacy-only model arrays"
+  fi
+
+  conflicting_model='[{"id":"local","name":"legacy-local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}}]'
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
+    fail "OpenClaw provider model comparison should detect conflicting local model identity"
+  else
+    pass "OpenClaw provider model comparison detects conflicting local model identity"
   fi
 
   conflicting_model='[{"id":"local","name":"local","api":"openai-chat","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}}]'
@@ -958,6 +966,15 @@ test_deploy_module() {
     fail "OpenClaw memorySearch API key comparison should detect missing key"
   else
     pass "OpenClaw memorySearch API key comparison detects missing key"
+  fi
+
+  last_ssh_exec=''
+  openclaw_config_remote_set 'models.providers.clawbox.models' "$desired_models"
+  if [[ "$last_ssh_exec" == *'--merge'* ]] \
+    && [[ "$last_ssh_exec" == *'models.providers.clawbox.models'* ]]; then
+    pass "OpenClaw provider model updates use merge mode"
+  else
+    fail "OpenClaw provider model updates should use merge mode"
   fi
 
   openclaw_config_desired_entries_for_scope() {
