@@ -75,6 +75,80 @@ status_curl() {
   curl -s --connect-timeout "$STATUS_CURL_CONNECT_TIMEOUT" --max-time "$STATUS_CURL_MAX_TIME" "$@"
 }
 
+env_file_value() {
+  local env_path="$1"
+  local key="$2"
+
+  [ -f "$env_path" ] || return 1
+  /bin/bash -c 'set -euo pipefail; source "$1"; key="$2"; printf "%s\n" "${!key:-}"' _ "$env_path" "$key"
+}
+
+status_process_args_for_port() {
+  local port="$1"
+  local instance="${2:-primary}"
+  local line
+
+  if [ -n "${CLAWBOX_STATUS_PROCESS_ARGS_CMD:-}" ]; then
+    "$CLAWBOX_STATUS_PROCESS_ARGS_CMD" "$port" "$instance"
+    return $?
+  fi
+
+  while IFS= read -r line; do
+    case " $line " in
+      *" --port $port "*|*" --port=$port "*)
+        printf '%s\n' "$line"
+        return 0
+        ;;
+    esac
+  done <<EOF
+$(pgrep -fl llama-server 2>/dev/null || true)
+EOF
+
+  return 1
+}
+
+model_path_from_process_args() {
+  local args="$1"
+  local previous=''
+  local word
+
+  for word in $args; do
+    if [ "$previous" = '-m' ] || [ "$previous" = '--model' ]; then
+      printf '%s\n' "$word"
+      return 0
+    fi
+    case "$word" in
+      -m*)
+        [ "$word" = '-m' ] || {
+          printf '%s\n' "${word#-m}"
+          return 0
+        }
+        ;;
+      --model=*)
+        printf '%s\n' "${word#--model=}"
+        return 0
+        ;;
+    esac
+    previous="$word"
+  done
+
+  return 1
+}
+
+model_display_name() {
+  local path="$1"
+  if [ -n "$path" ]; then
+    basename "$path"
+  else
+    printf 'unknown\n'
+  fi
+}
+
+vm_openclaw_config_get() {
+  local key="$1"
+  vm_ssh_exec "openclaw config get $key"
+}
+
 llama_process_running() {
   if [ -n "${CLAWBOX_STATUS_PROCESS_CHECK_CMD:-}" ]; then
     "$CLAWBOX_STATUS_PROCESS_CHECK_CMD"
@@ -339,14 +413,81 @@ if ! $HOST_STATUS_EXPECTS_EXTERNAL; then
   fi
 fi
 
+# --- Model summary ---
+section "Primary Model"
+PRIMARY_CONFIGURED_MODEL="${MODEL_PATH:-}"
+PRIMARY_RUNTIME_MODEL=''
+PRIMARY_PROCESS_ARGS=''
+PRIMARY_RUNNING_MODEL=''
+PRIMARY_OPENCLAW_REF="$OPENCLAW_PROVIDER_NAME/${OPENCLAW_DEFAULT_MODEL:-local}"
+out "Configured: ${PRIMARY_CONFIGURED_MODEL:-not configured}"
+out "API: ${CONFIGURED_LLAMA_BASE_URL:-${HOST_STATUS_DISPLAY_URL%/}/v1}"
+out "OpenClaw: $PRIMARY_OPENCLAW_REF"
+
+if ! $HOST_STATUS_EXPECTS_EXTERNAL; then
+  PRIMARY_RUNTIME_MODEL="$(env_file_value "$MANAGED_LLAMA_ENV_PATH" MODEL_PATH 2>/dev/null || true)"
+  if [ -n "$PRIMARY_RUNTIME_MODEL" ] && [ -n "$PRIMARY_CONFIGURED_MODEL" ] && [ "$PRIMARY_RUNTIME_MODEL" != "$PRIMARY_CONFIGURED_MODEL" ]; then
+    fail "primary runtime env model differs from .env"
+    out "  Runtime env: $PRIMARY_RUNTIME_MODEL"
+  fi
+fi
+
+if $process_ok && PRIMARY_PROCESS_ARGS="$(status_process_args_for_port "$LLAMA_PORT" primary 2>/dev/null)" \
+  && PRIMARY_RUNNING_MODEL="$(model_path_from_process_args "$PRIMARY_PROCESS_ARGS" 2>/dev/null)"; then
+  out "Running: $(model_display_name "$PRIMARY_RUNNING_MODEL")"
+  if ! $HOST_STATUS_EXPECTS_EXTERNAL && [ -n "$PRIMARY_CONFIGURED_MODEL" ] && [ "$PRIMARY_RUNNING_MODEL" != "$PRIMARY_CONFIGURED_MODEL" ]; then
+    fail "primary running model differs from .env"
+    out "  Running path: $PRIMARY_RUNNING_MODEL"
+  elif ! $HOST_STATUS_EXPECTS_EXTERNAL; then
+    pass "primary model matches configured runtime"
+  fi
+else
+  out "Running: unknown"
+fi
+
 # --- Optional embeddings LLaMA ---
 if [ "${EMBEDDINGS_ENABLED:-false}" = true ]; then
-  section 'Embeddings LLaMA Status'
   EMBEDDINGS_MODE="$MANAGED_LLAMA_MODE"
   EMBEDDINGS_PLIST_PATH="$(embeddings_llama_mode_plist_dest "$EMBEDDINGS_MODE")"
   EMBEDDINGS_ENV_PATH="$(embeddings_llama_mode_env_dest "$EMBEDDINGS_MODE")"
   EMBEDDINGS_TARGET="$(embeddings_llama_mode_target "$EMBEDDINGS_MODE")"
   EMBEDDINGS_URL="${EMBEDDINGS_LLAMA_BASE_URL:-http://${HOST_IP}:${EMBEDDINGS_LLAMA_PORT:-11435}/v1}"
+
+  section 'Embeddings Model'
+  EMBEDDINGS_CONFIGURED_MODEL="${EMBEDDINGS_MODEL_PATH:-}"
+  EMBEDDINGS_RUNTIME_MODEL=''
+  EMBEDDINGS_PROCESS_ARGS=''
+  EMBEDDINGS_RUNNING_MODEL=''
+  EMBEDDINGS_MEMORY_MODEL=''
+  out "Configured: ${EMBEDDINGS_CONFIGURED_MODEL:-not configured}"
+  out "API: $EMBEDDINGS_URL"
+  EMBEDDINGS_RUNTIME_MODEL="$(env_file_value "$EMBEDDINGS_ENV_PATH" EMBEDDINGS_MODEL_PATH 2>/dev/null || true)"
+  if [ -n "$EMBEDDINGS_RUNTIME_MODEL" ] && [ -n "$EMBEDDINGS_CONFIGURED_MODEL" ] && [ "$EMBEDDINGS_RUNTIME_MODEL" != "$EMBEDDINGS_CONFIGURED_MODEL" ]; then
+    fail "embeddings runtime env model differs from .env"
+    out "  Runtime env: $EMBEDDINGS_RUNTIME_MODEL"
+  fi
+  if EMBEDDINGS_PROCESS_ARGS="$(status_process_args_for_port "${EMBEDDINGS_LLAMA_PORT:-11435}" embeddings 2>/dev/null)" \
+    && EMBEDDINGS_RUNNING_MODEL="$(model_path_from_process_args "$EMBEDDINGS_PROCESS_ARGS" 2>/dev/null)"; then
+    out "Running: $(model_display_name "$EMBEDDINGS_RUNNING_MODEL")"
+    if [ -n "$EMBEDDINGS_CONFIGURED_MODEL" ] && [ "$EMBEDDINGS_RUNNING_MODEL" != "$EMBEDDINGS_CONFIGURED_MODEL" ]; then
+      fail "embeddings running model differs from .env"
+      out "  Running path: $EMBEDDINGS_RUNNING_MODEL"
+    else
+      pass "embeddings model matches configured runtime"
+    fi
+  else
+    out "Running: unknown"
+  fi
+  if EMBEDDINGS_MEMORY_MODEL="$(vm_openclaw_config_get 'agents.defaults.memorySearch.model' 2>/dev/null)"; then
+    out "OpenClaw memorySearch: $EMBEDDINGS_MEMORY_MODEL"
+    if [ -n "$EMBEDDINGS_CONFIGURED_MODEL" ] && [ "$EMBEDDINGS_MEMORY_MODEL" != "$(basename "$EMBEDDINGS_CONFIGURED_MODEL")" ]; then
+      fail "OpenClaw memorySearch model differs from embeddings model"
+    fi
+  else
+    out "OpenClaw memorySearch: unavailable"
+  fi
+
+  section 'Embeddings LLaMA Status'
   if launchctl print "$EMBEDDINGS_TARGET" >/dev/null 2>&1; then pass 'Embeddings LaunchAgent/LaunchDaemon is loaded'; else fail 'Embeddings LaunchAgent/LaunchDaemon not loaded'; fi
   if [ -f "$EMBEDDINGS_PLIST_PATH" ]; then pass 'Embeddings plist exists'; else fail 'Embeddings plist missing'; fi
   if [ -f "$EMBEDDINGS_ENV_PATH" ]; then pass 'Embeddings runtime env exists'; else fail 'Embeddings runtime env missing'; fi
