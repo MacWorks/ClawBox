@@ -215,7 +215,14 @@ shift || true
   *"pgrep -fl openclaw"*)
     exit "${CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE:-0}"
     ;;
-    *"openclaw.json"*)
+    *"agents.defaults.memorySearch.model"*)
+      if [ "${CLAWBOX_TEST_SSH_OPENCLAW_MEMORY_MODEL_EXIT_CODE:-0}" -ne 0 ]; then
+        exit "${CLAWBOX_TEST_SSH_OPENCLAW_MEMORY_MODEL_EXIT_CODE:-0}"
+      fi
+      printf "%s\n" "${CLAWBOX_TEST_SSH_OPENCLAW_MEMORY_MODEL:-embed.gguf}"
+      exit 0
+      ;;
+  *"openclaw.json"*)
     if [ -n "${CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE:-}" ]; then
       translated_command="$remote_command"
       translated_command="${translated_command//\~\/\.openclaw\/openclaw\.json/$CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE}"
@@ -224,13 +231,6 @@ shift || true
     fi
     exit "${CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE:-0}"
     ;;
-    *"openclaw config get agents.defaults.memorySearch.model"*)
-      if [ "${CLAWBOX_TEST_SSH_OPENCLAW_MEMORY_MODEL_EXIT_CODE:-0}" -ne 0 ]; then
-        exit "${CLAWBOX_TEST_SSH_OPENCLAW_MEMORY_MODEL_EXIT_CODE:-0}"
-      fi
-      printf "%s\n" "${CLAWBOX_TEST_SSH_OPENCLAW_MEMORY_MODEL:-embed.gguf}"
-      exit 0
-      ;;
     *"sh -s -- "*"/completion"*)
       script_body="$(cat)"
       if [ -n "${CLAWBOX_TEST_SSH_LOG:-}" ]; then
@@ -1506,8 +1506,65 @@ EOF
   assert_contains 'status embeddings model summary shows configured path' "$output" 'Configured: /Users/vm-user/models/bge-large-en-v1.5-f16.gguf'
   assert_contains 'status embeddings model summary shows running basename' "$output" 'Running: bge-large-en-v1.5-f16.gguf'
   assert_contains 'status embeddings model summary shows memorySearch model' "$output" 'OpenClaw memorySearch: bge-large-en-v1.5-f16.gguf'
+  assert_not_contains 'status embeddings model summary does not hide reachable memorySearch model' "$output" 'OpenClaw memorySearch: unavailable'
   assert_contains 'status embeddings model summary reports runtime match' "$output" 'PASS: embeddings model matches configured runtime'
   assert_contains 'status embeddings model summary keeps embeddings endpoint distinct' "$output" 'API: http://127.0.0.1:18081/v1'
+}
+
+test_status_marks_embeddings_memory_model_unavailable_only_when_read_fails() {
+  local output
+  local status=0
+
+  prepare_status_test_home
+  setup_status_test_mocks
+
+  cat > "$ENV_FILE" <<'EOF'
+HOST_IP="127.0.0.1"
+VM_HOST="vm-user@192.168.64.2"
+LLAMA_PORT="18080"
+LLAMA_BASE_URL="http://127.0.0.1:18080/v1"
+MODEL_PATH="/Users/vm-user/models/model.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+LLAMA_EXTERNAL="false"
+EMBEDDINGS_ENABLED="true"
+EMBEDDINGS_MODEL_PATH="/Users/vm-user/models/bge-large-en-v1.5-f16.gguf"
+EMBEDDINGS_LLAMA_PORT="18081"
+EMBEDDINGS_LLAMA_BASE_URL="http://127.0.0.1:18081/v1"
+EOF
+  cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
+MODEL_PATH="/Users/vm-user/models/model.gguf"
+EOF
+  cat > "$HOME/Library/Application Support/ClawBox/clawbox-embeddings.env" <<'EOF'
+EMBEDDINGS_MODEL_PATH="/Users/vm-user/models/bge-large-en-v1.5-f16.gguf"
+EOF
+  : > "$HOME/Library/LaunchAgents/com.clawbox.llama.embeddings.plist"
+
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT='/opt/homebrew/bin/llama-server -m /Users/vm-user/models/model.gguf --host 0.0.0.0 --port 18080 --ctx-size 32768'
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_EMBEDDINGS_OUTPUT='/opt/homebrew/bin/llama-server -m /Users/vm-user/models/bge-large-en-v1.5-f16.gguf --host 0.0.0.0 --port 18081 --ctx-size 8192 --embedding'
+  export CLAWBOX_TEST_SSH_OPENCLAW_MEMORY_MODEL_EXIT_CODE=1
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/embeddings-memory-unavailable-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/embeddings-memory-unavailable-system.err.log"
+
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG"
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status memorySearch unavailable path remains healthy when other VM checks pass' "$status" '0'
+  assert_contains 'status memorySearch unavailable path marks memory model unavailable' "$output" 'OpenClaw memorySearch: unavailable'
+  assert_contains 'status memorySearch unavailable path still validates VM config separately' "$output" 'PASS: OpenClaw config is valid'
+  assert_contains 'status memorySearch unavailable path reports healthy summary' "$output" 'RESULT: HEALTHY'
 }
 
 test_status_detects_embeddings_model_mismatch_when_enabled() {
@@ -1958,6 +2015,7 @@ run_test test_status_managed_local_host_probe_ignores_custom_llama_base_url_when
 run_test test_status_displays_primary_model_summary
 run_test test_status_detects_primary_model_mismatch
 run_test test_status_displays_embeddings_model_summary_when_enabled
+run_test test_status_marks_embeddings_memory_model_unavailable_only_when_read_fails
 run_test test_status_detects_embeddings_model_mismatch_when_enabled
 run_test test_status_omits_embeddings_model_summary_when_disabled_or_absent
 run_test test_status_uses_configured_llama_base_url_for_vm_host_api_and_inference_probes

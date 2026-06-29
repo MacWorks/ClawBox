@@ -146,7 +146,15 @@ model_display_name() {
 
 vm_openclaw_config_get() {
   local key="$1"
-  vm_ssh_exec "openclaw config get $key"
+
+  case "$key" in
+    agents.defaults.memorySearch.model)
+      vm_ssh_exec "jq -er '.agents.defaults.memorySearch.model // empty' ~/.openclaw/openclaw.json"
+      ;;
+    *)
+      vm_ssh_exec "zsh -lc 'openclaw config get $key'"
+      ;;
+  esac
 }
 
 llama_process_running() {
