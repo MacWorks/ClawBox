@@ -56,10 +56,16 @@ LLAMA_SYSTEM_ERR_LOG="${CLAWBOX_LLAMA_ERR_LOG:-$(clawbox_llama_system_stderr_log
 LLAMA_USER_ERR_LOG="${CLAWBOX_LLAMA_USER_ERR_LOG:-$(clawbox_llama_user_stderr_log_default)}"
 
 fail_count=0
+wait_count=0
 
 fail() {
   out "FAIL: $1"
   fail_count=$((fail_count + 1))
+}
+
+wait_status() {
+  out "WAIT: $1"
+  wait_count=$((wait_count + 1))
 }
 
 pass() {
@@ -329,6 +335,11 @@ if printf '%s\n%s\n' "$response_body" "$response_error" | grep -Eiq 'context[^[:
   finish 20
 fi
 
+if [ "$http_code" = 503 ] \
+  && printf '%s\n%s\n' "$response_body" "$response_error" | grep -Eiq 'Loading model|unavailable_error'; then
+  finish 21
+fi
+
 finish 1
 EOF
 }
@@ -556,6 +567,9 @@ else
   vm_inference_status=$?
   if [ "$vm_inference_status" -eq 20 ]; then
     fail "VM inference request failed: llama context overflow"
+  elif [ "$vm_inference_status" -eq 21 ]; then
+    wait_status "host llama-server is still loading the model"
+    out 'Retry ./clawbox status shortly.'
   else
     fail "VM inference request failed"
   fi
@@ -568,12 +582,14 @@ fi
 # --- Summary ---
 blank_line
 out "========================================="
-if [ "$fail_count" -eq 0 ]; then
+if [ "$fail_count" -eq 0 ] && [ "$wait_count" -eq 0 ]; then
   out "RESULT: HEALTHY"
+elif [ "$fail_count" -eq 0 ]; then
+  out "RESULT: WAITING ($wait_count temporary issues)"
 else
   out "RESULT: UNHEALTHY ($fail_count issues)"
 fi
 out "========================================="
 blank_line
 
-exit "$fail_count"
+exit $((fail_count + wait_count))

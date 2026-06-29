@@ -239,6 +239,59 @@ test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure() {
   assert_not_contains 'primary subcommand does not prompt restart after failed sync' "$output" 'RESTART_PROMPT_UNEXPECTED'
 }
 
+test_primary_model_subcommand_reports_no_openclaw_changes_when_sync_has_no_drift() {
+  local output
+  output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      MODEL_PATH='/models/primary-old.gguf'
+      OPENCLAW_DEFAULT_MODEL='local'
+      OPENCLAW_PROVIDER_NAME='clawbox'
+      LLAMA_BASE_URL='http://127.0.0.1:11434/v1'
+      source_env_file() { :; }
+      offer_openclaw_alias_migration() { :; }
+      offer_vm_openclaw_alias_sync_if_drift() { :; }
+      prompt_yes_no() { REPLY=true; }
+      setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
+      write_env_from_template() { :; }
+      detect_model_llama_mode() { REPLY=user; }
+      setup_llama_service_for_mode() { :; }
+      sync_model_openclaw_config_scope() { CONFIG_TARGETED_NO_CHANGE=true; CONFIG_TARGETED_UPDATED=false; }
+      main primary
+    }
+  2>&1)"
+  assert_contains 'primary no-drift sync reports no OpenClaw changes' "$output" 'OpenClaw config already matched; no OpenClaw changes were made.'
+  assert_not_contains 'primary no-drift sync does not imply possible changes' "$output" 'may have been synced'
+  assert_not_contains 'primary no-drift sync does not claim targeted keys were synced' "$output" 'primary keys were synced'
+}
+
+test_primary_model_subcommand_reports_actual_openclaw_sync_when_updated() {
+  local output
+  output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      MODEL_PATH='/models/primary-old.gguf'
+      OPENCLAW_DEFAULT_MODEL='local'
+      OPENCLAW_PROVIDER_NAME='clawbox'
+      LLAMA_BASE_URL='http://127.0.0.1:11434/v1'
+      source_env_file() { :; }
+      offer_openclaw_alias_migration() { :; }
+      offer_vm_openclaw_alias_sync_if_drift() { :; }
+      prompt_yes_no() { REPLY=true; }
+      setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
+      write_env_from_template() { :; }
+      detect_model_llama_mode() { REPLY=user; }
+      setup_llama_service_for_mode() { :; }
+      sync_model_openclaw_config_scope() { CONFIG_TARGETED_UPDATED=true; CONFIG_TARGETED_NO_CHANGE=false; }
+      main primary
+    }
+  2>&1)"
+  assert_contains 'primary actual sync reports managed primary keys changed' "$output" 'OpenClaw config was not replaced; only ClawBox-managed primary keys were synced.'
+  assert_not_contains 'primary actual sync does not report no-change message' "$output" 'no OpenClaw changes were made'
+}
+
 test_embeddings_model_subcommands_are_isolated() {
   local embeddings_output alias_output
   embeddings_output="$(
@@ -282,6 +335,51 @@ test_embeddings_model_subcommands_are_isolated() {
   2>&1)"
   assert_contains 'embedding alias dispatches to embeddings model flow' "$alias_output" 'EMBEDDINGS_ALIAS_DISPATCH'
   assert_not_contains 'embedding alias does not dispatch primary flow' "$alias_output" 'PRIMARY_UNEXPECTED'
+}
+
+test_embeddings_model_subcommand_reports_openclaw_no_change_or_sync_precisely() {
+  local no_change_output updated_output
+  no_change_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      MODEL_PATH='/models/primary.gguf'
+      EMBEDDINGS_ENABLED=true
+      EMBEDDINGS_MODEL_PATH='/models/embeddings-old.gguf'
+      EMBEDDINGS_LLAMA_BASE_URL='http://127.0.0.1:11435/v1'
+      source_env_file() { :; }
+      prompt_yes_no() { REPLY=true; }
+      select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH='/models/embeddings-new.gguf'; }
+      write_env_from_template() { :; }
+      detect_existing_llama_install_mode() { REPLY=user; }
+      setup_embeddings_llama_service_for_mode() { :; }
+      sync_model_openclaw_config_scope() { CONFIG_TARGETED_NO_CHANGE=true; CONFIG_TARGETED_UPDATED=false; }
+      main embeddings
+    }
+  2>&1)"
+  assert_contains 'embeddings no-drift sync reports no OpenClaw changes' "$no_change_output" 'OpenClaw config already matched; no OpenClaw changes were made.'
+  assert_not_contains 'embeddings no-drift sync does not imply possible changes' "$no_change_output" 'may have been synced'
+
+  updated_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      MODEL_PATH='/models/primary.gguf'
+      EMBEDDINGS_ENABLED=true
+      EMBEDDINGS_MODEL_PATH='/models/embeddings-old.gguf'
+      EMBEDDINGS_LLAMA_BASE_URL='http://127.0.0.1:11435/v1'
+      source_env_file() { :; }
+      prompt_yes_no() { REPLY=true; }
+      select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH='/models/embeddings-new.gguf'; }
+      write_env_from_template() { :; }
+      detect_existing_llama_install_mode() { REPLY=user; }
+      setup_embeddings_llama_service_for_mode() { :; }
+      sync_model_openclaw_config_scope() { CONFIG_TARGETED_UPDATED=true; CONFIG_TARGETED_NO_CHANGE=false; }
+      main embedding
+    }
+  2>&1)"
+  assert_contains 'embeddings actual sync reports memorySearch keys changed' "$updated_output" 'OpenClaw config was not replaced; only ClawBox-managed memorySearch keys were synced.'
+  assert_not_contains 'embeddings actual sync does not report no-change message' "$updated_output" 'no OpenClaw changes were made'
 }
 
 test_embeddings_model_subcommand_can_enable_disabled_embeddings() {
@@ -379,7 +477,10 @@ run_test test_vm_openclaw_restart_warns_for_external_gateway_owner
 run_test test_model_help_lists_instance_subcommands
 run_test test_primary_model_subcommand_preserves_embeddings_state
 run_test test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure
+run_test test_primary_model_subcommand_reports_no_openclaw_changes_when_sync_has_no_drift
+run_test test_primary_model_subcommand_reports_actual_openclaw_sync_when_updated
 run_test test_embeddings_model_subcommands_are_isolated
+run_test test_embeddings_model_subcommand_reports_openclaw_no_change_or_sync_precisely
 run_test test_embeddings_model_subcommand_can_enable_disabled_embeddings
 run_test test_model_targeted_sync_scopes_are_narrow
 run_test test_default_model_flow_explicitly_selects_one_instance

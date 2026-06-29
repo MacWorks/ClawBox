@@ -209,6 +209,10 @@ switch_embeddings_model() {
   fi
   success "Embeddings llama-server now uses ${EMBEDDINGS_MODEL_PATH##*/}."
   out "Embeddings llama-server API: ${EMBEDDINGS_LLAMA_BASE_URL:-not configured}"
-  out 'OpenClaw config was not replaced; only ClawBox-managed memorySearch keys may have been synced.'
+  if [ "${CONFIG_TARGETED_UPDATED:-false}" = true ]; then
+    out 'OpenClaw config was not replaced; only ClawBox-managed memorySearch keys were synced.'
+  elif [ "${CONFIG_TARGETED_NO_CHANGE:-false}" = true ]; then
+    out 'OpenClaw config already matched; no OpenClaw changes were made.'
+  fi
   out 'Check status with: ./clawbox status'
 }

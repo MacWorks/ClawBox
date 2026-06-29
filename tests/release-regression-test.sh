@@ -259,6 +259,9 @@ shift || true
       if printf "%s\n%s\n" "$response_body" "$response_error" | grep -Eiq "context[^[:alnum:]]*(overflow|exceed|exceeded|full)|exceed[^[:alnum:]]*context|too many tokens"; then
         exit 20
       fi
+      if [ "$http_code" = 503 ] && printf "%s\n%s\n" "$response_body" "$response_error" | grep -Eiq "Loading model|unavailable_error"; then
+        exit 21
+      fi
       exit 1
       ;;
     *"/v1/models"*)
@@ -321,6 +324,7 @@ test_post_provisioning_offers_onboarding_with_configured_ssh_target() {
   assert_contains 'post-provisioning onboarding explains why it is offered' "$output" 'OpenClaw onboarding has not yet been completed.'
   assert_contains 'post-provisioning onboarding prompts before running' "$output" 'Run onboarding now? [Y/n]:'
   assert_contains 'post-provisioning onboarding prints the configured SSH command when declined' "$output" "ssh -t vm-user@192.168.64.2 'zsh -lc \"openclaw onboard\"'"
+  assert_not_contains 'post-provisioning onboarding guidance only appears when onboarding is launched' "$output" 'type /exit when finished'
 }
 
 test_post_provisioning_onboarding_runs_only_after_confirmation() {
@@ -347,6 +351,7 @@ test_post_provisioning_onboarding_runs_only_after_confirmation() {
   } 2>&1)"
 
   assert_contains 'post-provisioning onboarding uses an interactive SSH session after confirmation' "$output" 'SSH:-t vm-user@192.168.64.2 zsh -lc "openclaw onboard"'
+  assert_contains 'post-provisioning onboarding explains how to return from TUI' "$output" 'type /exit when finished so ClawBox setup can continue'
   assert_contains 'post-provisioning onboarding reports completion after successful SSH command' "$output" 'OpenClaw onboarding completed.'
 }
 
@@ -1839,6 +1844,74 @@ test_status_classifies_vm_inference_context_overflow() {
   assert_contains 'status context-overflow inference path reports one unhealthy issue' "$output" 'RESULT: UNHEALTHY (1 issues)'
 }
 
+test_status_classifies_vm_inference_loading_model_as_waiting() {
+  local output
+  local status=0
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_COMPLETION_HTTP_CODE=503
+  export CLAWBOX_TEST_SSH_VM_COMPLETION_BODY='{"error":{"message":"Loading model","type":"unavailable_error","code":503}}'
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/loading-model-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/loading-model-system.err.log"
+
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG"
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status loading-model inference path exits with one temporary issue' "$status" '1'
+  assert_contains 'status loading-model path reports wait state' "$output" 'WAIT: host llama-server is still loading the model'
+  assert_contains 'status loading-model path tells user to retry shortly' "$output" 'Retry ./clawbox status shortly.'
+  assert_not_contains 'status loading-model path avoids hard inference failure wording' "$output" 'FAIL: VM inference request failed'
+  assert_contains 'status loading-model path prints response details' "$output" 'Response body: {"error":{"message":"Loading model","type":"unavailable_error","code":503}}'
+  assert_contains 'status loading-model path reports waiting summary' "$output" 'RESULT: WAITING (1 temporary issues)'
+}
+
+test_status_keeps_ordinary_vm_inference_503_as_failure() {
+  local output
+  local status=0
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_COMPLETION_HTTP_CODE=503
+  export CLAWBOX_TEST_SSH_VM_COMPLETION_BODY='{"error":"service unavailable"}'
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/ordinary-503-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/ordinary-503-system.err.log"
+
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG"
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status ordinary 503 inference path exits with one failure' "$status" '1'
+  assert_contains 'status ordinary 503 path remains a failure' "$output" 'FAIL: VM inference request failed'
+  assert_not_contains 'status ordinary 503 path is not classified as loading model' "$output" 'WAIT: host llama-server is still loading the model'
+  assert_contains 'status ordinary 503 path reports unhealthy summary' "$output" 'RESULT: UNHEALTHY (1 issues)'
+}
+
 test_status_debug_reports_vm_inference_probe_details() {
   local output
   local status=0
@@ -2022,6 +2095,8 @@ run_test test_status_uses_configured_llama_base_url_for_vm_host_api_and_inferenc
 run_test test_status_applies_overridden_curl_timeouts_to_all_http_probes
 run_test test_status_uses_minimal_direct_llama_completion_for_vm_inference_probe
 run_test test_status_classifies_vm_inference_context_overflow
+run_test test_status_classifies_vm_inference_loading_model_as_waiting
+run_test test_status_keeps_ordinary_vm_inference_503_as_failure
 run_test test_status_debug_reports_vm_inference_probe_details
 run_test test_status_shows_recent_llama_errors_when_log_exists
 run_test test_status_shows_no_log_output_when_no_logs_exist

@@ -2295,7 +2295,7 @@ test_provisioning_and_deployment_flow() {
     }
 
     sync_openclaw_config() {
-      out 'OpenClaw config already matches ClawBox-managed settings.'
+      out 'OpenClaw config already matched; no OpenClaw changes were made.'
     }
 
     ensure_vm_provision_script() {
@@ -2334,7 +2334,7 @@ test_provisioning_and_deployment_flow() {
   assert_contains 'provisioning flow shows openclaw section' "$output" ' > OpenClaw Configuration'
   assert_contains 'provisioning flow shows deployment section' "$output" ' > Deployment'
   assert_contains 'provisioning flow shows runtime section' "$output" ' > Runtime'
-  assert_contains 'provisioning flow reports targeted config sync state' "$output" 'OpenClaw config already matches ClawBox-managed settings.'
+  assert_contains 'provisioning flow reports targeted config sync state' "$output" 'OpenClaw config already matched; no OpenClaw changes were made.'
   assert_contains 'provisioning flow shows runtime callout' "$output" 'OpenClaw is installed but not running.'
   assert_no_excessive_blank_lines 'provisioning flow avoids excessive blank lines' "$output"
 }

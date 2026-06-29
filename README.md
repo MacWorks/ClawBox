@@ -155,8 +155,9 @@ Provisioning is one-time and safe to repeat. It installs Homebrew when needed, e
 Return to the host terminal running `./clawbox setup` and answer yes when it
 asks whether provisioning completed inside the VM. Once it confirms OpenClaw is
 available, setup offers to run `openclaw onboard` interactively over SSH. You
-may decline and use the displayed command later. Setup then continues with VM
-runtime launchd setup.
+may decline and use the displayed command later. If onboarding opens the
+terminal agent chat, type `/exit` when finished so ClawBox setup can continue.
+Setup then continues with VM runtime launchd setup.
 
 ## Verification
 
@@ -209,6 +210,11 @@ Host checks:
 ```bash
 curl "${LLAMA_BASE_URL%/v1}/v1/models"
 ```
+
+Large GGUF models may take time to finish loading after launchd starts
+`llama-server`. During that window `./clawbox status` reports `RESULT: WAITING`
+when the VM inference probe receives llama.cpp's temporary `Loading model`
+response; retry status shortly.
 
 VM checks:
 

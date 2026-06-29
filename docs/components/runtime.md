@@ -118,6 +118,11 @@ probe offers a default-no restart of only that managed gateway; declining leaves
 OpenClaw untouched and prints manual recovery guidance. This path never deploys
 or replaces `openclaw.json`.
 
+If the VM inference probe reaches `llama-server` while a large model is still
+loading and receives llama.cpp's temporary `503 Loading model` response,
+`./clawbox status` reports a waiting state and asks the user to retry shortly
+instead of labeling the endpoint as broken.
+
 The VM's noninteractive SSH environment may not include Homebrew or Node in
 `PATH`. ClawBox still resolves an absolute `openclaw` binary path for launchd,
 while completion guidance uses `zsh -lc` so the VM user's `.zprofile` supplies

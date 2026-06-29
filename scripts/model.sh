@@ -255,7 +255,11 @@ switch_primary_model() {
   out "Selected GGUF: $MODEL_PATH"
   out "Advertised OpenClaw model: ${OPENCLAW_PROVIDER_NAME:-clawbox}/${OPENCLAW_DEFAULT_MODEL:-local}"
   out "llama-server API: ${LLAMA_BASE_URL:-not configured}"
-  out 'OpenClaw config was not replaced; only ClawBox-managed primary keys may have been synced.'
+  if [ "${CONFIG_TARGETED_UPDATED:-false}" = true ]; then
+    out 'OpenClaw config was not replaced; only ClawBox-managed primary keys were synced.'
+  elif [ "${CONFIG_TARGETED_NO_CHANGE:-false}" = true ]; then
+    out 'OpenClaw config already matched; no OpenClaw changes were made.'
+  fi
   out 'Check status with: ./clawbox status'
 }
 

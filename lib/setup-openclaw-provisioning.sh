@@ -53,6 +53,8 @@ offer_openclaw_onboarding() {
 
   prompt_yes_no 'Run onboarding now?' 'y'
   if is_yes "$REPLY"; then
+    out 'If OpenClaw drops you into the agent chat, type /exit when finished so ClawBox setup can continue.'
+    blank_line
     run_openclaw_onboarding || {
       error 'OpenClaw onboarding did not complete.'
       return 1

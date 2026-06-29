@@ -66,7 +66,9 @@ Typical flow:
    ```
 
    Onboarding runs only after the user confirms. If declined, setup prints the
-   exact command using the configured VM SSH target and continues.
+   exact command using the configured VM SSH target and continues. If onboarding
+   opens the terminal agent chat, type `/exit` when finished so ClawBox setup
+   can continue.
 7. Setup continues into runtime service setup.
 8. If the user declines provisioning completion, setup exits gracefully and prints the resume command:
    `./clawbox setup`.

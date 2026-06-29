@@ -60,7 +60,9 @@ This is the runner that validates a configured local `.env`.
 
 `./clawbox status` verifies VM-to-host LLaMA inference with a minimal direct
 llama.cpp `/completion` request. It avoids OpenClaw sessions so status checks do
-not depend on persistent gateway context.
+not depend on persistent gateway context. A llama.cpp `503 Loading model`
+response is treated as a temporary waiting state instead of a hard inference
+failure, and status returns `RESULT: WAITING` until the model is ready.
 
 ## System tests
 

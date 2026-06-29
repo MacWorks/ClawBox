@@ -168,6 +168,7 @@ apply_targeted_openclaw_config_updates() {
   local key='' desired='' current='' drift=''
   CONFIG_OVERWRITTEN=false
   CONFIG_TARGETED_UPDATED=false
+  CONFIG_TARGETED_NO_CHANGE=false
 
   while IFS=$'\t' read -r key desired; do
     [ -n "$key" ] || continue
@@ -180,7 +181,8 @@ $(openclaw_config_desired_entries_for_scope "$scope")
 EOF
 
   if [ -z "$drift" ]; then
-    out 'OpenClaw config already matches ClawBox-managed settings.'
+    CONFIG_TARGETED_NO_CHANGE=true
+    out 'OpenClaw config already matched; no OpenClaw changes were made.'
     return 0
   fi
 
