@@ -173,13 +173,14 @@ only ClawBox-managed OpenClaw provider keys such as `clawbox/local` with
 targeted `openclaw config set` calls.
 
 To run the VM-side model qualification framework against the currently
-configured OpenClaw model reference, use:
+configured host model behind the OpenClaw alias, use:
 
 ```bash
 ./clawbox qualify
 ```
 
-Qualification artifacts are stored under
+The report shows both the actual configured/running GGUF model and the stable
+OpenClaw alias such as `clawbox/local`. Qualification artifacts are stored under
 `~/.openclaw/workspace/.clawbox/qualification/runs/` inside the VM. The command
 does not switch models, replace OpenClaw config, rerun onboarding, or install
 inference software in the VM. See `docs/qualification.md`.

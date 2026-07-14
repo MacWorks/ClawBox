@@ -242,14 +242,17 @@ EOF_OPENCLAW
 test_qualify_runner_default_json_runs_real_scenarios_with_fake_openclaw() {
   local output status=0
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='test-run' CLAWBOX_QUALIFY_MODEL_REF='clawbox/local' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='test-run' CLAWBOX_QUALIFY_MODEL_ALIAS='clawbox/local' CLAWBOX_QUALIFY_MODEL_CONFIGURED='Configured.gguf' CLAWBOX_QUALIFY_MODEL_RUNNING='Running.gguf' CLAWBOX_QUALIFY_MODEL_WARNING='configured and running differ' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --json)"; status=$?; set -e
   assert_equals 'runner exits success when fake model passes all scenarios' "$status" '0'
   python3 - "$output" <<'PY'
 import json, sys
 data=json.loads(sys.argv[1])
 assert data['schemaVersion']=='1'
 assert data['runId']=='test-run'
-assert data['model']=='clawbox/local'
+assert data['model']['alias']=='clawbox/local'
+assert data['model']['configured']=='Configured.gguf'
+assert data['model']['running']=='Running.gguf'
+assert 'configured and running differ' in data['warnings']
 assert data['overallStatus']=='PASS'
 assert len(data['scenarios'])==3
 assert data['score'] is not None
@@ -261,20 +264,25 @@ PY
 
 test_qualify_command_self_heals_without_setup() {
   local env_file="$TEMP_DIR/qualify.env" output status=0
-  local remote_root="$TEMP_DIR/fake-remote" log_file="$TEMP_DIR/self-heal.log"
+  local remote_root="$TEMP_DIR/fake-remote" remote_runtime="$TEMP_DIR/fake remote runtime" remote_home='' log_file="$TEMP_DIR/self-heal.log"
+  remote_home="$remote_root/home/vm-user"
   setup_mock_bin_dir
-  mkdir -p "$remote_root"
+  mkdir -p "$remote_root" "$remote_runtime" "$remote_home"
   cat > "$env_file" <<EOF_ENV
 VM_HOST="vm-user@192.168.64.8"
-VM_RUNTIME_PATH="/Users/vm-user/ClawBox"
+VM_RUNTIME_PATH="$remote_runtime"
 LLAMA_BASE_URL="http://127.0.0.1:11434/v1"
+MODEL_PATH="/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 OPENCLAW_PROVIDER_NAME="clawbox"
 OPENCLAW_DEFAULT_MODEL="local"
 EOF_ENV
   export CLAWBOX_FAKE_REMOTE_ROOT="$remote_root"
+  export CLAWBOX_FAKE_REMOTE_HOME="$remote_home"
+  export CLAWBOX_FAKE_REMOTE_RUNTIME="$remote_runtime"
+  export CLAWBOX_HOST_REPO_ROOT="$ROOT_DIR"
   export CLAWBOX_FAKE_SSH_LOG="$log_file"
   write_mock_command curl '#!/bin/bash
-printf "{\"data\":[]}\n"
+printf "{\"data\":[{\"id\":\"/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"}]}\n"
 exit 0
 '
   write_mock_command scp '#!/bin/bash
@@ -288,8 +296,13 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 rel="${dest#*:}"
-mkdir -p "$CLAWBOX_FAKE_REMOTE_ROOT/$(dirname "$rel")"
-cp "$src" "$CLAWBOX_FAKE_REMOTE_ROOT/$rel"
+case "$rel" in
+  ~/*) out="$CLAWBOX_FAKE_REMOTE_HOME/${rel#~/}" ;;
+  .clawbox/*) out="$CLAWBOX_FAKE_REMOTE_HOME/$rel" ;;
+  *) out="$CLAWBOX_FAKE_REMOTE_ROOT/$rel" ;;
+esac
+mkdir -p "$(dirname "$out")"
+cp "$src" "$out"
 '
   write_mock_command ssh '#!/bin/bash
 set -euo pipefail
@@ -307,13 +320,24 @@ if [ "$command" = "echo ok" ]; then exit 0; fi
 if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
 if [[ "$command" == rm\ -f* ]]; then exit 0; fi
 if [[ "$command" == *"tar -C"* ]]; then
-  cat > "$CLAWBOX_FAKE_REMOTE_ROOT/payload.tar"
+  if [[ "$command" == *"$CLAWBOX_HOST_REPO_ROOT"* ]]; then
+    printf "host repository path leaked into remote publish command\n" >&2
+    exit 71
+  fi
+  rm -rf "$CLAWBOX_FAKE_REMOTE_RUNTIME/qualification"
+  mkdir -p "$CLAWBOX_FAKE_REMOTE_RUNTIME"
+  tar -C "$CLAWBOX_FAKE_REMOTE_RUNTIME" -xf -
+  test -x "$CLAWBOX_FAKE_REMOTE_RUNTIME/qualification/runner.sh"
+  test -x "$CLAWBOX_FAKE_REMOTE_RUNTIME/qualification/scenarios/01-tool-reliability.sh"
   printf "PUBLISH\n" >> "$CLAWBOX_FAKE_SSH_LOG"
   exit 0
 fi
 if [[ "$command" == *"runner.sh"* ]]; then
   printf "RUNNER\n" >> "$CLAWBOX_FAKE_SSH_LOG"
-  printf "{\"schemaVersion\":\"1\",\"runId\":\"self-heal\",\"model\":\"clawbox/local\",\"overallStatus\":\"PASS\",\"score\":100,\"categories\":{},\"warnings\":[],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"status\":\"PASS\"}],\"artifactDirectory\":\"runs/self-heal\"}\n"
+  [[ "$command" == *"CLAWBOX_QUALIFY_MODEL_ALIAS=clawbox/local"* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_MODEL_CONFIGURED=Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_MODEL_RUNNING=Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"* ]]
+  printf "{\"schemaVersion\":\"1\",\"runId\":\"self-heal\",\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"PASS\",\"score\":100,\"categories\":{},\"warnings\":[],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"status\":\"PASS\"}],\"artifactDirectory\":\"runs/self-heal\"}\n"
   exit 0
 fi
 if [[ "$command" == *"zsh -l"* ]]; then
@@ -321,8 +345,18 @@ if [[ "$command" == *"zsh -l"* ]]; then
   remote_path="${remote_path%\"}"
   remote_path="${remote_path#\"}"
   remote_path="${remote_path#\$HOME/}"
-  script="$CLAWBOX_FAKE_REMOTE_ROOT/$remote_path"
-  if grep -Fq "target_dir=" "$script"; then printf "INSTALL\n" >> "$CLAWBOX_FAKE_SSH_LOG"; exit 0; fi
+  script="$CLAWBOX_FAKE_REMOTE_HOME/$remote_path"
+  if grep -Fq "target_dir=" "$script"; then
+    if grep -Fq "$CLAWBOX_HOST_REPO_ROOT" "$script"; then
+      printf "host repository path leaked into remote installer\n" >&2
+      exit 72
+    fi
+    HOME="$CLAWBOX_FAKE_REMOTE_HOME" zsh "$script"
+    test -x "$CLAWBOX_FAKE_REMOTE_HOME/.openclaw/workspace/.clawbox/qualification/runner.sh"
+    test -x "$CLAWBOX_FAKE_REMOTE_HOME/.openclaw/workspace/.clawbox/qualification/scenarios/01-tool-reliability.sh"
+    printf "INSTALL\n" >> "$CLAWBOX_FAKE_SSH_LOG"
+    exit 0
+  fi
   if grep -Fq ".clawbox-manifest.json" "$script"; then exit 1; fi
   if grep -Fq "openclaw config get agents.defaults.model.primary" "$script"; then printf "clawbox/local\n"; exit 0; fi
   if grep -Fq "command -v openclaw" "$script"; then exit 0; fi
@@ -338,6 +372,9 @@ exit 0
 import json, sys
 data=json.loads(sys.argv[1])
 assert data["overallStatus"] == "PASS"
+assert data["model"]["alias"] == "clawbox/local"
+assert data["model"]["configured"] == "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+assert data["model"]["running"] == "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 assert data["scenarios"][0]["scenarioId"] == "01-tool-reliability"
 PY
   pass 'qualify self-heal stdout remains JSON'
@@ -345,6 +382,8 @@ PY
   assert_contains 'qualify self-heal installs missing suite' "$(cat "$log_file")" 'INSTALL'
   assert_contains 'qualify self-heal executes requested scenario' "$(cat "$log_file")" 'RUNNER'
   assert_contains 'qualify self-heal progress stays on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Publishing qualification suite to VM'
+  assert_contains 'qualify reports actual running model separately from alias' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Model under qualification: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
+  assert_contains 'qualify reports OpenClaw alias separately' "$(cat "$TEMP_DIR/self-heal.stderr")" 'OpenClaw alias: clawbox/local'
 }
 
 test_tool_reliability_extra_calls_warn_but_do_not_fail() {

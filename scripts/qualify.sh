@@ -53,7 +53,7 @@ message = sys.argv[1]
 print(json.dumps({
     "schemaVersion": "1",
     "runId": None,
-    "model": "unknown",
+    "model": {"alias": "unknown", "configured": "unknown", "running": "unknown"},
     "overallStatus": "ERROR",
     "score": None,
     "categories": {},
@@ -66,7 +66,7 @@ PY
   else
     local escaped
     escaped="$(printf '%s' "$message" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-    printf '{"schemaVersion":"1","runId":null,"model":"unknown","overallStatus":"ERROR","score":null,"categories":{},"warnings":[],"failures":["%s"],"scenarios":[],"artifactDirectory":null}\n' "$escaped"
+    printf '{"schemaVersion":"1","runId":null,"model":{"alias":"unknown","configured":"unknown","running":"unknown"},"overallStatus":"ERROR","score":null,"categories":{},"warnings":[],"failures":["%s"],"scenarios":[],"artifactDirectory":null}\n' "$escaped"
   fi
 }
 
@@ -135,6 +135,43 @@ require_host_inference() {
   fi
 }
 
+model_basename() {
+  local model_path="$1"
+  [ -n "$model_path" ] || return 1
+  printf '%s\n' "${model_path##*/}"
+}
+
+configured_model_identity() {
+  model_basename "${MODEL_PATH:-}" 2>/dev/null || printf 'unknown\n'
+}
+
+running_model_identity() {
+  local url="${LLAMA_BASE_URL:-}" body='' parsed=''
+  [ -n "$url" ] || return 1
+  body="$(curl -s --connect-timeout 2 --max-time 5 "${url%/}/models" 2>/dev/null || true)"
+  [ -n "$body" ] || return 1
+  parsed="$(printf '%s' "$body" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+models = data.get("data") or data.get("models") or []
+if not isinstance(models, list) or not models:
+    sys.exit(1)
+first = models[0]
+if isinstance(first, dict):
+    value = first.get("id") or first.get("name") or ""
+else:
+    value = str(first)
+if not value:
+    sys.exit(1)
+print(value.rsplit("/", 1)[-1])
+' 2>/dev/null)" || return 1
+  [ -n "$parsed" ] || return 1
+  printf '%s\n' "$parsed"
+}
+
 require_vm_ssh() {
   if ! ssh_check 'echo ok' >/dev/null 2>&1; then
     qualify_fail 2 "VM SSH is not reachable: ${VM_HOST:-not configured}"
@@ -152,7 +189,8 @@ current_openclaw_model() {
 }
 
 main() {
-  local model_ref='' remote_command='' remote_status=0
+  local model_ref='' model_configured='' model_running='' model_display='' model_warning=''
+  local remote_command='' remote_status=0 remote_env=''
 
   validate_scenario_id "$QUALIFY_SCENARIO"
   require_env
@@ -175,9 +213,33 @@ main() {
 
   model_ref="$(current_openclaw_model)"
   [ -n "$model_ref" ] || model_ref="${OPENCLAW_PROVIDER_NAME:-clawbox}/${OPENCLAW_DEFAULT_MODEL:-local}"
-  export CLAWBOX_QUALIFY_MODEL_REF="$model_ref"
+  model_configured="$(configured_model_identity)"
+  model_running="$(running_model_identity || true)"
+  [ -n "$model_running" ] || model_running="$model_configured"
+  if [ -n "$model_running" ] && [ "$model_running" != 'unknown' ]; then
+    model_display="$model_running"
+  elif [ -n "$model_configured" ] && [ "$model_configured" != 'unknown' ]; then
+    model_display="$model_configured"
+  else
+    model_display="$model_ref"
+  fi
+  if [ "$model_configured" != 'unknown' ] && [ "$model_running" != 'unknown' ] && [ "$model_configured" != "$model_running" ]; then
+    model_warning="Configured model $model_configured differs from running model $model_running."
+  fi
 
-  qualify_progress "Model under qualification: $model_ref"
+  export CLAWBOX_QUALIFY_MODEL_REF="$model_ref"
+  export CLAWBOX_QUALIFY_MODEL_ALIAS="$model_ref"
+  export CLAWBOX_QUALIFY_MODEL_CONFIGURED="$model_configured"
+  export CLAWBOX_QUALIFY_MODEL_RUNNING="$model_running"
+  export CLAWBOX_QUALIFY_MODEL_WARNING="$model_warning"
+
+  qualify_progress "Model under qualification: $model_display"
+  qualify_progress "OpenClaw alias: $model_ref"
+  qualify_progress "Configured model: $model_configured"
+  qualify_progress "Running model: $model_running"
+  if [ -n "$model_warning" ]; then
+    qualify_progress "WARNING: $model_warning"
+  fi
   if [ "$QUALIFY_JSON" = true ]; then
     qualify_ensure_suite_installed >&2 || qualify_fail 2 'Unable to publish or install the VM qualification suite.'
   else
@@ -185,10 +247,11 @@ main() {
   fi
 
   remote_command="$(qualify_remote_runner_command "$QUALIFY_SCENARIO" "$QUALIFY_JSON")"
+  remote_env="CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_ALIAS=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_CONFIGURED=$(qualify_shell_quote "$model_configured") CLAWBOX_QUALIFY_MODEL_RUNNING=$(qualify_shell_quote "$model_running") CLAWBOX_QUALIFY_MODEL_WARNING=$(qualify_shell_quote "$model_warning")"
   if [ "$QUALIFY_JSON" = true ]; then
-    ssh -n "$VM_HOST" "CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") zsh -lc $(qualify_shell_quote "$remote_command")" || remote_status=$?
+    ssh -n "$VM_HOST" "$remote_env zsh -lc $(qualify_shell_quote "$remote_command")" || remote_status=$?
   else
-    ssh -n "$VM_HOST" "CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") zsh -lc $(qualify_shell_quote "$remote_command")" || remote_status=$?
+    ssh -n "$VM_HOST" "$remote_env zsh -lc $(qualify_shell_quote "$remote_command")" || remote_status=$?
   fi
 
   case "$remote_status" in

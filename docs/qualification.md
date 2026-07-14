@@ -1,9 +1,11 @@
 # Model Qualification
 
 `./clawbox qualify` runs a VM-side qualification suite against the currently
-configured OpenClaw model reference. It is intended to measure practical
-agent-readiness for ClawBox/OpenClaw workflows rather than raw benchmark
-intelligence.
+configured OpenClaw model. ClawBox reports both the stable OpenClaw alias
+(usually `clawbox/local`) and the configured/running host GGUF identity so that
+the alias is not mistaken for the actual model under test. It is intended to
+measure practical agent-readiness for ClawBox/OpenClaw workflows rather than raw
+benchmark intelligence.
 
 The suite currently ports the original VM prototype scenarios into a structured
 runner with deterministic objective checks for these scenario areas:
@@ -28,7 +30,8 @@ structured results, aggregate reporting, and automatic VM publication.
 ```
 
 `--json` writes only the aggregate JSON document to stdout. Progress and
-diagnostics are written to stderr.
+diagnostics are written to stderr. The aggregate `model` field is an object with
+`alias`, `configured`, and `running` values.
 
 ## What it measures
 

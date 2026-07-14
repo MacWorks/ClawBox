@@ -14,6 +14,10 @@ qualify_source_dir() {
   printf '%s\n' "$BASE_DIR/vm/qualification"
 }
 
+qualify_remote_payload_dir() {
+  printf '%s\n' "${VM_RUNTIME_PATH:?VM_RUNTIME_PATH is not set}/qualification"
+}
+
 qualify_remote_dir() {
   printf '%s\n' "\$HOME/$QUALIFY_REMOTE_RELATIVE_PATH"
 }
@@ -69,7 +73,7 @@ qualify_publish_suite_to_vm_runtime() {
   }
 
   tar -C "$BASE_DIR/vm" -cf - qualification \
-    | ssh -n "$VM_HOST" "mkdir -p $remote_parent && rm -rf $remote_runtime/qualification && mkdir -p $remote_runtime && tar -C $remote_runtime -xf -"
+    | ssh "$VM_HOST" "mkdir -p $remote_parent && rm -rf $remote_runtime/qualification && mkdir -p $remote_runtime && tar -C $remote_runtime -xf -"
 }
 
 qualify_remote_manifest_matches() {
@@ -85,7 +89,7 @@ node -e 'const fs=require(\"fs\"); const m=JSON.parse(fs.readFileSync(process.ar
 qualify_install_suite_on_vm() {
   local checksum="$1" manifest='' remote_source='' remote_dir=''
 
-  remote_source="$(qualify_shell_quote "${VM_RUNTIME_PATH:?VM_RUNTIME_PATH is not set}/qualification")"
+  remote_source="$(qualify_shell_quote "$(qualify_remote_payload_dir)")"
   remote_dir="$(qualify_remote_dir)"
   manifest="$(qualify_manifest_json "$checksum")" || return 1
 

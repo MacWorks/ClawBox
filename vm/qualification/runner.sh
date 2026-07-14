@@ -27,12 +27,12 @@ emit_preflight_error() {
   local message="$1"
   if [ "$JSON_MODE" = true ]; then
     if command -v jq >/dev/null 2>&1; then
-      jq -n --arg runId "$RUN_ID" --arg message "$message" '{schemaVersion:"1",runId:$runId,model:"unknown",overallStatus:"ERROR",score:null,categories:{},warnings:[],failures:[$message],scenarios:[],artifactDirectory:null}'
+      jq -n --arg runId "$RUN_ID" --arg message "$message" '{schemaVersion:"1",runId:$runId,model:{alias:"unknown",configured:"unknown",running:"unknown"},overallStatus:"ERROR",score:null,categories:{},warnings:[],failures:[$message],scenarios:[],artifactDirectory:null}'
     else
       local escaped
       escaped="${message//\\/\\\\}"
       escaped="${escaped//\"/\\\"}"
-      printf '{"schemaVersion":"1","runId":"%s","model":"unknown","overallStatus":"ERROR","score":null,"categories":{},"warnings":[],"failures":["%s"],"scenarios":[],"artifactDirectory":null}\n' "$RUN_ID" "$escaped"
+      printf '{"schemaVersion":"1","runId":"%s","model":{"alias":"unknown","configured":"unknown","running":"unknown"},"overallStatus":"ERROR","score":null,"categories":{},"warnings":[],"failures":["%s"],"scenarios":[],"artifactDirectory":null}\n' "$RUN_ID" "$escaped"
     fi
   else
     printf 'ERROR: %s\n' "$message"
@@ -65,7 +65,13 @@ done <<EOF_SCENARIOS
 $(scenario_paths)
 EOF_SCENARIOS
 
-jq -s --arg runId "$RUN_ID" --arg model "${CLAWBOX_QUALIFY_MODEL_REF:-unknown}" --arg artifactDir "$RUNS_DIR/$RUN_ID" '
+jq -s \
+  --arg runId "$RUN_ID" \
+  --arg modelAlias "${CLAWBOX_QUALIFY_MODEL_ALIAS:-${CLAWBOX_QUALIFY_MODEL_REF:-unknown}}" \
+  --arg modelConfigured "${CLAWBOX_QUALIFY_MODEL_CONFIGURED:-unknown}" \
+  --arg modelRunning "${CLAWBOX_QUALIFY_MODEL_RUNNING:-unknown}" \
+  --arg modelWarning "${CLAWBOX_QUALIFY_MODEL_WARNING:-}" \
+  --arg artifactDir "$RUNS_DIR/$RUN_ID" '
   def priority: {ERROR:0, FAIL:1, WARNING:2, SKIPPED:3, PASS:4};
   def category_status($names):
     [ .[] | .assertions[]? | select(.category as $c | $names | index($c)) | .status ] as $statuses
@@ -77,7 +83,8 @@ jq -s --arg runId "$RUN_ID" --arg model "${CLAWBOX_QUALIFY_MODEL_REF:-unknown}" 
   . as $scenarios
   | ($scenarios | map(.status) | if length == 0 then "ERROR" else min_by(priority[.] // 99) end) as $overall
   | ($scenarios | map(select(.unrated|not) | .score) ) as $scores
-  | {schemaVersion:"1",runId:$runId,model:$model,overallStatus:$overall,score:(if ($scores|length)>0 then (($scores|add / length)|round) else null end),categories:{"Tool correctness": category_status(["tool_correctness"]),"Grounding": category_status(["grounding"]),"Workflow correctness": category_status(["workflow_correctness"]),"Instruction following": category_status(["instruction_following"]),"Code and state correctness": category_status(["code_state_correctness"]),"Hallucination avoidance": category_status(["hallucination_avoidance"]),"Efficiency": category_status(["efficiency"])},warnings:($scenarios|map(.warnings[]?) ),failures:($scenarios|map(.failures[]?) ),scenarios:$scenarios,artifactDirectory:$artifactDir}' "$results_dir"/*.json >"$results_dir/aggregate.json"
+  | (if $modelWarning == "" then [] else [$modelWarning] end) as $modelWarnings
+  | {schemaVersion:"1",runId:$runId,model:{alias:$modelAlias,configured:$modelConfigured,running:$modelRunning},overallStatus:$overall,score:(if ($scores|length)>0 then (($scores|add / length)|round) else null end),categories:{"Tool correctness": category_status(["tool_correctness"]),"Grounding": category_status(["grounding"]),"Workflow correctness": category_status(["workflow_correctness"]),"Instruction following": category_status(["instruction_following"]),"Code and state correctness": category_status(["code_state_correctness"]),"Hallucination avoidance": category_status(["hallucination_avoidance"]),"Efficiency": category_status(["efficiency"])},warnings:($modelWarnings + ($scenarios|map(.warnings[]?) )),failures:($scenarios|map(.failures[]?) ),scenarios:$scenarios,artifactDirectory:$artifactDir}' "$results_dir"/*.json >"$results_dir/aggregate.json"
 
 if [ "$JSON_MODE" = true ]; then
   cat "$results_dir/aggregate.json"
@@ -86,7 +93,10 @@ else
     "--------------------------------------------------",
     "Model Qualification Report",
     "--------------------------------------------------",
-    "Model: \(.model)",
+    "Model: \(.model.running // .model.configured // .model.alias)",
+    "OpenClaw alias: \(.model.alias)",
+    "Configured model: \(.model.configured)",
+    "Running model: \(.model.running)",
     (.scenarios[] | "\(.scenarioId) \(.scenarioName): \(.status)"),
     "Overall Score: \(if .score == null then "unrated" else (.score|tostring) + "/100" end)",
     "Overall Result: \(.overallStatus)",
