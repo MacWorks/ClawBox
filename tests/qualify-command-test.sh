@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT_DIR/tests/helpers/setup-harness.sh"
 TEMP_DIR="$(mktemp -d)"
+export CLAWBOX_QUALIFY_RUNS_DIR="$TEMP_DIR/qualification-runs"
 trap cleanup_temp_dir EXIT
 
 install_fake_openclaw() {
@@ -95,6 +96,67 @@ test_root_help_lists_qualify() {
   assert_contains 'root help shows qualify example' "$output" './clawbox qualify'
 }
 
+test_qualification_entrypoint_modes() {
+  local payload_dir="$TEMP_DIR/qualification-payload-modes"
+
+  if [ -x "$ROOT_DIR/scripts/qualify.sh" ]; then
+    pass 'repository qualify command entrypoint is executable'
+  else
+    fail 'repository qualify command entrypoint should be executable'
+  fi
+
+  if [ -x "$ROOT_DIR/vm/qualification/runner.sh" ]; then
+    pass 'repository VM qualification runner is executable'
+  else
+    fail 'repository VM qualification runner should be executable'
+  fi
+
+  for scenario in \
+    "$ROOT_DIR/vm/qualification/scenarios/01-tool-reliability.sh" \
+    "$ROOT_DIR/vm/qualification/scenarios/02-tool-workflows.sh" \
+    "$ROOT_DIR/vm/qualification/scenarios/03-code-repair.sh"
+  do
+    if [ -x "$scenario" ]; then
+      pass "repository VM scenario is executable: ${scenario##*/}"
+    else
+      fail "repository VM scenario should be executable: ${scenario##*/}"
+    fi
+  done
+
+  if [ ! -x "$ROOT_DIR/vm/qualification/lib/helpers.sh" ]; then
+    pass 'VM qualification helper library is source-only'
+  else
+    fail 'VM qualification helper library should not require executable mode'
+  fi
+
+  mkdir -p "$payload_dir"
+  tar -C "$ROOT_DIR/vm" -cf - qualification | tar -C "$payload_dir" -xf -
+
+  if [ -x "$payload_dir/qualification/runner.sh" ]; then
+    pass 'published payload preserves runner executable mode'
+  else
+    fail 'published payload should preserve runner executable mode'
+  fi
+
+  for scenario in \
+    "$payload_dir/qualification/scenarios/01-tool-reliability.sh" \
+    "$payload_dir/qualification/scenarios/02-tool-workflows.sh" \
+    "$payload_dir/qualification/scenarios/03-code-repair.sh"
+  do
+    if [ -x "$scenario" ]; then
+      pass "published payload preserves scenario executable mode: ${scenario##*/}"
+    else
+      fail "published payload should preserve scenario executable mode: ${scenario##*/}"
+    fi
+  done
+
+  if [ ! -x "$payload_dir/qualification/lib/helpers.sh" ]; then
+    pass 'published payload keeps helper library source-only'
+  else
+    fail 'published payload should keep helper library source-only'
+  fi
+}
+
 test_qualify_help_does_not_execute_remote_commands() {
   local output
   setup_mock_bin_dir
@@ -102,7 +164,7 @@ test_qualify_help_does_not_execute_remote_commands() {
 printf "SSH_UNEXPECTED\n"
 exit 99
 '
-  output="$(PATH="$MOCK_BIN_DIR:$PATH" bash "$ROOT_DIR/scripts/qualify.sh" --help 2>&1)"
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" "$ROOT_DIR/clawbox" qualify --help 2>&1)"
   assert_contains 'qualify help shows usage' "$output" 'Usage: ./clawbox qualify'
   assert_not_contains 'qualify help does not contact ssh' "$output" 'SSH_UNEXPECTED'
 }
@@ -348,7 +410,7 @@ test_workflow_cases_and_code_repair_objective_behavior() {
 }
 
 test_run_directories_are_isolated() {
-  local sentinel="$ROOT_DIR/vm/qualification/runs/old-run/sentinel.txt" output status=0
+  local sentinel="$CLAWBOX_QUALIFY_RUNS_DIR/old-run/sentinel.txt" output status=0
   mkdir -p "$(dirname "$sentinel")"
   printf 'keep\n' > "$sentinel"
   install_fake_openclaw
@@ -392,6 +454,7 @@ test_qualify_sources_avoid_openclaw_config_replacement() {
 }
 
 run_test test_root_help_lists_qualify
+run_test test_qualification_entrypoint_modes
 run_test test_qualify_help_does_not_execute_remote_commands
 run_test test_qualify_unknown_options_and_scenarios_fail_clearly
 run_test test_qualify_runner_errors_when_openclaw_missing

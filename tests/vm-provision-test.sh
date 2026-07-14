@@ -187,6 +187,27 @@ test_vm_provision_installs_qualification_suite_idempotently() {
   else
     fail 'vm provision qualification install should write runner and manifest'
   fi
+  if [ -x "$target_dir/runner.sh" ]; then
+    pass 'vm provision qualification install makes runner executable'
+  else
+    fail 'vm provision qualification install should make runner executable'
+  fi
+  for scenario in \
+    "$target_dir/scenarios/01-tool-reliability.sh" \
+    "$target_dir/scenarios/02-tool-workflows.sh" \
+    "$target_dir/scenarios/03-code-repair.sh"
+  do
+    if [ -x "$scenario" ]; then
+      pass "vm provision qualification install makes scenario executable: ${scenario##*/}"
+    else
+      fail "vm provision qualification install should make scenario executable: ${scenario##*/}"
+    fi
+  done
+  if [ ! -x "$target_dir/lib/helpers.sh" ]; then
+    pass 'vm provision qualification install keeps helper library source-only'
+  else
+    fail 'vm provision qualification install should keep helper library source-only'
+  fi
   if [ "$(cat "$unrelated_file")" = 'keep me' ]; then
     pass 'vm provision qualification install preserves unrelated workspace files'
   else

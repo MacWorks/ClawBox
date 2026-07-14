@@ -111,8 +111,9 @@ function walk(dir) {
 const digest = crypto.createHash('sha256');
 for (const file of walk(root).sort()) {
   const rel = path.relative(root, file);
+  const mode = (fs.statSync(file).mode & 0o777).toString(8);
   const fileDigest = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-  digest.update(rel + '\0' + fileDigest + '\0');
+  digest.update(rel + '\0' + mode + '\0' + fileDigest + '\0');
 }
 process.stdout.write(digest.digest('hex'));
 NODE
@@ -142,7 +143,12 @@ install_qualification_suite() {
 	rm -rf "$QUALIFICATION_TARGET_PATH"
 	mkdir -p "$(dirname "$QUALIFICATION_TARGET_PATH")"
 	mv "$QUALIFICATION_TARGET_PATH.tmp" "$QUALIFICATION_TARGET_PATH"
-	find "$QUALIFICATION_TARGET_PATH" -type f -name '*.sh' -exec chmod +x {} \;
+	find "$QUALIFICATION_TARGET_PATH" -type d -exec chmod 755 {} \;
+	find "$QUALIFICATION_TARGET_PATH" -type f -exec chmod 644 {} \;
+	chmod 755 "$QUALIFICATION_TARGET_PATH/runner.sh"
+	if [ -d "$QUALIFICATION_TARGET_PATH/scenarios" ]; then
+		find "$QUALIFICATION_TARGET_PATH/scenarios" -type f -name '*.sh' -exec chmod 755 {} \;
+	fi
 	echo "Installed qualification suite at $QUALIFICATION_TARGET_PATH"
 }
 

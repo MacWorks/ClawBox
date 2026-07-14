@@ -7,7 +7,7 @@ case "$0" in
 esac
 SUITE_DIR="$(cd "$RUNNER_SCRIPT_DIR" && pwd)"
 SCENARIO_DIR="$SUITE_DIR/scenarios"
-RUNS_DIR="$SUITE_DIR/runs"
+RUNS_DIR="${CLAWBOX_QUALIFY_RUNS_DIR:-$SUITE_DIR/runs}"
 SCENARIO_FILTER=''
 JSON_MODE=false
 RUN_ID="${CLAWBOX_QUALIFY_RUN_ID:-$(date -u '+%Y%m%dT%H%M%SZ')-$RANDOM}"

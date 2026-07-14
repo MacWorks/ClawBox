@@ -35,11 +35,12 @@ for current, dirs, files in os.walk(root):
     for name in sorted(files):
         path = os.path.join(current, name)
         rel = os.path.relpath(path, root)
+        mode = oct(os.stat(path).st_mode & 0o777)
         with open(path, "rb") as fh:
-            entries.append((rel, hashlib.sha256(fh.read()).hexdigest()))
+            entries.append((rel, mode, hashlib.sha256(fh.read()).hexdigest()))
 digest = hashlib.sha256()
-for rel, file_digest in entries:
-    digest.update(rel.encode("utf-8") + b"\0" + file_digest.encode("ascii") + b"\0")
+for rel, mode, file_digest in entries:
+    digest.update(rel.encode("utf-8") + b"\0" + mode.encode("ascii") + b"\0" + file_digest.encode("ascii") + b"\0")
 print(digest.hexdigest())
 PY
 }
@@ -98,7 +99,12 @@ cp -R \"\$source_dir\"/. \"\$target_dir.tmp\"/
 printf '%s\n' $(qualify_shell_quote "$manifest") > \"\$target_dir.tmp/.clawbox-manifest.json\"
 rm -rf \"\$target_dir\"
 mv \"\$target_dir.tmp\" \"\$target_dir\"
-find \"\$target_dir\" -type f -name '*.sh' -exec chmod +x {} \\;"
+find \"\$target_dir\" -type d -exec chmod 755 {} \\;
+find \"\$target_dir\" -type f -exec chmod 644 {} \\;
+chmod 755 \"\$target_dir/runner.sh\"
+if [ -d \"\$target_dir/scenarios\" ]; then
+  find \"\$target_dir/scenarios\" -type f -name '*.sh' -exec chmod 755 {} \\;
+fi"
 }
 
 qualify_ensure_suite_installed() {
@@ -129,4 +135,3 @@ qualify_remote_runner_command() {
   fi
   printf '%s\n' "$command"
 }
-
