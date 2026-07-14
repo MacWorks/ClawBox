@@ -20,6 +20,7 @@ setup_vm_provision_fixture() {
   mkdir -p "$fixture_root/vm" "$fixture_root/opt/homebrew/bin" "$fixture_root/opt/homebrew/opt/node@22/bin"
 
   cp "$ROOT_DIR/vm/vm-provision.sh" "$script_path"
+  cp -R "$ROOT_DIR/vm/qualification" "$fixture_root/vm/qualification"
   chmod +x "$script_path"
 
   sed -i '' \
@@ -56,6 +57,11 @@ EOF
 #!/bin/bash
 if [ "${1:-}" = '-v' ]; then
   printf 'v22.0.0\n'
+  exit 0
+fi
+if [ "${1:-}" = '-' ]; then
+  cat >/dev/null
+  printf 'fixture-checksum'
   exit 0
 fi
 exit 0
@@ -144,6 +150,7 @@ EOF
   assert_equals 'vm provision succeeds when gateway prompt is skipped' "$VM_PROVISION_LAST_STATUS" '0'
   assert_contains 'vm provision creates .zprofile when missing' "$VM_PROVISION_LAST_OUTPUT" "Created $home_dir/.zprofile"
   assert_contains 'vm provision copies the OpenClaw config when it is missing' "$VM_PROVISION_LAST_OUTPUT" "Copied OpenClaw config to $target_config"
+  assert_contains 'vm provision installs qualification suite' "$VM_PROVISION_LAST_OUTPUT" "Installed qualification suite at $home_dir/.openclaw/workspace/.clawbox/qualification"
   assert_contains 'vm provision reports host setup continuation when gateway prompt is skipped' "$VM_PROVISION_LAST_OUTPUT" 'Host setup will continue with runtime configuration.'
 
   if cmp -s "$fixture_root/vm/openclaw.json" "$target_config"; then
@@ -156,6 +163,38 @@ EOF
   node_path_count="$(/usr/bin/grep -Fxc 'export PATH="/opt/homebrew/opt/node@22/bin:$PATH"' "$home_dir/.zprofile")"
   assert_equals 'vm provision writes one Homebrew shellenv line' "$shellenv_count" '1'
   assert_equals 'vm provision writes one Node PATH line' "$node_path_count" '1'
+}
+
+test_vm_provision_installs_qualification_suite_idempotently() {
+  local fixture_root
+  local home_dir="$TEMP_DIR/home-qualification"
+  local target_dir="$home_dir/.openclaw/workspace/.clawbox/qualification"
+  local unrelated_file="$home_dir/.openclaw/workspace/notes.txt"
+
+  setup_vm_provision_fixture
+  fixture_root="$REPLY"
+  setup_vm_provision_mocks
+
+  mkdir -p "$(dirname "$unrelated_file")"
+  printf 'keep me\n' > "$unrelated_file"
+
+  run_vm_provision "$fixture_root" "$home_dir" '' true
+
+  assert_equals 'vm provision qualification install succeeds' "$VM_PROVISION_LAST_STATUS" '0'
+  assert_contains 'vm provision qualification install reports target' "$VM_PROVISION_LAST_OUTPUT" "Installed qualification suite at $target_dir"
+  if [ -f "$target_dir/runner.sh" ] && [ -f "$target_dir/.clawbox-manifest.json" ]; then
+    pass 'vm provision qualification install writes runner and manifest'
+  else
+    fail 'vm provision qualification install should write runner and manifest'
+  fi
+  if [ "$(cat "$unrelated_file")" = 'keep me' ]; then
+    pass 'vm provision qualification install preserves unrelated workspace files'
+  else
+    fail 'vm provision qualification install should preserve unrelated workspace files'
+  fi
+
+  run_vm_provision "$fixture_root" "$home_dir" '' true
+  assert_contains 'vm provision qualification install is idempotent' "$VM_PROVISION_LAST_OUTPUT" "Qualification suite already current at $target_dir"
 }
 
 test_vm_provision_deduplicates_zprofile_entries() {
@@ -228,6 +267,7 @@ test_vm_provision_starts_gateway_when_prompt_is_accepted() {
 printf 'Running vm provision tests\n'
 
 run_test test_vm_provision_copies_config_and_skips_gateway_prompt_when_requested
+run_test test_vm_provision_installs_qualification_suite_idempotently
 run_test test_vm_provision_deduplicates_zprofile_entries
 run_test test_vm_provision_prints_next_step_when_gateway_start_is_declined
 run_test test_vm_provision_starts_gateway_when_prompt_is_accepted

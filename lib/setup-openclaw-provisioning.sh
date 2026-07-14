@@ -28,6 +28,9 @@ ensure_vm_provision_script() {
     ssh_exec "test -f \"$VM_RUNTIME_PATH/vm-provision.sh\""
   fi
 
+  if command -v qualify_publish_suite_to_vm_runtime >/dev/null 2>&1; then
+    qualify_publish_suite_to_vm_runtime
+  fi
 }
 
 openclaw_onboarding_command() {

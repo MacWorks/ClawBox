@@ -17,6 +17,7 @@
 /~/
 /vm/runtime/*
 !/vm/runtime/.gitkeep
+/vm/qualification/runs/
 
 # Centralized log tree
 /logs/*

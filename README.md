@@ -172,6 +172,18 @@ provisioning and the OpenClaw config file intact. It may verify and correct
 only ClawBox-managed OpenClaw provider keys such as `clawbox/local` with
 targeted `openclaw config set` calls.
 
+To run the VM-side model qualification framework against the currently
+configured OpenClaw model reference, use:
+
+```bash
+./clawbox qualify
+```
+
+Qualification artifacts are stored under
+`~/.openclaw/workspace/.clawbox/qualification/runs/` inside the VM. The command
+does not switch models, replace OpenClaw config, rerun onboarding, or install
+inference software in the VM. See `docs/qualification.md`.
+
 ### Optional embeddings server
 
 Setup can optionally manage a second, host-only `llama-server` for embeddings.

@@ -14,6 +14,7 @@ Commands:
   setup       Run interactive setup
   status      Show system status
   model       Switch a host model (primary or embeddings)
+  qualify     Run VM-side model qualification scenarios
   openclaw    OpenClaw maintenance commands
   help        Show this help message
 
@@ -27,6 +28,7 @@ Examples:
   ./clawbox model primary
   ./clawbox model embedding
   ./clawbox model embeddings
+  ./clawbox qualify
   ./clawbox openclaw reset
 EOF
 }
@@ -45,6 +47,9 @@ case "$cmd" in
     ;;
   model)
     exec "$BASE_DIR/scripts/model.sh" "$@"
+    ;;
+  qualify)
+    exec "$BASE_DIR/scripts/qualify.sh" "$@"
     ;;
   openclaw)
     exec "$BASE_DIR/scripts/openclaw.sh" "$@"

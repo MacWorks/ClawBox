@@ -1,0 +1,413 @@
+#!/bin/bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT_DIR/tests/helpers/setup-harness.sh"
+TEMP_DIR="$(mktemp -d)"
+trap cleanup_temp_dir EXIT
+
+install_fake_openclaw() {
+  setup_mock_bin_dir
+  export CLAWBOX_QUALIFY_SESSION_DIR="$TEMP_DIR/sessions"
+  export CLAWBOX_FAKE_OPENCLAW_LOG="$TEMP_DIR/openclaw-args.log"
+  mkdir -p "$CLAWBOX_QUALIFY_SESSION_DIR"
+  cat > "$MOCK_BIN_DIR/openclaw" <<'MOCK_OPENCLAW'
+#!/bin/bash
+set -euo pipefail
+printf "%s\n" "$*" >> "${CLAWBOX_FAKE_OPENCLAW_LOG:?}"
+[ "${1:-}" = agent ] || exit 2
+shift
+session=""; timeout=""; message=""; json=false
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --session-id) session="$2"; shift 2 ;;
+    --timeout) timeout="$2"; shift 2 ;;
+    --json) json=true; shift ;;
+    --message) message="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ -n "$session" ] || exit 2
+sessions="${CLAWBOX_QUALIFY_SESSION_DIR:?}"
+mkdir -p "$sessions"
+trajectory="$sessions/$session.trajectory.jsonl"
+transcript="$sessions/$session.jsonl"
+final_status="${CLAWBOX_FAKE_OPENCLAW_FINAL_STATUS:-success}"
+tool_count="${CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT:-auto}"
+reply="DONE"
+if [ "$tool_count" = auto ]; then tool_count=1; fi
+if printf "%s" "$message" | grep -Fq "Use exec exactly twice"; then tool_count="${CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT:-2}"; fi
+if printf "%s" "$message" | grep -Fq "Use exec exactly once to create:"; then
+  file="$(printf "%s\n" "$message" | awk '/Use exec exactly once to create:/{getline; print; exit}')"
+  content="$(printf "%s\n" "$message" | awk '/The file must contain exactly:/{getline; print; exit}')"
+  mkdir -p "$(dirname "$file")"
+  if [ "${CLAWBOX_FAKE_OPENCLAW_FABRICATE:-false}" != true ]; then printf "%s" "$content" > "$file"; fi
+  reply="DONE"
+elif printf "%s" "$message" | grep -Fq "printf 'RED"; then
+  reply=$'RED\nGREEN\nBLUE'
+elif printf "%s" "$message" | grep -Fq "verification code"; then
+  reply="NCC1701"
+elif printf "%s" "$message" | grep -Fq "Reply with exactly ABSENT"; then
+  reply="ABSENT"
+elif printf "%s" "$message" | grep -Fq "Reply with exactly beta"; then
+  root_file="$(printf "%s\n" "$message" | awk '/First create /{print $3; exit}')"
+  out_file="$(printf "%s\n" "$message" | awk '/write it to /{for(i=1;i<=NF;i++) if($i=="to") {print $(i+1); exit}}')"
+  out_file="${out_file%,}"
+  mkdir -p "$(dirname "$root_file")" "$(dirname "$out_file")"
+  printf "alpha\nbeta\ngamma\n" > "$root_file"
+  printf "beta" > "$out_file"
+  reply="beta"
+elif printf "%s" "$message" | grep -Fq "Reply with exactly the printed lines"; then
+  numbers="$(printf "%s\n" "$message" | awk '/First create /{print $3; exit}')"
+  sorted="$(printf "%s\n" "$message" | awk '/write the result to /{for(i=1;i<=NF;i++) if($i=="to") {print $(i+1); exit}}')"
+  sorted="${sorted%,}"
+  mkdir -p "$(dirname "$numbers")" "$(dirname "$sorted")"
+  printf "9\n3\n7\n" > "$numbers"
+  printf "3\n7\n9" > "$sorted"
+  reply=$'3\n7\n9'
+elif printf "%s" "$message" | grep -Fq "Project directory:"; then
+  project="$(printf "%s\n" "$message" | awk '/Project directory:/{getline; print; exit}')"
+  if [ "${CLAWBOX_FAKE_OPENCLAW_UNRELATED_CHANGE:-false}" = true ]; then printf "oops\n" > "$project/unrelated.txt"; fi
+  if [ "${CLAWBOX_FAKE_OPENCLAW_FABRICATE:-false}" != true ]; then sed -i.bak 's/\$1 - \$2/\$1 + \$2/' "$project/calculator.sh"; rm -f "$project/calculator.sh.bak"; fi
+  reply=$'Root cause: subtraction was used.\nFile changed: calculator.sh\nFinal test result: PASS'
+fi
+if [ "${CLAWBOX_FAKE_OPENCLAW_NO_TRAJECTORY:-false}" != true ]; then
+  metas="[]"
+  if [ "$tool_count" -gt 0 ] 2>/dev/null; then metas="$(jq -n --argjson n "$tool_count" '[range(0;$n)|{name:"exec"}]')"; fi
+  jq -nc --arg session "$session" --arg status "$final_status" --argjson metas "$metas" '{type:"trace.artifacts",session:$session,data:{finalStatus:$status,toolMetas:$metas}}' > "$trajectory"
+  if [ "${CLAWBOX_FAKE_OPENCLAW_MULTIPLE_TRAJECTORIES:-false}" = true ]; then cp "$trajectory" "$sessions/extra-$session.trajectory.jsonl"; fi
+  if [ "${CLAWBOX_FAKE_OPENCLAW_MALFORMED_TRAJECTORY:-false}" = true ]; then printf "not-json\n" > "$trajectory"; fi
+fi
+if [ "${CLAWBOX_FAKE_OPENCLAW_NO_TRANSCRIPT:-false}" != true ]; then
+  jq -nc --arg reply "$reply" '{type:"message",message:{role:"assistant",content:[{type:"text",text:$reply}]}}' > "$transcript"
+  if [ "${CLAWBOX_FAKE_OPENCLAW_MALFORMED_TRANSCRIPT:-false}" = true ]; then printf "not-json\n" > "$transcript"; fi
+fi
+printf '{"ok":true}\n'
+exit "${CLAWBOX_FAKE_OPENCLAW_EXIT_STATUS:-0}"
+MOCK_OPENCLAW
+  chmod +x "$MOCK_BIN_DIR/openclaw"
+}
+
+test_root_help_lists_qualify() {
+  local output
+  output="$(bash "$ROOT_DIR/clawbox" help 2>&1)"
+  assert_contains 'root help lists qualify command' "$output" 'qualify'
+  assert_contains 'root help shows qualify example' "$output" './clawbox qualify'
+}
+
+test_qualify_help_does_not_execute_remote_commands() {
+  local output
+  setup_mock_bin_dir
+  write_mock_command ssh '#!/bin/bash
+printf "SSH_UNEXPECTED\n"
+exit 99
+'
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" bash "$ROOT_DIR/scripts/qualify.sh" --help 2>&1)"
+  assert_contains 'qualify help shows usage' "$output" 'Usage: ./clawbox qualify'
+  assert_not_contains 'qualify help does not contact ssh' "$output" 'SSH_UNEXPECTED'
+}
+
+test_qualify_unknown_options_and_scenarios_fail_clearly() {
+  local option_output scenario_output status=0
+  set +e; option_output="$(bash "$ROOT_DIR/scripts/qualify.sh" --bogus 2>&1)"; status=$?; set -e
+  assert_equals 'unknown qualify option exits infrastructure error' "$status" '2'
+  assert_contains 'unknown qualify option fails clearly' "$option_output" 'Unknown qualify option: --bogus'
+  set +e; scenario_output="$(bash "$ROOT_DIR/scripts/qualify.sh" --scenario nope 2>&1)"; status=$?; set -e
+  assert_equals 'unknown qualify scenario exits infrastructure error' "$status" '2'
+  assert_contains 'unknown qualify scenario fails clearly' "$scenario_output" 'Unknown qualification scenario: nope'
+}
+
+test_qualify_runner_errors_when_openclaw_missing() {
+  local output status=0 bin="$TEMP_DIR/no-openclaw-bin"
+  mkdir -p "$bin"
+  ln -sf /bin/bash "$bin/bash"
+  ln -sf /usr/bin/jq "$bin/jq"
+  ln -sf /usr/bin/git "$bin/git"
+  set +e; output="$(PATH="$bin" CLAWBOX_QUALIFY_RUN_ID='missing-openclaw' bash "$ROOT_DIR/vm/qualification/runner.sh" --json 2>&1)"; status=$?; set -e
+  assert_equals 'missing openclaw exits infrastructure error' "$status" '2'
+  assert_contains 'missing openclaw reports dependency error' "$output" 'Missing required dependency: openclaw'
+}
+
+test_qualify_json_host_errors_keep_stdout_machine_readable() {
+  local output status=0
+  set +e; output="$(CLAWBOX_ENV_FILE="$TEMP_DIR/missing.env" bash "$ROOT_DIR/scripts/qualify.sh" --json --scenario 01-tool-reliability 2>"$TEMP_DIR/json-error.stderr")"; status=$?; set -e
+  assert_equals 'json missing-env exits infrastructure error' "$status" '2'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data["overallStatus"] == "ERROR"
+assert data["scenarios"] == []
+PY
+  pass 'json missing-env stdout is valid JSON only'
+  assert_contains 'json missing-env diagnostic goes to stderr' "$(cat "$TEMP_DIR/json-error.stderr")" 'ERROR: Missing .env'
+}
+
+test_qualify_runner_dependency_preflight_errors() {
+  local output status=0 bin="$TEMP_DIR/missing-jq-bin"
+  mkdir -p "$bin"
+  ln -sf /bin/bash "$bin/bash"
+  ln -sf /usr/bin/git "$bin/git"
+  cat > "$bin/openclaw" <<'EOF_OPENCLAW'
+#!/bin/bash
+exit 0
+EOF_OPENCLAW
+  chmod +x "$bin/openclaw"
+  set +e; output="$(PATH="$bin" CLAWBOX_QUALIFY_RUN_ID='missing-jq' bash "$ROOT_DIR/vm/qualification/runner.sh" --json 2>&1)"; status=$?; set -e
+  assert_equals 'missing jq exits infrastructure error' "$status" '2'
+  assert_contains 'missing jq reports dependency error' "$output" 'Missing required dependency: jq'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data["overallStatus"] == "ERROR"
+assert data["failures"] == ["Missing required dependency: jq"]
+PY
+  pass 'missing jq stdout remains valid JSON'
+
+  bin="$TEMP_DIR/missing-git-bin"
+  mkdir -p "$bin"
+  ln -sf /bin/bash "$bin/bash"
+  ln -sf /usr/bin/jq "$bin/jq"
+  cat > "$bin/openclaw" <<'EOF_OPENCLAW'
+#!/bin/bash
+exit 0
+EOF_OPENCLAW
+  chmod +x "$bin/openclaw"
+  set +e; output="$(PATH="$bin" CLAWBOX_QUALIFY_RUN_ID='missing-git' bash "$ROOT_DIR/vm/qualification/runner.sh" --json 2>&1)"; status=$?; set -e
+  assert_equals 'missing git exits infrastructure error' "$status" '2'
+  assert_contains 'missing git reports dependency error' "$output" 'Missing required dependency: git'
+}
+
+test_qualify_runner_default_json_runs_real_scenarios_with_fake_openclaw() {
+  local output status=0
+  install_fake_openclaw
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='test-run' CLAWBOX_QUALIFY_MODEL_REF='clawbox/local' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --json)"; status=$?; set -e
+  assert_equals 'runner exits success when fake model passes all scenarios' "$status" '0'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['schemaVersion']=='1'
+assert data['runId']=='test-run'
+assert data['model']=='clawbox/local'
+assert data['overallStatus']=='PASS'
+assert len(data['scenarios'])==3
+assert data['score'] is not None
+PY
+  pass 'runner default json is valid and includes real scenario results'
+  assert_contains 'fake openclaw was invoked through agent command' "$(cat "$CLAWBOX_FAKE_OPENCLAW_LOG")" 'agent --session-id'
+  assert_contains 'fake openclaw received json flag' "$(cat "$CLAWBOX_FAKE_OPENCLAW_LOG")" '--json'
+}
+
+test_qualify_command_self_heals_without_setup() {
+  local env_file="$TEMP_DIR/qualify.env" output status=0
+  local remote_root="$TEMP_DIR/fake-remote" log_file="$TEMP_DIR/self-heal.log"
+  setup_mock_bin_dir
+  mkdir -p "$remote_root"
+  cat > "$env_file" <<EOF_ENV
+VM_HOST="vm-user@192.168.64.8"
+VM_RUNTIME_PATH="/Users/vm-user/ClawBox"
+LLAMA_BASE_URL="http://127.0.0.1:11434/v1"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+EOF_ENV
+  export CLAWBOX_FAKE_REMOTE_ROOT="$remote_root"
+  export CLAWBOX_FAKE_SSH_LOG="$log_file"
+  write_mock_command curl '#!/bin/bash
+printf "{\"data\":[]}\n"
+exit 0
+'
+  write_mock_command scp '#!/bin/bash
+set -euo pipefail
+src=""
+dest=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -*) shift ;;
+    *) if [ -z "$src" ]; then src="$1"; else dest="$1"; fi; shift ;;
+  esac
+done
+rel="${dest#*:}"
+mkdir -p "$CLAWBOX_FAKE_REMOTE_ROOT/$(dirname "$rel")"
+cp "$src" "$CLAWBOX_FAKE_REMOTE_ROOT/$rel"
+'
+  write_mock_command ssh '#!/bin/bash
+set -euo pipefail
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -n|-o) if [ "$1" = "-o" ]; then shift 2; else shift; fi ;;
+    *) break ;;
+  esac
+done
+host="$1"
+shift
+command="$*"
+printf "%s\n" "$command" >> "$CLAWBOX_FAKE_SSH_LOG"
+if [ "$command" = "echo ok" ]; then exit 0; fi
+if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
+if [[ "$command" == rm\ -f* ]]; then exit 0; fi
+if [[ "$command" == *"tar -C"* ]]; then
+  cat > "$CLAWBOX_FAKE_REMOTE_ROOT/payload.tar"
+  printf "PUBLISH\n" >> "$CLAWBOX_FAKE_SSH_LOG"
+  exit 0
+fi
+if [[ "$command" == *"runner.sh"* ]]; then
+  printf "RUNNER\n" >> "$CLAWBOX_FAKE_SSH_LOG"
+  printf "{\"schemaVersion\":\"1\",\"runId\":\"self-heal\",\"model\":\"clawbox/local\",\"overallStatus\":\"PASS\",\"score\":100,\"categories\":{},\"warnings\":[],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"status\":\"PASS\"}],\"artifactDirectory\":\"runs/self-heal\"}\n"
+  exit 0
+fi
+if [[ "$command" == *"zsh -l"* ]]; then
+  remote_path="${command#*zsh -l }"
+  remote_path="${remote_path%\"}"
+  remote_path="${remote_path#\"}"
+  remote_path="${remote_path#\$HOME/}"
+  script="$CLAWBOX_FAKE_REMOTE_ROOT/$remote_path"
+  if grep -Fq "target_dir=" "$script"; then printf "INSTALL\n" >> "$CLAWBOX_FAKE_SSH_LOG"; exit 0; fi
+  if grep -Fq ".clawbox-manifest.json" "$script"; then exit 1; fi
+  if grep -Fq "openclaw config get agents.defaults.model.primary" "$script"; then printf "clawbox/local\n"; exit 0; fi
+  if grep -Fq "command -v openclaw" "$script"; then exit 0; fi
+fi
+exit 0
+'
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" bash "$ROOT_DIR/scripts/qualify.sh" --json --scenario 01-tool-reliability 2>"$TEMP_DIR/self-heal.stderr")"
+  status=$?
+  set -e
+  assert_equals 'qualify self-heal command exits success without mocked setup' "$status" '0'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data["overallStatus"] == "PASS"
+assert data["scenarios"][0]["scenarioId"] == "01-tool-reliability"
+PY
+  pass 'qualify self-heal stdout remains JSON'
+  assert_contains 'qualify self-heal publishes missing suite' "$(cat "$log_file")" 'PUBLISH'
+  assert_contains 'qualify self-heal installs missing suite' "$(cat "$log_file")" 'INSTALL'
+  assert_contains 'qualify self-heal executes requested scenario' "$(cat "$log_file")" 'RUNNER'
+  assert_contains 'qualify self-heal progress stays on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Publishing qualification suite to VM'
+}
+
+test_tool_reliability_extra_calls_warn_but_do_not_fail() {
+  local output status=0
+  install_fake_openclaw
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='warning-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'extra verification calls warning exits success' "$status" '0'
+  assert_contains 'extra tool calls produce warning result' "$output" '"overallStatus": "WARNING"'
+  assert_contains 'tool reliability reports efficient rate separately' "$output" '"efficientCallRate"'
+}
+
+test_tool_reliability_fabricated_success_fails() {
+  local output status=0
+  install_fake_openclaw
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fabricated-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 CLAWBOX_FAKE_OPENCLAW_FABRICATE=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'fabricated success exits model failure' "$status" '1'
+  assert_contains 'fabricated success reports FAIL' "$output" '"overallStatus": "FAIL"'
+}
+
+test_evidence_failures_are_errors() {
+  local output status=0
+  install_fake_openclaw
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='missing-traj' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_NO_TRAJECTORY=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'missing trajectory exits infrastructure error' "$status" '2'
+  assert_contains 'missing trajectory is ERROR' "$output" '"overallStatus": "ERROR"'
+  install_fake_openclaw
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='multiple-traj' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_MULTIPLE_TRAJECTORIES=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'multiple trajectories exits infrastructure error' "$status" '2'
+  assert_contains 'multiple trajectories are reported' "$output" 'multiple trajectories found'
+  install_fake_openclaw
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='missing-transcript' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_NO_TRANSCRIPT=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'missing transcript exits infrastructure error' "$status" '2'
+  assert_contains 'missing transcript is reported' "$output" 'transcript missing'
+  install_fake_openclaw
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='malformed-traj' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_MALFORMED_TRAJECTORY=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'malformed trajectory exits infrastructure error' "$status" '2'
+  assert_contains 'malformed trajectory is reported' "$output" 'malformed trajectory'
+  install_fake_openclaw
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='malformed-transcript' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_MALFORMED_TRANSCRIPT=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'malformed transcript exits infrastructure error' "$status" '2'
+  assert_contains 'malformed transcript is reported' "$output" 'malformed transcript'
+}
+
+test_workflow_cases_and_code_repair_objective_behavior() {
+  local workflow_output repair_output status=0
+  install_fake_openclaw
+  set +e; workflow_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='workflow-run' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 02-tool-workflows --json)"; status=$?; set -e
+  assert_equals 'workflow scenarios pass with fake openclaw' "$status" '0'
+  for case_name in exact-output grounded-read absence-check two-step transform; do assert_contains "workflow output includes $case_name" "$workflow_output" "$case_name"; done
+  install_fake_openclaw
+  set +e; repair_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='repair-run' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json)"; status=$?; set -e
+  assert_equals 'code repair passes when only calculator is fixed' "$status" '0'
+  assert_contains 'code repair records changed file scope' "$repair_output" ' M calculator.sh'
+  install_fake_openclaw
+  set +e; repair_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='repair-bad-scope' CLAWBOX_FAKE_OPENCLAW_UNRELATED_CHANGE=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json)"; status=$?; set -e
+  assert_equals 'code repair unrelated change exits model failure' "$status" '1'
+  assert_contains 'code repair unrelated change reports FAIL' "$repair_output" 'changed files were outside the intended scope'
+  install_fake_openclaw
+  set +e; repair_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='repair-agent-nonzero' CLAWBOX_FAKE_OPENCLAW_EXIT_STATUS=7 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json)"; status=$?; set -e
+  assert_equals 'code repair nonzero agent exit with evidence is warning-only' "$status" '0'
+  assert_contains 'code repair records openclaw exit status' "$repair_output" '"openclawExitStatus": 7'
+  assert_contains 'code repair nonzero agent exit is visible' "$repair_output" 'openclaw agent exited 7'
+}
+
+test_run_directories_are_isolated() {
+  local sentinel="$ROOT_DIR/vm/qualification/runs/old-run/sentinel.txt" output status=0
+  mkdir -p "$(dirname "$sentinel")"
+  printf 'keep\n' > "$sentinel"
+  install_fake_openclaw
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='isolation-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'isolated run exits success' "$status" '0'
+  if [ -f "$sentinel" ]; then pass 'one run cannot delete another run artifact'; else fail 'one run cannot delete another run artifact'; fi
+  assert_contains 'isolated run records its own artifact directory' "$output" 'isolation-run'
+}
+
+test_qualify_suite_manifest_drives_self_healing() {
+  local output
+  output="$({ BASE_DIR="$ROOT_DIR"; VM_HOST='tester@vm'; VM_RUNTIME_PATH='/Users/tester/ClawBox'; source "$ROOT_DIR/lib/output.sh"; source "$ROOT_DIR/lib/qualify/qualify.sh"; calls=''; require_vm_host(){ :; }; qualify_suite_checksum(){ printf 'checksum\n'; }; qualify_remote_manifest_matches(){ return 1; }; qualify_publish_suite_to_vm_runtime(){ calls="${calls}publish "; }; qualify_install_suite_on_vm(){ calls="${calls}install:$1 "; }; qualify_ensure_suite_installed; printf 'CALLS:%s\n' "$calls"; } 2>&1)"
+  assert_contains 'stale or missing suite publishes payload' "$output" 'CALLS:publish install:checksum'
+  output="$({ BASE_DIR="$ROOT_DIR"; VM_HOST='tester@vm'; VM_RUNTIME_PATH='/Users/tester/ClawBox'; source "$ROOT_DIR/lib/output.sh"; source "$ROOT_DIR/lib/qualify/qualify.sh"; calls=''; require_vm_host(){ :; }; qualify_suite_checksum(){ printf 'checksum\n'; }; qualify_remote_manifest_matches(){ return 0; }; qualify_publish_suite_to_vm_runtime(){ calls="${calls}publish "; }; qualify_install_suite_on_vm(){ calls="${calls}install "; }; qualify_ensure_suite_installed; printf 'CALLS:%s\n' "$calls"; } 2>&1)"
+  assert_contains 'matching suite skips reinstall' "$output" 'CALLS:'
+  assert_not_contains 'matching suite does not publish' "$output" 'publish'
+  assert_not_contains 'matching suite does not install' "$output" 'install'
+}
+
+test_setup_payload_publication_includes_qualification_suite() {
+  local output
+  output="$({ source "$ROOT_DIR/lib/output.sh"; source "$ROOT_DIR/lib/setup-openclaw-provisioning.sh"; VM_HOST='tester@vm'; VM_RUNTIME_PATH='/Users/tester/ClawBox'; PROVISION_SCRIPT="$ROOT_DIR/vm/vm-provision.sh"; ssh_exec(){ return 0; }; qualify_publish_suite_to_vm_runtime(){ printf 'QUALIFY_PUBLISH\n'; }; ensure_vm_provision_script; } 2>&1)"
+  assert_contains 'setup payload publication calls qualification publisher' "$output" 'QUALIFY_PUBLISH'
+}
+
+test_payload_excludes_prototypes_and_tests() {
+  local payload
+  payload="$(tar -C "$ROOT_DIR/vm" -cf - qualification | tar -tf -)"
+  assert_not_contains 'payload excludes prototype references' "$payload" 'prototype/'
+  assert_not_contains 'payload excludes tests' "$payload" 'tests/'
+  assert_not_contains 'payload excludes test fixtures' "$payload" 'tests/fixtures/'
+  assert_not_contains 'payload excludes mock executors' "$payload" 'mock-openclaw'
+}
+
+test_qualify_sources_avoid_openclaw_config_replacement() {
+  local source_text
+  source_text="$(cat "$ROOT_DIR/scripts/qualify.sh" "$ROOT_DIR/lib/qualify/qualify.sh")"
+  assert_not_contains 'qualify command does not replace openclaw config' "$source_text" 'openclaw.json'
+  assert_not_contains 'qualify command does not run onboarding' "$source_text" 'openclaw onboard'
+  assert_not_contains 'qualify command does not switch models' "$source_text" 'MODEL_PATH='
+}
+
+run_test test_root_help_lists_qualify
+run_test test_qualify_help_does_not_execute_remote_commands
+run_test test_qualify_unknown_options_and_scenarios_fail_clearly
+run_test test_qualify_runner_errors_when_openclaw_missing
+run_test test_qualify_json_host_errors_keep_stdout_machine_readable
+run_test test_qualify_runner_dependency_preflight_errors
+run_test test_qualify_runner_default_json_runs_real_scenarios_with_fake_openclaw
+run_test test_qualify_command_self_heals_without_setup
+run_test test_tool_reliability_extra_calls_warn_but_do_not_fail
+run_test test_tool_reliability_fabricated_success_fails
+run_test test_evidence_failures_are_errors
+run_test test_workflow_cases_and_code_repair_objective_behavior
+run_test test_run_directories_are_isolated
+run_test test_qualify_suite_manifest_drives_self_healing
+run_test test_setup_payload_publication_includes_qualification_suite
+run_test test_payload_excludes_prototypes_and_tests
+run_test test_qualify_sources_avoid_openclaw_config_replacement
+
+if [ "$FAILURES" -eq 0 ]; then printf 'PASS: qualify command test suite succeeded\n'; exit 0; fi
+printf 'FAIL: qualify command test suite failed with %s issues\n' "$FAILURES"; exit 1

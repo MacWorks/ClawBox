@@ -10,6 +10,9 @@ VM_AUTOMATION_PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/opt/homebrew/opt/node@
 OPENCLAW_DEFAULT_CONFIG_DIR="$HOME/.openclaw"
 OPENCLAW_DEFAULT_CONFIG_PATH="$OPENCLAW_DEFAULT_CONFIG_DIR/openclaw.json"
 SOURCE_CONFIG_PATH="$VM_RUNTIME_PATH/openclaw.json"
+QUALIFICATION_SOURCE_PATH="$VM_RUNTIME_PATH/qualification"
+QUALIFICATION_TARGET_PATH="$HOME/.openclaw/workspace/.clawbox/qualification"
+QUALIFICATION_SUITE_VERSION="1"
 
 fail() {
 	echo "$1"
@@ -91,6 +94,58 @@ cleanup() {
 	:
 }
 
+qualification_checksum() {
+	node - "$QUALIFICATION_SOURCE_PATH" <<'NODE'
+const fs = require('fs');
+const crypto = require('crypto');
+const path = require('path');
+const root = path.resolve(process.argv[2]);
+function walk(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return entry.name === 'runs' ? [] : walk(full);
+    if (!entry.isFile()) return [];
+    return [full];
+  });
+}
+const digest = crypto.createHash('sha256');
+for (const file of walk(root).sort()) {
+  const rel = path.relative(root, file);
+  const fileDigest = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  digest.update(rel + '\0' + fileDigest + '\0');
+}
+process.stdout.write(digest.digest('hex'));
+NODE
+}
+
+install_qualification_suite() {
+	local checksum manifest current_manifest
+
+	if [ ! -d "$QUALIFICATION_SOURCE_PATH" ]; then
+		echo "Qualification suite not found at $QUALIFICATION_SOURCE_PATH"
+		echo "Run ./clawbox setup on the host to publish it before using ./clawbox qualify."
+		return 0
+	fi
+
+	checksum="$(qualification_checksum)"
+	manifest="{\"schemaVersion\":\"1\",\"suiteVersion\":\"$QUALIFICATION_SUITE_VERSION\",\"checksum\":\"$checksum\"}"
+	current_manifest="$(cat "$QUALIFICATION_TARGET_PATH/.clawbox-manifest.json" 2>/dev/null || true)"
+	if [ "$current_manifest" = "$manifest" ]; then
+		echo "Qualification suite already current at $QUALIFICATION_TARGET_PATH"
+		return 0
+	fi
+
+	rm -rf "$QUALIFICATION_TARGET_PATH.tmp"
+	mkdir -p "$QUALIFICATION_TARGET_PATH.tmp"
+	cp -R "$QUALIFICATION_SOURCE_PATH"/. "$QUALIFICATION_TARGET_PATH.tmp"/
+	printf '%s\n' "$manifest" > "$QUALIFICATION_TARGET_PATH.tmp/.clawbox-manifest.json"
+	rm -rf "$QUALIFICATION_TARGET_PATH"
+	mkdir -p "$(dirname "$QUALIFICATION_TARGET_PATH")"
+	mv "$QUALIFICATION_TARGET_PATH.tmp" "$QUALIFICATION_TARGET_PATH"
+	find "$QUALIFICATION_TARGET_PATH" -type f -name '*.sh' -exec chmod +x {} \;
+	echo "Installed qualification suite at $QUALIFICATION_TARGET_PATH"
+}
+
 trap cleanup EXIT
 
 require_command "curl"
@@ -164,6 +219,9 @@ openclaw_version="$("$openclaw_path" --version 2>/dev/null || true)"
 
 echo "OpenClaw ready: $openclaw_path"
 echo "OpenClaw version: $openclaw_version"
+echo ""
+
+install_qualification_suite
 echo ""
 
 if [ -f "$SOURCE_CONFIG_PATH" ]; then
