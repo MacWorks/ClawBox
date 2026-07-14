@@ -33,6 +33,17 @@ structured results, aggregate reporting, and automatic VM publication.
 diagnostics are written to stderr. The aggregate `model` field is an object with
 `alias`, `configured`, and `running` values.
 
+Before publishing or running scenarios, ClawBox verifies that the configured
+host model from `.env` matches the model currently reported by the host
+`llama-server` API. A mismatch is treated as an infrastructure/configuration
+error and exits `2`; qualification never switches models, restarts
+`llama-server`, or attempts an interactive repair.
+
+Human-readable runs show ClawBox-style progress for host inference, VM SSH,
+OpenClaw availability, model consistency, suite publication, installation, and
+the long-running scenario/suite execution. In JSON mode, stdout remains JSON
+only while progress stays on stderr.
+
 ## What it measures
 
 Scenario results use these statuses:

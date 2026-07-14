@@ -11,6 +11,12 @@ source "$BASE_DIR/lib/qualify/qualify.sh"
 
 QUALIFY_JSON=false
 QUALIFY_SCENARIO=''
+QUALIFY_ACTIVE_OPERATION_PID=''
+QUALIFY_ACTIVE_OPERATION_MESSAGE=''
+QUALIFY_ERROR_CODE=''
+QUALIFY_ERROR_MODEL_ALIAS='unknown'
+QUALIFY_ERROR_MODEL_CONFIGURED='unknown'
+QUALIFY_ERROR_MODEL_RUNNING='unknown'
 
 for arg in "$@"; do
   if [ "$arg" = '--json' ]; then
@@ -47,14 +53,19 @@ die_usage() {
 qualify_json_error_document() {
   local message="$1"
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$message" <<'PY'
+    python3 - "$message" "${QUALIFY_ERROR_CODE:-}" "${QUALIFY_ERROR_MODEL_ALIAS:-unknown}" "${QUALIFY_ERROR_MODEL_CONFIGURED:-unknown}" "${QUALIFY_ERROR_MODEL_RUNNING:-unknown}" <<'PY'
 import json, sys
 message = sys.argv[1]
+error_code = sys.argv[2] or None
+model_alias = sys.argv[3] or "unknown"
+model_configured = sys.argv[4] or "unknown"
+model_running = sys.argv[5] or "unknown"
 print(json.dumps({
     "schemaVersion": "1",
     "runId": None,
-    "model": {"alias": "unknown", "configured": "unknown", "running": "unknown"},
+    "model": {"alias": model_alias, "configured": model_configured, "running": model_running},
     "overallStatus": "ERROR",
+    "errorCode": error_code,
     "score": None,
     "categories": {},
     "warnings": [],
@@ -81,6 +92,26 @@ qualify_fail() {
   fi
   exit "$status"
 }
+
+qualify_cleanup_active_operation() {
+  local pid="${QUALIFY_ACTIVE_OPERATION_PID:-}"
+  local message="${QUALIFY_ACTIVE_OPERATION_MESSAGE:-}"
+  [ -n "$pid" ] || return 0
+  if kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid" >/dev/null 2>&1 || true
+    wait "$pid" >/dev/null 2>&1 || true
+  fi
+  QUALIFY_ACTIVE_OPERATION_PID=''
+  QUALIFY_ACTIVE_OPERATION_MESSAGE=''
+  if [ "$QUALIFY_JSON" != true ] && [ -n "$message" ]; then
+    status_end "$message ✗" 'error'
+  fi
+}
+
+install_status_exit_trap
+_append_trap 'qualify_cleanup_active_operation' EXIT
+_append_trap 'qualify_cleanup_active_operation; exit 130' INT
+_append_trap 'qualify_cleanup_active_operation; exit 143' TERM
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -110,6 +141,66 @@ qualify_progress() {
   fi
 }
 
+qualify_status_spinner_message() {
+  local label="$1"
+  if [ -t 2 ]; then
+    printf '%s......\n' "$label"
+  else
+    printf '%s...\n' "$label"
+  fi
+}
+
+qualify_run_operation() {
+  local label="$1"
+  shift
+  local message="$label..."
+  local spinner_message='' pid='' status=0 stderr_file=''
+
+  stderr_file="$(mktemp)" || return 2
+
+  if [ "$QUALIFY_JSON" = true ]; then
+    printf '%s\n' "$message" >&2
+    set +e
+    "$@" >/dev/null 2>"$stderr_file"
+    status=$?
+    set -e
+    if [ "$status" -eq 0 ]; then
+      printf '%s ✓\n' "$message" >&2
+    else
+      printf '%s ✗\n' "$message" >&2
+      cat "$stderr_file" >&2 2>/dev/null || true
+    fi
+    rm -f "$stderr_file"
+    return "$status"
+  fi
+
+  spinner_message="$(qualify_status_spinner_message "$label")"
+  status_begin "$spinner_message"
+  set +e
+  "$@" >/dev/null 2>"$stderr_file" &
+  pid=$!
+  set -e
+  QUALIFY_ACTIVE_OPERATION_PID="$pid"
+  QUALIFY_ACTIVE_OPERATION_MESSAGE="$message"
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    status_sleep "$(status_tick_interval)" "$spinner_message"
+  done
+  set +e
+  wait "$pid"
+  status=$?
+  set -e
+  QUALIFY_ACTIVE_OPERATION_PID=''
+  QUALIFY_ACTIVE_OPERATION_MESSAGE=''
+  if [ "$status" -eq 0 ]; then
+    status_end "$message ✓" 'success'
+  else
+    status_end "$message ✗" 'error'
+    cat "$stderr_file" >&2 2>/dev/null || true
+  fi
+  rm -f "$stderr_file"
+  return "$status"
+}
+
 require_env() {
   if [ ! -f "$ENV_FILE" ]; then
     qualify_fail 2 "Missing .env. Run ./clawbox setup first."
@@ -129,9 +220,10 @@ validate_scenario_id() {
 
 require_host_inference() {
   local url="${LLAMA_BASE_URL:-}"
-  [ -n "$url" ] || qualify_fail 2 'LLAMA_BASE_URL is not configured.'
+  [ -n "$url" ] || { printf 'LLAMA_BASE_URL is not configured.\n' >&2; return 2; }
   if ! curl -s --connect-timeout 2 --max-time 5 "${url%/}/models" >/dev/null; then
-    qualify_fail 2 "Host inference endpoint is not responding: ${url%/}/models"
+    printf 'Host inference endpoint is not responding: %s\n' "${url%/}/models" >&2
+    return 2
   fi
 }
 
@@ -174,13 +266,15 @@ print(value.rsplit("/", 1)[-1])
 
 require_vm_ssh() {
   if ! ssh_check 'echo ok' >/dev/null 2>&1; then
-    qualify_fail 2 "VM SSH is not reachable: ${VM_HOST:-not configured}"
+    printf 'VM SSH is not reachable: %s\n' "${VM_HOST:-not configured}" >&2
+    return 2
   fi
 }
 
 require_openclaw() {
   if ! ssh_check_zsh 'command -v openclaw >/dev/null 2>&1 || [ -x /opt/homebrew/bin/openclaw ] || [ -x /usr/local/bin/openclaw ]' >/dev/null 2>&1; then
-    qualify_fail 2 'OpenClaw is not available in the VM. Run ./clawbox setup and VM provisioning first.'
+    printf 'OpenClaw is not available in the VM. Run ./clawbox setup and VM provisioning first.\n' >&2
+    return 2
   fi
 }
 
@@ -188,9 +282,160 @@ current_openclaw_model() {
   ssh_check_zsh 'openclaw config get agents.defaults.model.primary 2>/dev/null || true'
 }
 
+validate_model_consistency() {
+  if [ -z "${model_configured:-}" ] || [ "$model_configured" = 'unknown' ]; then
+    printf 'Configured model could not be identified from MODEL_PATH.\n' >&2
+    return 2
+  fi
+  if [ -z "${model_running:-}" ] || [ "$model_running" = 'unknown' ]; then
+    printf 'Running model could not be identified from the host inference endpoint.\n' >&2
+    return 2
+  fi
+  if [ "$model_configured" != "$model_running" ]; then
+    printf 'Configured model does not match the running model.\n' >&2
+    return 2
+  fi
+}
+
+qualify_ensure_suite_installed_polished() {
+  local checksum=''
+
+  checksum="$(qualify_suite_checksum)" || return 1
+  if qualify_remote_manifest_matches "$checksum" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  qualify_run_operation 'Publishing qualification suite to VM' qualify_publish_suite_to_vm_runtime || return 1
+  qualify_run_operation 'Installing qualification suite in OpenClaw workspace' qualify_install_suite_on_vm "$checksum"
+}
+
+qualify_scenario_description() {
+  case "$1" in
+    01-tool-reliability) printf '01-tool-reliability qualification\n' ;;
+    02-tool-workflows) printf '02-tool-workflows qualification\n' ;;
+    03-code-repair) printf '03-code-repair qualification\n' ;;
+    '') printf 'model qualification suite\n' ;;
+    *) printf '%s qualification\n' "$1" ;;
+  esac
+}
+
+qualify_render_report() {
+  local json_file="$1"
+
+  section 'Model Qualification Report'
+  python3 - "$json_file" <<'PY'
+import json, sys
+with open(sys.argv[1], 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+
+def line(label, value):
+    dots = '.' * max(1, 34 - len(label))
+    print(f"{label} {dots} {value}")
+
+for scenario in data.get('scenarios', []):
+    sid = scenario.get('scenarioId', 'unknown')
+    name = scenario.get('scenarioName', '')
+    print(sid)
+    if name:
+        line(name, scenario.get('status', 'unknown'))
+    metrics = scenario.get('metrics') or {}
+    if 'correctIterations' in metrics and 'totalIterations' in metrics:
+        line('Correct iterations', f"{metrics['correctIterations']}/{metrics['totalIterations']}")
+    if 'efficientIterations' in metrics and 'totalIterations' in metrics:
+        line('Efficient iterations', f"{metrics['efficientIterations']}/{metrics['totalIterations']}")
+    if 'passingCases' in metrics and 'totalCases' in metrics:
+        line('Passing workflow cases', f"{metrics['passingCases']}/{metrics['totalCases']}")
+    if 'efficientCases' in metrics and 'totalCases' in metrics:
+        line('Efficient workflow cases', f"{metrics['efficientCases']}/{metrics['totalCases']}")
+    if 'averageToolCalls' in metrics:
+        line('Average tool calls', f"{float(metrics['averageToolCalls']):.2f}".rstrip('0').rstrip('.'))
+    if 'testResult' in metrics:
+        line('Final test', metrics['testResult'])
+    if 'changedFiles' in metrics:
+        line('Changed files', metrics['changedFiles'] or 'none')
+    for warning in scenario.get('warnings') or []:
+        line('Warning', warning)
+    for failure in scenario.get('failures') or []:
+        line('Failure', failure)
+    print('')
+
+score = data.get('score')
+line('Overall Score', 'unrated' if score is None else f'{score}/100')
+line('Overall Result', data.get('overallStatus', 'unknown'))
+warnings = data.get('warnings') or []
+if warnings:
+    print('Warnings:')
+    for warning in warnings:
+        print(f'- {warning}')
+failures = data.get('failures') or []
+if failures:
+    print('Failures:')
+    for failure in failures:
+        print(f'- {failure}')
+print('Artifacts:')
+print(data.get('artifactDirectory') or 'unavailable')
+PY
+}
+
+qualify_run_remote_runner() {
+  local remote_command="$1" output_file="$2" stderr_file="$3" remote_env="$4"
+
+  ssh -n "$VM_HOST" "$remote_env zsh -lc $(qualify_shell_quote "$remote_command")" >"$output_file" 2>"$stderr_file"
+}
+
+qualify_run_remote_operation() {
+  local label="$1" remote_command="$2" output_file="$3" stderr_file="$4" remote_env="$5"
+  local message="$label..." spinner_message='' pid='' status=0 level='success' marker='✓' overall=''
+
+  if [ "$QUALIFY_JSON" = true ]; then
+    printf '%s\n' "$message" >&2
+    set +e
+    qualify_run_remote_runner "$remote_command" "$output_file" "$stderr_file" "$remote_env"
+    status=$?
+    set -e
+    overall="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("overallStatus") or ""))' "$output_file" 2>/dev/null || true)"
+    case "$status:$overall" in
+      0:WARNING) marker='!' ;;
+      0:*) marker='✓' ;;
+      1:*) marker='!' ;;
+      *) marker='✗' ;;
+    esac
+    printf '%s %s\n' "$message" "$marker" >&2
+    return "$status"
+  fi
+
+  spinner_message="$(qualify_status_spinner_message "$label")"
+  status_begin "$spinner_message"
+  set +e
+  qualify_run_remote_runner "$remote_command" "$output_file" "$stderr_file" "$remote_env" &
+  pid=$!
+  set -e
+  QUALIFY_ACTIVE_OPERATION_PID="$pid"
+  QUALIFY_ACTIVE_OPERATION_MESSAGE="$message"
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    status_sleep "$(status_tick_interval)" "$spinner_message"
+  done
+  set +e
+  wait "$pid"
+  status=$?
+  set -e
+  QUALIFY_ACTIVE_OPERATION_PID=''
+  QUALIFY_ACTIVE_OPERATION_MESSAGE=''
+  overall="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("overallStatus") or ""))' "$output_file" 2>/dev/null || true)"
+  case "$status:$overall" in
+    0:WARNING) level='warning'; marker='!' ;;
+    0:*) level='success'; marker='✓' ;;
+    1:*) level='warning'; marker='!' ;;
+    *) level='error'; marker='✗' ;;
+  esac
+  status_end "$message $marker" "$level"
+  return "$status"
+}
+
 main() {
-  local model_ref='' model_configured='' model_running='' model_display='' model_warning=''
-  local remote_command='' remote_status=0 remote_env=''
+  local model_ref='' model_configured='' model_running='' model_display=''
+  local remote_command='' remote_status=0 remote_env='' remote_output='' remote_stderr=''
+  local run_label=''
 
   validate_scenario_id "$QUALIFY_SCENARIO"
   require_env
@@ -204,18 +449,15 @@ main() {
     title 'ClawBox Model Qualification'
   fi
 
-  qualify_progress 'Checking host inference endpoint...'
-  require_host_inference
-  qualify_progress 'Checking VM SSH access...'
-  require_vm_ssh
-  qualify_progress 'Checking OpenClaw availability...'
-  require_openclaw
+  qualify_run_operation 'Checking host inference endpoint' require_host_inference || qualify_fail 2 'Host inference endpoint is not responding.'
+  qualify_run_operation 'Checking VM SSH access' require_vm_ssh || qualify_fail 2 "VM SSH is not reachable: ${VM_HOST:-not configured}"
+  qualify_run_operation 'Checking OpenClaw availability' require_openclaw || qualify_fail 2 'OpenClaw is not available in the VM. Run ./clawbox setup and VM provisioning first.'
 
   model_ref="$(current_openclaw_model)"
   [ -n "$model_ref" ] || model_ref="${OPENCLAW_PROVIDER_NAME:-clawbox}/${OPENCLAW_DEFAULT_MODEL:-local}"
   model_configured="$(configured_model_identity)"
   model_running="$(running_model_identity || true)"
-  [ -n "$model_running" ] || model_running="$model_configured"
+  [ -n "$model_running" ] || model_running='unknown'
   if [ -n "$model_running" ] && [ "$model_running" != 'unknown' ]; then
     model_display="$model_running"
   elif [ -n "$model_configured" ] && [ "$model_configured" != 'unknown' ]; then
@@ -223,35 +465,54 @@ main() {
   else
     model_display="$model_ref"
   fi
-  if [ "$model_configured" != 'unknown' ] && [ "$model_running" != 'unknown' ] && [ "$model_configured" != "$model_running" ]; then
-    model_warning="Configured model $model_configured differs from running model $model_running."
+
+  QUALIFY_ERROR_MODEL_ALIAS="$model_ref"
+  QUALIFY_ERROR_MODEL_CONFIGURED="$model_configured"
+  QUALIFY_ERROR_MODEL_RUNNING="$model_running"
+  if ! qualify_run_operation 'Checking configured model matches running model' validate_model_consistency; then
+    QUALIFY_ERROR_CODE='MODEL_MISMATCH'
+    qualify_fail 2 "Configured model does not match the running model.
+Configured: $model_configured
+Running:    $model_running
+Resolve the model inconsistency before running qualification."
   fi
 
   export CLAWBOX_QUALIFY_MODEL_REF="$model_ref"
   export CLAWBOX_QUALIFY_MODEL_ALIAS="$model_ref"
   export CLAWBOX_QUALIFY_MODEL_CONFIGURED="$model_configured"
   export CLAWBOX_QUALIFY_MODEL_RUNNING="$model_running"
-  export CLAWBOX_QUALIFY_MODEL_WARNING="$model_warning"
+  export CLAWBOX_QUALIFY_MODEL_WARNING=''
 
   qualify_progress "Model under qualification: $model_display"
   qualify_progress "OpenClaw alias: $model_ref"
-  qualify_progress "Configured model: $model_configured"
-  qualify_progress "Running model: $model_running"
-  if [ -n "$model_warning" ]; then
-    qualify_progress "WARNING: $model_warning"
-  fi
-  if [ "$QUALIFY_JSON" = true ]; then
-    qualify_ensure_suite_installed >&2 || qualify_fail 2 'Unable to publish or install the VM qualification suite.'
-  else
-    qualify_ensure_suite_installed || qualify_fail 2 'Unable to publish or install the VM qualification suite.'
+  qualify_ensure_suite_installed_polished || qualify_fail 2 'Unable to publish or install the VM qualification suite.'
+
+  remote_output="$(mktemp)" || qualify_fail 2 'Unable to create qualification output file.'
+  remote_stderr="$(mktemp)" || qualify_fail 2 'Unable to create qualification stderr file.'
+  remote_command="$(qualify_remote_runner_command "$QUALIFY_SCENARIO" true)"
+  remote_env="CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_ALIAS=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_CONFIGURED=$(qualify_shell_quote "$model_configured") CLAWBOX_QUALIFY_MODEL_RUNNING=$(qualify_shell_quote "$model_running") CLAWBOX_QUALIFY_MODEL_WARNING=''"
+  run_label="Running $(qualify_scenario_description "$QUALIFY_SCENARIO")"
+  set +e
+  qualify_run_remote_operation "$run_label" "$remote_command" "$remote_output" "$remote_stderr" "$remote_env"
+  remote_status=$?
+  set -e
+
+  if ! python3 -m json.tool "$remote_output" >/dev/null 2>&1; then
+    cat "$remote_stderr" >&2 2>/dev/null || true
+    qualify_fail 2 'VM qualification runner did not produce valid aggregate JSON.'
   fi
 
-  remote_command="$(qualify_remote_runner_command "$QUALIFY_SCENARIO" "$QUALIFY_JSON")"
-  remote_env="CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_ALIAS=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_CONFIGURED=$(qualify_shell_quote "$model_configured") CLAWBOX_QUALIFY_MODEL_RUNNING=$(qualify_shell_quote "$model_running") CLAWBOX_QUALIFY_MODEL_WARNING=$(qualify_shell_quote "$model_warning")"
+  case "$remote_status" in
+    0) run_level='success' ;;
+    1) run_level='warning' ;;
+    2) run_level='error' ;;
+    *) run_level='error' ;;
+  esac
+
   if [ "$QUALIFY_JSON" = true ]; then
-    ssh -n "$VM_HOST" "$remote_env zsh -lc $(qualify_shell_quote "$remote_command")" || remote_status=$?
+    cat "$remote_output"
   else
-    ssh -n "$VM_HOST" "$remote_env zsh -lc $(qualify_shell_quote "$remote_command")" || remote_status=$?
+    qualify_render_report "$remote_output"
   fi
 
   case "$remote_status" in

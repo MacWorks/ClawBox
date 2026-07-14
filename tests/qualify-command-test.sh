@@ -386,6 +386,150 @@ PY
   assert_contains 'qualify reports OpenClaw alias separately' "$(cat "$TEMP_DIR/self-heal.stderr")" 'OpenClaw alias: clawbox/local'
 }
 
+test_qualify_human_output_is_polished() {
+  local env_file="$TEMP_DIR/qualify-human.env" output suite_output status=0
+  local remote_root="$TEMP_DIR/human-remote" remote_home="$TEMP_DIR/human-remote/home" log_file="$TEMP_DIR/human.log"
+  setup_mock_bin_dir
+  mkdir -p "$remote_root" "$remote_home"
+  cat > "$env_file" <<EOF_ENV
+VM_HOST="vm-user@192.168.64.8"
+VM_RUNTIME_PATH="$TEMP_DIR/human-runtime"
+LLAMA_BASE_URL="http://127.0.0.1:11434/v1"
+MODEL_PATH="/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+EOF_ENV
+  export CLAWBOX_FAKE_REMOTE_HOME="$remote_home"
+  export CLAWBOX_FAKE_SSH_LOG="$log_file"
+  write_mock_command curl '#!/bin/bash
+printf "{\"data\":[{\"id\":\"/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"}]}\n"
+exit 0
+'
+  write_mock_command scp '#!/bin/bash
+set -euo pipefail
+src=""; dest=""
+while [ "$#" -gt 0 ]; do case "$1" in -*) shift ;; *) if [ -z "$src" ]; then src="$1"; else dest="$1"; fi; shift ;; esac; done
+rel="${dest#*:}"; rel="${rel#~/}"
+mkdir -p "$CLAWBOX_FAKE_REMOTE_HOME/$(dirname "$rel")"
+cp "$src" "$CLAWBOX_FAKE_REMOTE_HOME/$rel"
+'
+  write_mock_command ssh '#!/bin/bash
+set -euo pipefail
+while [ "$#" -gt 0 ]; do case "$1" in -n|-o) if [ "$1" = "-o" ]; then shift 2; else shift; fi ;; *) break ;; esac; done
+host="$1"; shift; command="$*"
+printf "%s\n" "$command" >> "$CLAWBOX_FAKE_SSH_LOG"
+if [ "$command" = "echo ok" ]; then exit 0; fi
+if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
+if [[ "$command" == rm\ -f* ]]; then exit 0; fi
+if [[ "$command" == *"runner.sh"* ]]; then
+  printf "{\"schemaVersion\":\"1\",\"runId\":\"human-run\",\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"WARNING\",\"score\":97,\"categories\":{},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"scenarioName\":\"Tool-calling reliability\",\"status\":\"WARNING\",\"score\":97,\"metrics\":{\"totalIterations\":10,\"correctIterations\":10,\"efficientIterations\":9,\"averageToolCalls\":1.1},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[]}],\"artifactDirectory\":\"runs/human-run\"}\n"
+  exit 0
+fi
+if [[ "$command" == *"zsh -l"* ]]; then
+  remote_path="${command#*zsh -l }"; remote_path="${remote_path%\"}"; remote_path="${remote_path#\"}"; remote_path="${remote_path#\$HOME/}"
+  script="$CLAWBOX_FAKE_REMOTE_HOME/$remote_path"
+  if grep -Fq ".clawbox-manifest.json" "$script"; then exit 0; fi
+  if grep -Fq "openclaw config get agents.defaults.model.primary" "$script"; then printf "clawbox/local\n"; exit 0; fi
+  if grep -Fq "command -v openclaw" "$script"; then exit 0; fi
+fi
+exit 0
+'
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
+  status=$?
+  set -e
+  assert_equals 'human qualify warning exits success' "$status" '0'
+  assert_contains 'human output checks host endpoint with final marker' "$output" 'Checking host inference endpoint... ✓'
+  assert_contains 'human output checks configured/running model match' "$output" 'Checking configured model matches running model... ✓'
+  assert_contains 'human output shows selected scenario running progress' "$output" 'Running 01-tool-reliability qualification... !'
+  assert_contains 'human output shows compact model identity' "$output" 'Model under qualification: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
+  assert_contains 'human output shows OpenClaw alias' "$output" 'OpenClaw alias: clawbox/local'
+  assert_not_contains 'human output omits redundant configured model line' "$output" 'Configured model:'
+  assert_not_contains 'human output omits redundant running model line' "$output" 'Running model:'
+  assert_contains 'human report uses shared section heading' "$output" ' > Model Qualification Report'
+  assert_not_contains 'human report no longer prints model row' "$output" 'Model: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
+  assert_contains 'human report shows scenario id' "$output" '01-tool-reliability'
+  assert_contains 'human report shows correct iterations' "$output" 'Correct iterations'
+  assert_contains 'human report exposes warning reason' "$output" 'expected 1 efficient tool call, observed 2'
+  assert_contains 'human report shows overall warning result' "$output" 'Overall Result'
+
+  set +e
+  suite_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" bash "$ROOT_DIR/scripts/qualify.sh" 2>&1)"
+  status=$?
+  set -e
+  assert_equals 'human qualify full-suite warning exits success' "$status" '0'
+  assert_contains 'human output shows complete suite running progress' "$suite_output" 'Running model qualification suite... !'
+}
+
+test_qualify_model_mismatch_stops_before_publish() {
+  local env_file="$TEMP_DIR/qualify-mismatch.env" stdout_file="$TEMP_DIR/mismatch.json" stderr_file="$TEMP_DIR/mismatch.progress" status=0
+  local remote_home="$TEMP_DIR/mismatch-remote/home" log_file="$TEMP_DIR/mismatch.log"
+  setup_mock_bin_dir
+  mkdir -p "$remote_home"
+  cat > "$env_file" <<EOF_ENV
+VM_HOST="vm-user@192.168.64.8"
+VM_RUNTIME_PATH="$TEMP_DIR/mismatch-runtime"
+LLAMA_BASE_URL="http://127.0.0.1:11434/v1"
+MODEL_PATH="/Users/Shared/AI-Models/Configured.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+EOF_ENV
+  export CLAWBOX_FAKE_REMOTE_HOME="$remote_home"
+  export CLAWBOX_FAKE_SSH_LOG="$log_file"
+  : > "$log_file"
+  write_mock_command curl '#!/bin/bash
+printf "{\"data\":[{\"id\":\"/Users/Shared/AI-Models/Running.gguf\"}]}\n"
+exit 0
+'
+  write_mock_command scp '#!/bin/bash
+set -euo pipefail
+src=""; dest=""
+while [ "$#" -gt 0 ]; do case "$1" in -*) shift ;; *) if [ -z "$src" ]; then src="$1"; else dest="$1"; fi; shift ;; esac; done
+rel="${dest#*:}"; rel="${rel#~/}"
+mkdir -p "$CLAWBOX_FAKE_REMOTE_HOME/$(dirname "$rel")"
+cp "$src" "$CLAWBOX_FAKE_REMOTE_HOME/$rel"
+'
+  write_mock_command ssh '#!/bin/bash
+set -euo pipefail
+while [ "$#" -gt 0 ]; do case "$1" in -n|-o) if [ "$1" = "-o" ]; then shift 2; else shift; fi ;; *) break ;; esac; done
+host="$1"; shift; command="$*"
+printf "%s\n" "$command" >> "$CLAWBOX_FAKE_SSH_LOG"
+if [ "$command" = "echo ok" ]; then exit 0; fi
+if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
+if [[ "$command" == rm\ -f* ]]; then exit 0; fi
+if [[ "$command" == *"tar -C"* ]] || [[ "$command" == *"runner.sh"* ]]; then exit 88; fi
+if [[ "$command" == *"zsh -l"* ]]; then
+  remote_path="${command#*zsh -l }"; remote_path="${remote_path%\"}"; remote_path="${remote_path#\"}"; remote_path="${remote_path#\$HOME/}"
+  script="$CLAWBOX_FAKE_REMOTE_HOME/$remote_path"
+  if grep -Fq "openclaw config get agents.defaults.model.primary" "$script"; then printf "clawbox/local\n"; exit 0; fi
+  if grep -Fq "command -v openclaw" "$script"; then exit 0; fi
+  if grep -Fq ".clawbox-manifest.json" "$script"; then exit 0; fi
+fi
+exit 0
+'
+  set +e
+  PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" bash "$ROOT_DIR/scripts/qualify.sh" --json --scenario 01-tool-reliability >"$stdout_file" 2>"$stderr_file"
+  status=$?
+  set -e
+  assert_equals 'model mismatch exits infrastructure error' "$status" '2'
+  python3 - "$stdout_file" <<'PY'
+import json, sys
+with open(sys.argv[1], 'r', encoding='utf-8') as fh:
+    data=json.load(fh)
+assert data['overallStatus']=='ERROR'
+assert data['errorCode']=='MODEL_MISMATCH'
+assert data['model']['configured']=='Configured.gguf'
+assert data['model']['running']=='Running.gguf'
+PY
+  pass 'model mismatch stdout remains valid JSON with model details'
+  assert_contains 'model mismatch progress shows failed consistency check' "$(cat "$stderr_file")" 'Checking configured model matches running model... ✗'
+  assert_contains 'model mismatch stderr is actionable' "$(cat "$stderr_file")" 'Resolve the model inconsistency before running qualification.'
+  assert_not_contains 'model mismatch prevents publication' "$(cat "$log_file")" 'tar -C'
+  assert_not_contains 'model mismatch prevents remote runner execution' "$(cat "$log_file")" 'runner.sh'
+  assert_not_contains 'model mismatch JSON stdout has no progress' "$(cat "$stdout_file")" 'Checking host inference endpoint'
+  assert_not_contains 'model mismatch JSON stdout has no spinner marker' "$(cat "$stdout_file")" '✓'
+}
+
 test_tool_reliability_extra_calls_warn_but_do_not_fail() {
   local output status=0
   install_fake_openclaw
@@ -501,6 +645,8 @@ run_test test_qualify_json_host_errors_keep_stdout_machine_readable
 run_test test_qualify_runner_dependency_preflight_errors
 run_test test_qualify_runner_default_json_runs_real_scenarios_with_fake_openclaw
 run_test test_qualify_command_self_heals_without_setup
+run_test test_qualify_human_output_is_polished
+run_test test_qualify_model_mismatch_stops_before_publish
 run_test test_tool_reliability_extra_calls_warn_but_do_not_fail
 run_test test_tool_reliability_fabricated_success_fails
 run_test test_evidence_failures_are_errors
