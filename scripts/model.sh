@@ -33,6 +33,106 @@ is_yes() {
   esac
 }
 
+model_command_is_interactive() {
+  [ -t 0 ]
+}
+
+model_qualification_available() {
+  [ -x "$BASE_DIR/clawbox" ] && [ -x "$BASE_DIR/scripts/qualify.sh" ]
+}
+
+model_process_args_for_port() {
+  local port="$1"
+  local line=''
+
+  if [ -n "${CLAWBOX_MODEL_PROCESS_ARGS_CMD:-}" ]; then
+    "$CLAWBOX_MODEL_PROCESS_ARGS_CMD" "$port"
+    return $?
+  fi
+
+  while IFS= read -r line; do
+    case " $line " in
+      *" --port $port "*|*" --port=$port "*)
+        printf '%s\n' "$line"
+        return 0
+        ;;
+    esac
+  done <<EOF
+$(pgrep -fl llama-server 2>/dev/null || true)
+EOF
+
+  return 1
+}
+
+model_path_from_process_args() {
+  local args="$1"
+  local previous=''
+  local word=''
+
+  for word in $args; do
+    if [ "$previous" = '-m' ] || [ "$previous" = '--model' ]; then
+      printf '%s\n' "$word"
+      return 0
+    fi
+    case "$word" in
+      -m*)
+        [ "$word" = '-m' ] || {
+          printf '%s\n' "${word#-m}"
+          return 0
+        }
+        ;;
+      --model=*)
+        printf '%s\n' "${word#--model=}"
+        return 0
+        ;;
+    esac
+    previous="$word"
+  done
+
+  return 1
+}
+
+primary_model_matches_running_model() {
+  local args=''
+  local running_path=''
+
+  [ -n "${MODEL_PATH:-}" ] || return 1
+  [ -n "${LLAMA_PORT:-}" ] || return 1
+
+  args="$(model_process_args_for_port "$LLAMA_PORT")" || return 1
+  running_path="$(model_path_from_process_args "$args")" || return 1
+  [ "$(basename "$running_path")" = "$(basename "$MODEL_PATH")" ]
+}
+
+run_qualification_suite_after_model_switch() {
+  "$BASE_DIR/clawbox" qualify
+}
+
+offer_qualification_after_primary_model_switch() {
+  if ! model_command_is_interactive; then
+    return 0
+  fi
+
+  if ! model_qualification_available; then
+    return 0
+  fi
+
+  if ! primary_model_matches_running_model; then
+    warn 'Qualification was not offered because the configured model does not match the running llama-server model.'
+    out 'Run ./clawbox status and resolve the model inconsistency before qualifying this model.'
+    return 0
+  fi
+
+  blank_line
+  prompt_yes_no 'Run the qualification suite against the new model? This may take several minutes.' 'n' || return $?
+  if ! is_yes "$REPLY"; then
+    out 'Qualification skipped. The selected model remains active.'
+    return 0
+  fi
+
+  run_qualification_suite_after_model_switch
+}
+
 detect_model_llama_mode() {
   if [ -f "$(llama_system_plist_dest)" ] || [ -f "$(llama_system_env_dest)" ]; then
     REPLY='system'
@@ -261,6 +361,7 @@ switch_primary_model() {
     out 'OpenClaw config already matched; no OpenClaw changes were made.'
   fi
   out 'Check status with: ./clawbox status'
+  offer_qualification_after_primary_model_switch
 }
 
 main() {

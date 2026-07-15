@@ -124,6 +124,13 @@ provisioning installs or updates it under the OpenClaw workspace:
 suite checksum and version manifest, republishes stale or missing files, and
 then runs the VM-side runner.
 
+After a successful interactive `./clawbox model primary` switch, ClawBox offers
+to run the normal qualification suite against the newly running model. The
+prompt defaults to No, and declining leaves the completed model switch active.
+Noninteractive model switches do not prompt. If qualification is accepted, its
+normal result and exit status are preserved; a qualification failure does not
+roll back the selected model.
+
 Run artifacts are isolated by run ID:
 
 ```text

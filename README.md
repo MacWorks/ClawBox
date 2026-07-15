@@ -170,7 +170,10 @@ To switch only the host GGUF model after setup, run `./clawbox model`. It
 updates `MODEL_PATH`, restarts the managed host `llama-server`, and leaves VM
 provisioning and the OpenClaw config file intact. It may verify and correct
 only ClawBox-managed OpenClaw provider keys such as `clawbox/local` with
-targeted `openclaw config set` calls.
+targeted `openclaw config set` calls. After a successful interactive primary
+model switch, ClawBox offers to run the qualification suite against the new
+model. The prompt defaults to No, may take several minutes if accepted, and
+declining does not affect the completed switch.
 
 To run the VM-side model qualification framework against the currently
 configured host model behind the OpenClaw alias, use:

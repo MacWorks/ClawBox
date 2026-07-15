@@ -292,6 +292,257 @@ test_primary_model_subcommand_reports_actual_openclaw_sync_when_updated() {
   assert_not_contains 'primary actual sync does not report no-change message' "$output" 'no OpenClaw changes were made'
 }
 
+test_primary_model_switch_offers_qualification_after_successful_match() {
+  local output
+  output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      MODEL_PATH='/models/primary-old.gguf'
+      LLAMA_PORT=11434
+      OPENCLAW_DEFAULT_MODEL='local'
+      OPENCLAW_PROVIDER_NAME='clawbox'
+      prompt_count=0
+      source_env_file() { :; }
+      offer_openclaw_alias_migration() { :; }
+      offer_vm_openclaw_alias_sync_if_drift() { :; }
+      model_command_is_interactive() { return 0; }
+      prompt_yes_no() {
+        prompt_count=$((prompt_count + 1))
+        printf 'PROMPT:%s\n' "$1"
+        if [ "$prompt_count" -eq 1 ]; then REPLY=true; else REPLY=false; fi
+      }
+      setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
+      write_env_from_template() { :; }
+      detect_model_llama_mode() { REPLY=user; }
+      setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE:%s\n' "$1"; }
+      sync_model_openclaw_config_scope() { :; }
+      model_process_args_for_port() { printf '/opt/homebrew/bin/llama-server -m /models/primary-new.gguf --port %s\n' "$1"; }
+      run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
+      main primary
+      printf 'PROMPT_COUNT:%s\n' "$prompt_count"
+    }
+  2>&1)"
+  assert_contains 'successful primary switch offers qualification' "$output" 'Run the qualification suite against the new model? This may take several minutes.'
+  assert_contains 'declining qualification keeps model command successful' "$output" 'Qualification skipped. The selected model remains active.'
+  assert_contains 'qualification prompt defaults to no after switch prompt' "$output" 'PROMPT_COUNT:2'
+  assert_not_contains 'declining qualification does not run suite' "$output" 'QUALIFY_UNEXPECTED'
+}
+
+test_primary_model_qualification_prompt_enter_or_no_declines() {
+  local enter_output no_output
+  enter_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      MODEL_PATH='/models/primary-new.gguf'
+      LLAMA_PORT=11434
+      model_command_is_interactive() { return 0; }
+      primary_model_matches_running_model() { return 0; }
+      prompt_with_suffix() { printf 'PROMPT:%s %s\n' "$1" "$2"; REPLY=''; }
+      run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
+      offer_qualification_after_primary_model_switch
+    }
+  2>&1)"
+  assert_contains 'qualification prompt uses default-no suffix' "$enter_output" 'PROMPT:Run the qualification suite against the new model? This may take several minutes. [y/N]'
+  assert_contains 'enter declines qualification' "$enter_output" 'Qualification skipped. The selected model remains active.'
+  assert_not_contains 'enter decline does not run qualification' "$enter_output" 'QUALIFY_UNEXPECTED'
+
+  no_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      MODEL_PATH='/models/primary-new.gguf'
+      LLAMA_PORT=11434
+      model_command_is_interactive() { return 0; }
+      primary_model_matches_running_model() { return 0; }
+      prompt_with_suffix() { printf 'PROMPT:%s %s\n' "$1" "$2"; REPLY='n'; }
+      run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
+      offer_qualification_after_primary_model_switch
+    }
+  2>&1)"
+  assert_contains 'explicit no declines qualification' "$no_output" 'Qualification skipped. The selected model remains active.'
+  assert_not_contains 'explicit no does not run qualification' "$no_output" 'QUALIFY_UNEXPECTED'
+}
+
+test_primary_model_qualification_yes_invokes_full_suite_once() {
+  local output
+  output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      MODEL_PATH='/models/primary-new.gguf'
+      LLAMA_PORT=11434
+      qualify_count=0
+      model_command_is_interactive() { return 0; }
+      primary_model_matches_running_model() { return 0; }
+      prompt_yes_no() { printf 'PROMPT:%s\n' "$1"; REPLY=true; }
+      run_qualification_suite_after_model_switch() {
+        qualify_count=$((qualify_count + 1))
+        printf 'QUALIFY_FULL_SUITE\n'
+        return 0
+      }
+      offer_qualification_after_primary_model_switch
+      printf 'QUALIFY_COUNT:%s\n' "$qualify_count"
+    }
+  2>&1)"
+  assert_contains 'yes invokes ordinary full qualification suite' "$output" 'QUALIFY_FULL_SUITE'
+  assert_contains 'yes invokes qualification exactly once' "$output" 'QUALIFY_COUNT:1'
+  assert_not_contains 'yes path does not select a single scenario' "$output" '--scenario'
+}
+
+test_primary_model_qualification_exit_status_composition() {
+  local pass_status fail_status error_status interrupt_status
+
+  (
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    MODEL_PATH='/models/primary-new.gguf'
+    LLAMA_PORT=11434
+    model_command_is_interactive() { return 0; }
+    primary_model_matches_running_model() { return 0; }
+    prompt_yes_no() { REPLY=true; }
+    run_qualification_suite_after_model_switch() { return 0; }
+    offer_qualification_after_primary_model_switch
+  ) >/dev/null 2>&1
+  pass_status=$?
+
+  (
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    MODEL_PATH='/models/primary-new.gguf'
+    LLAMA_PORT=11434
+    model_command_is_interactive() { return 0; }
+    primary_model_matches_running_model() { return 0; }
+    prompt_yes_no() { REPLY=true; }
+    run_qualification_suite_after_model_switch() { return 1; }
+    offer_qualification_after_primary_model_switch
+  ) >/dev/null 2>&1
+  fail_status=$?
+
+  (
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    MODEL_PATH='/models/primary-new.gguf'
+    LLAMA_PORT=11434
+    model_command_is_interactive() { return 0; }
+    primary_model_matches_running_model() { return 0; }
+    prompt_yes_no() { REPLY=true; }
+    run_qualification_suite_after_model_switch() { return 2; }
+    offer_qualification_after_primary_model_switch
+  ) >/dev/null 2>&1
+  error_status=$?
+
+  (
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    MODEL_PATH='/models/primary-new.gguf'
+    LLAMA_PORT=11434
+    model_command_is_interactive() { return 0; }
+    primary_model_matches_running_model() { return 0; }
+    prompt_yes_no() { return 130; }
+    run_qualification_suite_after_model_switch() { return 0; }
+    offer_qualification_after_primary_model_switch
+  ) >/dev/null 2>&1
+  interrupt_status=$?
+
+  assert_equals 'qualification PASS or WARNING preserves success' "$pass_status" '0'
+  assert_equals 'qualification FAIL propagates model-failure exit status' "$fail_status" '1'
+  assert_equals 'qualification ERROR propagates infrastructure exit status' "$error_status" '2'
+  assert_equals 'interrupted qualification prompt returns interruption status' "$interrupt_status" '130'
+}
+
+test_primary_model_qualification_offer_is_suppressed_when_unsafe_or_unavailable() {
+  local mismatch_output noninteractive_output unavailable_output
+
+  mismatch_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      MODEL_PATH='/models/primary-new.gguf'
+      LLAMA_PORT=11434
+      model_command_is_interactive() { return 0; }
+      primary_model_matches_running_model() { return 1; }
+      prompt_yes_no() { printf 'PROMPT_UNEXPECTED\n'; REPLY=true; }
+      run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
+      offer_qualification_after_primary_model_switch
+    }
+  2>&1)"
+  assert_contains 'model mismatch suppresses qualification with guidance' "$mismatch_output" 'Run ./clawbox status and resolve the model inconsistency before qualifying this model.'
+  assert_not_contains 'model mismatch does not prompt qualification' "$mismatch_output" 'PROMPT_UNEXPECTED'
+  assert_not_contains 'model mismatch does not run qualification' "$mismatch_output" 'QUALIFY_UNEXPECTED'
+
+  noninteractive_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      MODEL_PATH='/models/primary-new.gguf'
+      LLAMA_PORT=11434
+      model_command_is_interactive() { return 1; }
+      primary_model_matches_running_model() { printf 'MATCH_UNEXPECTED\n'; return 0; }
+      prompt_yes_no() { printf 'PROMPT_UNEXPECTED\n'; REPLY=true; }
+      run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
+      offer_qualification_after_primary_model_switch
+    }
+  2>&1)"
+  assert_not_contains 'noninteractive model switch does not check match solely for prompt' "$noninteractive_output" 'MATCH_UNEXPECTED'
+  assert_not_contains 'noninteractive model switch does not prompt qualification' "$noninteractive_output" 'PROMPT_UNEXPECTED'
+  assert_not_contains 'noninteractive model switch does not run qualification' "$noninteractive_output" 'QUALIFY_UNEXPECTED'
+
+  unavailable_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      MODEL_PATH='/models/primary-new.gguf'
+      LLAMA_PORT=11434
+      model_command_is_interactive() { return 0; }
+      model_qualification_available() { return 1; }
+      primary_model_matches_running_model() { printf 'MATCH_UNEXPECTED\n'; return 0; }
+      prompt_yes_no() { printf 'PROMPT_UNEXPECTED\n'; REPLY=true; }
+      run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
+      offer_qualification_after_primary_model_switch
+    }
+  2>&1)"
+  assert_not_contains 'unavailable qualification does not check match solely for prompt' "$unavailable_output" 'MATCH_UNEXPECTED'
+  assert_not_contains 'unavailable qualification does not prompt' "$unavailable_output" 'PROMPT_UNEXPECTED'
+  assert_not_contains 'unavailable qualification does not run' "$unavailable_output" 'QUALIFY_UNEXPECTED'
+}
+
+test_primary_model_noop_or_failed_switch_does_not_offer_qualification() {
+  local cancel_output failure_output
+  cancel_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      MODEL_PATH='/models/primary-old.gguf'
+      LLAMA_PORT=11434
+      source_env_file() { :; }
+      offer_openclaw_alias_migration() { :; }
+      offer_vm_openclaw_alias_sync_if_drift() { :; }
+      model_command_is_interactive() { return 0; }
+      prompt_yes_no() { REPLY=false; }
+      run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
+      main primary
+    }
+  2>&1)"
+  assert_contains 'canceled primary switch remains no-op' "$cancel_output" 'Model switch cancelled; host model is unchanged.'
+  assert_not_contains 'canceled primary switch does not offer qualification' "$cancel_output" 'Run the qualification suite against the new model'
+  assert_not_contains 'canceled primary switch does not run qualification' "$cancel_output" 'QUALIFY_UNEXPECTED'
+
+  failure_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+      MODEL_PATH='/models/primary-old.gguf'
+      LLAMA_PORT=11434
+      source_env_file() { :; }
+      offer_openclaw_alias_migration() { :; }
+      offer_vm_openclaw_alias_sync_if_drift() { :; }
+      model_command_is_interactive() { return 0; }
+      prompt_yes_no() { REPLY=true; }
+      setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
+      write_env_from_template() { :; }
+      detect_model_llama_mode() { REPLY=user; }
+      setup_llama_service_for_mode() { return 1; }
+      run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
+      main primary
+    }
+  2>&1 || true)"
+  assert_contains 'failed service restart reports recovery guidance' "$failure_output" 'Review the llama-server logs, correct the host service, then run ./clawbox model again.'
+  assert_not_contains 'failed service restart does not offer qualification' "$failure_output" 'Run the qualification suite against the new model'
+  assert_not_contains 'failed service restart does not run qualification' "$failure_output" 'QUALIFY_UNEXPECTED'
+}
+
 test_embeddings_model_subcommands_are_isolated() {
   local embeddings_output alias_output
   embeddings_output="$(
@@ -311,6 +562,7 @@ test_embeddings_model_subcommands_are_isolated() {
       setup_embeddings_llama_service_for_mode() { printf 'EMBEDDINGS_SERVICE:%s\n' "$1"; }
       setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE_UNEXPECTED\n'; }
       sync_model_openclaw_config_scope() { printf 'TARGETED_SYNC:%s:%s\n' "$1" "$(basename "$EMBEDDINGS_MODEL_PATH")"; }
+      run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       ssh() { printf 'SSH_UNEXPECTED\n'; }
       main embeddings
       printf 'FINAL:%s:%s:%s:%s:%s\n' "$MODEL_PATH" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_ENABLED" "$EMBEDDINGS_LLAMA_BASE_URL" "$OPENCLAW_DEFAULT_MODEL"
@@ -321,6 +573,8 @@ test_embeddings_model_subcommands_are_isolated() {
   assert_contains 'embeddings subcommand invokes targeted memorySearch sync with basename' "$embeddings_output" 'TARGETED_SYNC:memorySearch:embeddings-new.gguf'
   assert_not_contains 'embeddings subcommand does not restart primary service' "$embeddings_output" 'PRIMARY_SERVICE_UNEXPECTED'
   assert_not_contains 'embeddings subcommand does not directly overwrite OpenClaw config' "$embeddings_output" 'openclaw.json'
+  assert_not_contains 'embeddings subcommand does not offer primary qualification' "$embeddings_output" 'Run the qualification suite against the new model'
+  assert_not_contains 'embeddings subcommand does not run qualification' "$embeddings_output" 'QUALIFY_UNEXPECTED'
   assert_contains 'embeddings subcommand reports its existing endpoint' "$embeddings_output" 'Embeddings llama-server API: http://127.0.0.1:11435/v1'
 
   alias_output="$(
@@ -479,6 +733,12 @@ run_test test_primary_model_subcommand_preserves_embeddings_state
 run_test test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure
 run_test test_primary_model_subcommand_reports_no_openclaw_changes_when_sync_has_no_drift
 run_test test_primary_model_subcommand_reports_actual_openclaw_sync_when_updated
+run_test test_primary_model_switch_offers_qualification_after_successful_match
+run_test test_primary_model_qualification_prompt_enter_or_no_declines
+run_test test_primary_model_qualification_yes_invokes_full_suite_once
+run_test test_primary_model_qualification_exit_status_composition
+run_test test_primary_model_qualification_offer_is_suppressed_when_unsafe_or_unavailable
+run_test test_primary_model_noop_or_failed_switch_does_not_offer_qualification
 run_test test_embeddings_model_subcommands_are_isolated
 run_test test_embeddings_model_subcommand_reports_openclaw_no_change_or_sync_precisely
 run_test test_embeddings_model_subcommand_can_enable_disabled_embeddings

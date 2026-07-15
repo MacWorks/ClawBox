@@ -112,7 +112,10 @@ switches only the optional embeddings model. Neither command replaces VM or
 OpenClaw configuration. The primary model command may verify/correct only the
 stable provider keys for `clawbox/local`; the embeddings command may sync only
 OpenClaw `memorySearch` keys, using `ollama-local` as the local/LAN remote API
-key marker.
+key marker. When an interactive primary switch succeeds and the configured
+model matches the running `llama-server` process, ClawBox offers to run
+`./clawbox qualify` against the new model. The offer defaults to No and is not
+shown during noninteractive model switches.
 
 Use `.env.example` as the reference for required keys and expected value formats.
 
