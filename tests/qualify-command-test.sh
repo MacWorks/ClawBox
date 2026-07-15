@@ -389,6 +389,153 @@ PY
   pass 'fast aggregate includes all three scenarios with reduced coverage'
 }
 
+create_aggregate_fixture_suite() {
+  local suite="$1"
+  mkdir -p "$suite/scenarios"
+  cp "$ROOT_DIR/vm/qualification/runner.sh" "$suite/runner.sh"
+  chmod +x "$suite/runner.sh"
+
+  cat > "$suite/scenarios/01-tool-reliability.sh" <<'EOF_SCENARIO_01'
+#!/usr/bin/env bash
+set -euo pipefail
+run_id="$1"; artifact_dir="$2"
+mkdir -p "$artifact_dir"
+status="${CLAWBOX_FIXTURE_01_STATUS:-PASS}"
+score="${CLAWBOX_FIXTURE_01_SCORE:-100}"
+exit_status="${CLAWBOX_FIXTURE_01_EXIT:-0}"
+total="${CLAWBOX_QUALIFY_RELIABILITY_ITERATIONS:-10}"
+correct="$total"; efficient="$total"; warnings='[]'; failures='[]'
+if [ "$status" = WARNING ]; then
+  score="${CLAWBOX_FIXTURE_01_SCORE:-97}"
+  efficient=$((total - 1))
+  warnings="$(jq -n '["expected 1 efficient tool call, observed 2\nwith quoted \"detail\" and unicode ✓"]')"
+elif [ "$status" = FAIL ]; then
+  score="${CLAWBOX_FIXTURE_01_SCORE:-60}"
+  correct=$((total - 1))
+  efficient=$((total - 1))
+  failures="$(jq -n '["iteration 3 failed critical assertions\nagentStatus=error"]')"
+fi
+jq -n \
+  --arg runId "$run_id" \
+  --arg status "$status" \
+  --arg score "$score" \
+  --arg total "$total" \
+  --arg correct "$correct" \
+  --arg efficient "$efficient" \
+  --arg artifactDir "$artifact_dir" \
+  --argjson warnings "$warnings" \
+  --argjson failures "$failures" \
+  '{schemaVersion:"1",runId:$runId,scenarioId:"01-tool-reliability",scenarioName:"Tool-calling reliability",status:$status,score:($score|tonumber),unrated:false,durationSeconds:3,assertions:[{name:"task_completion",status:(if $status=="FAIL" then "FAIL" else "PASS" end),message:"fixture reliability",category:"tool_correctness"}],toolCalls:{observed:1,expectedMin:1,expectedMax:1,reliable:true},metrics:{totalIterations:($total|tonumber),correctIterations:($correct|tonumber),efficientIterations:($efficient|tonumber),averageToolCalls:1.4,toolCallsReliable:true,toolCalls:1.4,expectedMin:1,expectedMax:1,iterations:[]},warnings:$warnings,failures:$failures,sessionId:"fixture-01",openclawExitStatus:0,artifacts:{directory:$artifactDir,trajectory:null,transcript:null}}'
+exit "$exit_status"
+EOF_SCENARIO_01
+
+  cat > "$suite/scenarios/02-tool-workflows.sh" <<'EOF_SCENARIO_02'
+#!/usr/bin/env bash
+set -euo pipefail
+run_id="$1"; artifact_dir="$2"
+mkdir -p "$artifact_dir"
+cases="${CLAWBOX_QUALIFY_WORKFLOW_CASES:-exact-output grounded-read absence-check two-step transform}"
+count=0
+for case_name in $cases; do count=$((count + 1)); done
+jq -n \
+  --arg runId "$run_id" \
+  --arg artifactDir "$artifact_dir" \
+  --arg selected "$cases" \
+  --arg count "$count" \
+  '{schemaVersion:"1",runId:$runId,scenarioId:"02-tool-workflows",scenarioName:"Tool workflow correctness",status:"PASS",score:100,unrated:false,durationSeconds:2,assertions:[{name:"workflow_cases",status:"PASS",message:"fixture workflows",category:"workflow_correctness"}],toolCalls:{observed:1.0,expectedMin:1,expectedMax:2,reliable:true},metrics:{selectedCases:($selected|split(" ")|map(select(.!=""))),totalCases:($count|tonumber),passingCases:($count|tonumber),efficientCases:($count|tonumber),averageToolCalls:1.0,toolCallsReliable:true,toolCalls:1.0,cases:[]},warnings:[],failures:[],sessionId:"fixture-02",openclawExitStatus:0,artifacts:{directory:$artifactDir,trajectory:null,transcript:null}}'
+EOF_SCENARIO_02
+
+  cat > "$suite/scenarios/03-code-repair.sh" <<'EOF_SCENARIO_03'
+#!/usr/bin/env bash
+set -euo pipefail
+run_id="$1"; artifact_dir="$2"
+mkdir -p "$artifact_dir"
+reply=$'Root cause: subtraction was used.\nFile changed: calculator.sh\nFinal test result: PASS ✓'
+jq -n \
+  --arg runId "$run_id" \
+  --arg artifactDir "$artifact_dir" \
+  --arg reply "$reply" \
+  '{schemaVersion:"1",runId:$runId,scenarioId:"03-code-repair",scenarioName:"Code repair",status:"PASS",score:100,unrated:false,durationSeconds:4,assertions:[{name:"final_test",status:"PASS",message:"fixture repair",category:"code_state_correctness"}],toolCalls:{observed:4,expectedMin:null,expectedMax:null,reliable:true},metrics:{toolCalls:4,expectedMin:null,expectedMax:null,toolCallsReliable:true,agentFinalStatus:"success",testResult:"PASS",calculatorValid:true,scopeValid:true,changedFiles:" M calculator.sh",finalReply:$reply},warnings:[],failures:[],sessionId:"fixture-03",openclawExitStatus:0,artifacts:{directory:$artifactDir,trajectory:null,transcript:null}}'
+EOF_SCENARIO_03
+
+  chmod +x "$suite"/scenarios/*.sh
+}
+
+test_runner_aggregates_fast_and_full_fixture_results_robustly() {
+  local suite="$TEMP_DIR/aggregate-fixture-suite" runs="$TEMP_DIR/aggregate-fixture-runs"
+  local output status=0
+  setup_mock_bin_dir
+  write_mock_command openclaw '#!/bin/bash
+exit 0
+'
+  create_aggregate_fixture_suite "$suite"
+
+  set +e
+  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-pass' ./runner.sh --profile fast --json)"
+  status=$?
+  set -e
+  assert_equals 'fixture fast PASS aggregate exits success' "$status" '0'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['overallStatus']=='PASS'
+assert data['profile']['id']=='fast'
+assert [s['scenarioId'] for s in data['scenarios']] == ['01-tool-reliability','02-tool-workflows','03-code-repair']
+assert data['coverage']['scenariosRun']==3
+assert data['coverage']['reliabilityIterations']==3
+assert data['coverage']['workflowCases']==3
+assert data['scenarios'][0]['metrics']['averageToolCalls'] == 1.4
+assert 'Final test result: PASS' in data['scenarios'][2]['metrics']['finalReply']
+PY
+  pass 'fixture fast PASS aggregate preserves numeric and multiline fields'
+
+  set +e
+  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-warning' CLAWBOX_FIXTURE_01_STATUS=WARNING ./runner.sh --profile fast --json)"
+  status=$?
+  set -e
+  assert_equals 'fixture fast WARNING aggregate exits success' "$status" '0'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['overallStatus']=='WARNING'
+assert data['warnings']
+assert 'quoted "detail"' in data['warnings'][0]
+PY
+  pass 'fixture fast WARNING aggregate keeps valid warning JSON'
+
+  set +e
+  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-fail' CLAWBOX_FIXTURE_01_STATUS=FAIL CLAWBOX_FIXTURE_01_EXIT=1 ./runner.sh --profile fast --json)"
+  status=$?
+  set -e
+  assert_equals 'fixture fast valid FAIL aggregate returns model failure' "$status" '1'
+  python3 - "$output" "$runs/fixture-fast-fail/results/aggregate-inputs/scenario-statuses.tsv" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['overallStatus']=='FAIL'
+assert data['scenarios'][0]['status']=='FAIL'
+assert 'iteration 3 failed critical assertions' in data['failures'][0]
+with open(sys.argv[2], encoding='utf-8') as fh:
+    statuses=fh.read()
+assert '01-tool-reliability\t1' in statuses
+PY
+  pass 'fixture fast valid FAIL aggregates despite scenario process exit 1'
+
+  set +e
+  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-full-pass' ./runner.sh --profile full --json)"
+  status=$?
+  set -e
+  assert_equals 'fixture full PASS aggregate exits success' "$status" '0'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['profile']['id']=='full'
+assert data['coverage']['reliabilityIterations']==10
+assert data['coverage']['workflowCases']==5
+assert data['coverage']['scenariosRun']==3
+PY
+  pass 'fixture full aggregate uses full profile coverage'
+}
+
 test_qualify_runner_records_null_git_provenance_outside_checkout() {
   local suite_copy="$TEMP_DIR/suite-copy" output status=0
   install_fake_openclaw
@@ -1030,6 +1177,7 @@ run_test test_qualify_runner_dependency_preflight_errors
 run_test test_qualify_runner_default_json_runs_real_scenarios_with_fake_openclaw
 run_test test_qualify_profiles_select_expected_coverage
 run_test test_qualify_fast_profile_aggregate_includes_all_scenarios
+run_test test_runner_aggregates_fast_and_full_fixture_results_robustly
 run_test test_qualify_runner_records_null_git_provenance_outside_checkout
 run_test test_qualify_command_self_heals_without_setup
 run_test test_qualify_human_output_is_polished

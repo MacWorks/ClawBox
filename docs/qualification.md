@@ -194,6 +194,10 @@ installation does not delete historical runs. When comparing reports or
 inspecting files manually, compare the `runId` in the aggregate JSON and human
 report. Aggregate JSON also records UTC `startedAt` and `completedAt`
 timestamps, duration, suite checksum, and available ClawBox Git provenance.
+Runner diagnostics are kept under each run's `results/` directory, including
+per-scenario result JSON, per-scenario stderr, aggregate input lists, scenario
+process statuses, and `aggregate-build.stderr` when aggregate construction
+fails.
 
 The suite is limited to ClawBox-managed hidden workspace paths. It does not
 replace `~/.openclaw/openclaw.json`, rerun onboarding, switch models, or install

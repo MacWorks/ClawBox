@@ -119,6 +119,13 @@ command -v openclaw >/dev/null 2>&1 || emit_preflight_error 'Missing required de
 
 mkdir -p "$RUNS_DIR/$RUN_ID/results"
 results_dir="$RUNS_DIR/$RUN_ID/results"
+scenario_results_list="$results_dir/scenario-results.list"
+scenario_statuses_file="$results_dir/scenario-statuses.tsv"
+aggregate_inputs_dir="$results_dir/aggregate-inputs"
+scenario_result_files=()
+: > "$scenario_results_list"
+: > "$scenario_statuses_file"
+mkdir -p "$aggregate_inputs_dir"
 
 suite_checksum() {
   if [ -n "${CLAWBOX_QUALIFY_SUITE_CHECKSUM:-}" ]; then
@@ -191,7 +198,29 @@ while IFS= read -r scenario; do
   [ -n "$scenario" ] || continue
   [ -x "$scenario" ] || chmod +x "$scenario"
   scenario_id="$(basename "$scenario" .sh)"
-  "$scenario" "$RUN_ID" "$RUNS_DIR/$RUN_ID/$scenario_id" >"$results_dir/$scenario_id.json"
+  scenario_result="$results_dir/$scenario_id.json"
+  scenario_stderr="$results_dir/$scenario_id.stderr"
+  set +e
+  "$scenario" "$RUN_ID" "$RUNS_DIR/$RUN_ID/$scenario_id" >"$scenario_result" 2>"$scenario_stderr"
+  scenario_exit=$?
+  set -e
+  printf '%s\t%s\n' "$scenario_id" "$scenario_exit" >> "$scenario_statuses_file"
+  if jq -e 'type == "object"' "$scenario_result" >/dev/null 2>&1; then
+    printf '%s\n' "$scenario_result" >> "$scenario_results_list"
+    scenario_result_files+=("$scenario_result")
+  else
+    diagnostic="scenario $scenario_id did not produce valid result JSON"
+    jq -n \
+      --arg runId "$RUN_ID" \
+      --arg scenarioId "$scenario_id" \
+      --arg scenarioName "$scenario_id" \
+      --arg artifactDir "$RUNS_DIR/$RUN_ID/$scenario_id" \
+      --arg stderrPath "$scenario_stderr" \
+      --arg message "$diagnostic" \
+      '{schemaVersion:"1",runId:$runId,scenarioId:$scenarioId,scenarioName:$scenarioName,status:"ERROR",score:null,unrated:true,durationSeconds:0,assertions:[{name:"result_json",status:"ERROR",message:$message,category:"tool_correctness"}],toolCalls:{observed:null,expectedMin:null,expectedMax:null,reliable:false},metrics:{stderrPath:$stderrPath},warnings:[],failures:[$message],sessionId:"",openclawExitStatus:null,artifacts:{directory:$artifactDir,trajectory:null,transcript:null}}' >"$scenario_result"
+    printf '%s\n' "$scenario_result" >> "$scenario_results_list"
+    scenario_result_files+=("$scenario_result")
+  fi
 done <<EOF_SCENARIOS
 $(scenario_paths)
 EOF_SCENARIOS
@@ -203,7 +232,30 @@ if [ "$DURATION_SECONDS" -lt 0 ]; then DURATION_SECONDS=0; fi
 SUITE_CHECKSUM="$(suite_checksum || printf 'unknown\n')"
 CLAWBOX_COMMIT="$(clawbox_commit)"
 CLAWBOX_DIRTY="$(clawbox_dirty_json)"
+case "$CLAWBOX_DIRTY" in
+  true|false|null) ;;
+  *) CLAWBOX_DIRTY='null' ;;
+esac
 
+cp "$scenario_results_list" "$aggregate_inputs_dir/scenario-results.list"
+cp "$scenario_statuses_file" "$aggregate_inputs_dir/scenario-statuses.tsv"
+
+if [ ! -s "$scenario_results_list" ]; then
+  jq -n \
+    --arg runId "$RUN_ID" \
+    --arg startedAt "$STARTED_AT" \
+    --arg completedAt "$COMPLETED_AT" \
+    --arg durationSeconds "$DURATION_SECONDS" \
+    --arg profileId "$PROFILE_ID" \
+    --arg profileName "$PROFILE_NAME" \
+    --arg artifactDir "$RUNS_DIR/$RUN_ID" \
+    '{schemaVersion:"1",runId:$runId,startedAt:$startedAt,completedAt:$completedAt,durationSeconds:($durationSeconds|tonumber),completed:false,suite:{schemaVersion:"1",checksum:null},clawbox:{commit:null,dirty:null},profile:{id:$profileId,name:$profileName},coverage:{profile:$profileId,scenariosRun:0,reliabilityIterations:0,workflowCases:0},model:{alias:"unknown",configured:"unknown",running:"unknown"},overallStatus:"ERROR",score:null,categories:{},warnings:[],failures:["no scenario results were produced"],scenarios:[],artifactDirectory:$artifactDir}' >"$results_dir/aggregate.json"
+  [ "$JSON_MODE" = true ] && cat "$results_dir/aggregate.json"
+  exit 2
+fi
+
+aggregate_stderr="$results_dir/aggregate-build.stderr"
+set +e
 jq -s \
   --arg runId "$RUN_ID" \
   --arg startedAt "$STARTED_AT" \
@@ -234,7 +286,26 @@ jq -s \
   | (if $modelWarning == "" then [] else [$modelWarning] end) as $modelWarnings
   | ($scenarios | map(select(.scenarioId=="01-tool-reliability") | .metrics.totalIterations // 0) | add // 0) as $reliabilityIterations
   | ($scenarios | map(select(.scenarioId=="02-tool-workflows") | .metrics.totalCases // 0) | add // 0) as $workflowCases
-  | {schemaVersion:"1",runId:$runId,startedAt:$startedAt,completedAt:$completedAt,durationSeconds:($durationSeconds|tonumber),completed:true,suite:{schemaVersion:$suiteSchemaVersion,checksum:$suiteChecksum},clawbox:{commit:(if $clawboxCommit == "" then null else $clawboxCommit end),dirty:$clawboxDirty},profile:{id:$profileId,name:$profileName},coverage:{profile:$profileId,scenariosRun:($scenarios|length),reliabilityIterations:$reliabilityIterations,workflowCases:$workflowCases},model:{alias:$modelAlias,configured:$modelConfigured,running:$modelRunning},overallStatus:$overall,score:(if ($scores|length)>0 then (($scores|add / length)|round) else null end),categories:{"Tool correctness": category_status(["tool_correctness"]),"Grounding": category_status(["grounding"]),"Workflow correctness": category_status(["workflow_correctness"]),"Instruction following": category_status(["instruction_following"]),"Code and state correctness": category_status(["code_state_correctness"]),"Hallucination avoidance": category_status(["hallucination_avoidance"]),"Efficiency": category_status(["efficiency"])},warnings:($modelWarnings + ($scenarios|map(.warnings[]?) )),failures:($scenarios|map(.failures[]?) ),scenarios:$scenarios,artifactDirectory:$artifactDir}' "$results_dir"/*.json >"$results_dir/aggregate.json"
+  | {schemaVersion:"1",runId:$runId,startedAt:$startedAt,completedAt:$completedAt,durationSeconds:($durationSeconds|tonumber),completed:true,suite:{schemaVersion:$suiteSchemaVersion,checksum:$suiteChecksum},clawbox:{commit:(if $clawboxCommit == "" then null else $clawboxCommit end),dirty:$clawboxDirty},profile:{id:$profileId,name:$profileName},coverage:{profile:$profileId,scenariosRun:($scenarios|length),reliabilityIterations:$reliabilityIterations,workflowCases:$workflowCases},model:{alias:$modelAlias,configured:$modelConfigured,running:$modelRunning},overallStatus:$overall,score:(if ($scores|length)>0 then (($scores|add / length)|round) else null end),categories:{"Tool correctness": category_status(["tool_correctness"]),"Grounding": category_status(["grounding"]),"Workflow correctness": category_status(["workflow_correctness"]),"Instruction following": category_status(["instruction_following"]),"Code and state correctness": category_status(["code_state_correctness"]),"Hallucination avoidance": category_status(["hallucination_avoidance"]),"Efficiency": category_status(["efficiency"])},warnings:($modelWarnings + ($scenarios|map(.warnings[]?) )),failures:($scenarios|map(.failures[]?) ),scenarios:$scenarios,artifactDirectory:$artifactDir}' "${scenario_result_files[@]}" >"$results_dir/aggregate.json" 2>"$aggregate_stderr"
+aggregate_status=$?
+set -e
+
+if [ "$aggregate_status" -ne 0 ] || ! jq -e 'type == "object"' "$results_dir/aggregate.json" >/dev/null 2>&1; then
+  jq -n \
+    --arg runId "$RUN_ID" \
+    --arg startedAt "$STARTED_AT" \
+    --arg completedAt "$COMPLETED_AT" \
+    --arg durationSeconds "$DURATION_SECONDS" \
+    --arg suiteSchemaVersion "${CLAWBOX_QUALIFY_SUITE_VERSION:-1}" \
+    --arg suiteChecksum "$SUITE_CHECKSUM" \
+    --arg clawboxCommit "$CLAWBOX_COMMIT" \
+    --argjson clawboxDirty "$CLAWBOX_DIRTY" \
+    --arg profileId "$PROFILE_ID" \
+    --arg profileName "$PROFILE_NAME" \
+    --arg artifactDir "$RUNS_DIR/$RUN_ID" \
+    --arg stderrPath "$aggregate_stderr" \
+    '{schemaVersion:"1",runId:$runId,startedAt:$startedAt,completedAt:$completedAt,durationSeconds:($durationSeconds|tonumber),completed:false,suite:{schemaVersion:$suiteSchemaVersion,checksum:$suiteChecksum},clawbox:{commit:(if $clawboxCommit == "" then null else $clawboxCommit end),dirty:$clawboxDirty},profile:{id:$profileId,name:$profileName},coverage:{profile:$profileId,scenariosRun:0,reliabilityIterations:0,workflowCases:0},model:{alias:"unknown",configured:"unknown",running:"unknown"},overallStatus:"ERROR",score:null,categories:{},warnings:[],failures:["Qualification aggregation failed. See " + $stderrPath],scenarios:[],artifactDirectory:$artifactDir}' >"$results_dir/aggregate.json"
+fi
 
 if [ "$JSON_MODE" = true ]; then
   cat "$results_dir/aggregate.json"
