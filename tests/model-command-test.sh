@@ -324,6 +324,7 @@ test_primary_model_switch_offers_qualification_after_successful_match() {
     }
   2>&1)"
   assert_contains 'successful primary switch offers qualification' "$output" 'Run the qualification suite against the new model? This may take several minutes.'
+  assert_contains 'qualification prompt is visually separated after switch output' "$output" $'Check status with: ./clawbox status\n\nPROMPT:Run the qualification suite against the new model? This may take several minutes.'
   assert_contains 'declining qualification keeps model command successful' "$output" 'Qualification skipped. The selected model remains active.'
   assert_contains 'qualification prompt defaults to no after switch prompt' "$output" 'PROMPT_COUNT:2'
   assert_not_contains 'declining qualification does not run suite' "$output" 'QUALIFY_UNEXPECTED'

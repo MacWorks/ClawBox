@@ -422,7 +422,7 @@ if [ "$command" = "echo ok" ]; then exit 0; fi
 if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
 if [[ "$command" == rm\ -f* ]]; then exit 0; fi
 if [[ "$command" == *"runner.sh"* ]]; then
-  printf "{\"schemaVersion\":\"1\",\"runId\":\"human-run\",\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"WARNING\",\"score\":97,\"categories\":{},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"scenarioName\":\"Tool-calling reliability\",\"status\":\"WARNING\",\"score\":97,\"metrics\":{\"totalIterations\":10,\"correctIterations\":10,\"efficientIterations\":9,\"averageToolCalls\":1.1},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[]}],\"artifactDirectory\":\"runs/human-run\"}\n"
+  printf "{\"schemaVersion\":\"1\",\"runId\":\"human-run\",\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"WARNING\",\"score\":97,\"categories\":{},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"scenarioName\":\"Tool-calling reliability\",\"status\":\"WARNING\",\"score\":97,\"durationSeconds\":714,\"metrics\":{\"totalIterations\":10,\"correctIterations\":10,\"efficientIterations\":9,\"averageToolCalls\":1.1},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[]}],\"artifactDirectory\":\"runs/human-run\"}\n"
   exit 0
 fi
 if [[ "$command" == *"zsh -l"* ]]; then
@@ -444,13 +444,27 @@ exit 0
   assert_contains 'human output shows selected scenario running progress' "$output" 'Running 01-tool-reliability qualification... !'
   assert_contains 'human output shows compact model identity' "$output" 'Model under qualification: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
   assert_contains 'human output shows OpenClaw alias' "$output" 'OpenClaw alias: clawbox/local'
+  assert_contains 'human output separates checks from model metadata' "$output" $'Checking configured model matches running model... ✓\n\nModel under qualification:'
   assert_not_contains 'human output omits redundant configured model line' "$output" 'Configured model:'
   assert_not_contains 'human output omits redundant running model line' "$output" 'Running model:'
   assert_contains 'human report uses shared section heading' "$output" ' > Model Qualification Report'
+  assert_contains 'human report has one blank line before heading' "$output" $'Running 01-tool-reliability qualification... !\n\n-----------------------------------------'
   assert_not_contains 'human report no longer prints model row' "$output" 'Model: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
   assert_contains 'human report shows scenario id' "$output" '01-tool-reliability'
+  assert_contains 'human report shows scenario score' "$output" 'Scenario Score'
+  assert_contains 'human report shows scenario duration' "$output" 'Duration'
+  assert_contains 'human report formats long duration compactly' "$output" '11m 54s'
   assert_contains 'human report shows correct iterations' "$output" 'Correct iterations'
+  assert_contains 'human report formats average tool calls consistently' "$output" 'Average tool calls'
+  assert_contains 'human report shows one-decimal average tool call value' "$output" '1.1'
+  assert_contains 'human report explains score deduction' "$output" 'Deductions reflect the warnings listed below.'
   assert_contains 'human report exposes warning reason' "$output" 'expected 1 efficient tool call, observed 2'
+  assert_not_contains 'human report does not duplicate warning inline' "$output" 'Warning ........................'
+  if [ "$(printf '%s\n' "$output" | grep -F 'expected 1 efficient tool call, observed 2' | wc -l | tr -d '[:space:]')" = '1' ]; then
+    pass 'human report shows each warning once'
+  else
+    fail 'human report shows each warning once'
+  fi
   assert_contains 'human report shows overall warning result' "$output" 'Overall Result'
 
   set +e
@@ -581,6 +595,7 @@ test_workflow_cases_and_code_repair_objective_behavior() {
   set +e; repair_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='repair-run' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json)"; status=$?; set -e
   assert_equals 'code repair passes when only calculator is fixed' "$status" '0'
   assert_contains 'code repair records changed file scope' "$repair_output" ' M calculator.sh'
+  assert_contains 'code repair perfect objective pass scores 100' "$repair_output" '"score": 100'
   install_fake_openclaw
   set +e; repair_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='repair-bad-scope' CLAWBOX_FAKE_OPENCLAW_UNRELATED_CHANGE=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json)"; status=$?; set -e
   assert_equals 'code repair unrelated change exits model failure' "$status" '1'

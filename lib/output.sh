@@ -479,6 +479,9 @@ _status_finalize_message() {
     error)
       color="${COLOR_RED:-}"
       ;;
+    progress|plain|info)
+      color=''
+      ;;
   esac
 
   if [ -n "$color" ] && [ -n "${COLOR_BOLD:-}" ]; then
@@ -604,6 +607,9 @@ status_end() {
         ;;
       error)
         error "$message"
+        ;;
+      progress|plain|info)
+        out "$message"
         ;;
       *)
         out "$message"

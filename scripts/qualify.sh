@@ -192,7 +192,7 @@ qualify_run_operation() {
   QUALIFY_ACTIVE_OPERATION_PID=''
   QUALIFY_ACTIVE_OPERATION_MESSAGE=''
   if [ "$status" -eq 0 ]; then
-    status_end "$message ✓" 'success'
+    status_end "$message ✓" 'progress'
   else
     status_end "$message ✗" 'error'
     cat "$stderr_file" >&2 2>/dev/null || true
@@ -332,12 +332,39 @@ def line(label, value):
     dots = '.' * max(1, 34 - len(label))
     print(f"{label} {dots} {value}")
 
-for scenario in data.get('scenarios', []):
+def duration(seconds):
+    try:
+        seconds = int(float(seconds))
+    except Exception:
+        return None
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, rem = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {rem:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m {rem:02d}s"
+
+def fmt_average(value):
+    try:
+        return f"{float(value):.1f}"
+    except Exception:
+        return str(value)
+
+scenarios = data.get('scenarios', [])
+for index, scenario in enumerate(scenarios):
     sid = scenario.get('scenarioId', 'unknown')
     name = scenario.get('scenarioName', '')
+    if index:
+        print('')
     print(sid)
     if name:
         line(name, scenario.get('status', 'unknown'))
+    if scenario.get('score') is not None:
+        line('Scenario Score', f"{scenario.get('score')}/100")
+    scenario_duration = duration(scenario.get('durationSeconds'))
+    if scenario_duration:
+        line('Duration', scenario_duration)
     metrics = scenario.get('metrics') or {}
     if 'correctIterations' in metrics and 'totalIterations' in metrics:
         line('Correct iterations', f"{metrics['correctIterations']}/{metrics['totalIterations']}")
@@ -348,29 +375,36 @@ for scenario in data.get('scenarios', []):
     if 'efficientCases' in metrics and 'totalCases' in metrics:
         line('Efficient workflow cases', f"{metrics['efficientCases']}/{metrics['totalCases']}")
     if 'averageToolCalls' in metrics:
-        line('Average tool calls', f"{float(metrics['averageToolCalls']):.2f}".rstrip('0').rstrip('.'))
+        line('Average tool calls', fmt_average(metrics['averageToolCalls']))
     if 'testResult' in metrics:
         line('Final test', metrics['testResult'])
     if 'changedFiles' in metrics:
         line('Changed files', metrics['changedFiles'] or 'none')
-    for warning in scenario.get('warnings') or []:
-        line('Warning', warning)
-    for failure in scenario.get('failures') or []:
-        line('Failure', failure)
-    print('')
 
+if scenarios:
+    print('')
 score = data.get('score')
 line('Overall Score', 'unrated' if score is None else f'{score}/100')
 line('Overall Result', data.get('overallStatus', 'unknown'))
 warnings = data.get('warnings') or []
+failures = data.get('failures') or []
+if score is not None and score < 100:
+    if warnings or failures:
+        print('Score notes:')
+        if warnings:
+            print('- Deductions reflect the warnings listed below.')
+        if failures:
+            print('- Deductions reflect the failures listed below.')
+    else:
+        print('Score notes:')
+        print('- Deductions reflect scenario category weighting in the structured JSON report.')
 if warnings:
     print('Warnings:')
-    for warning in warnings:
+    for warning in dict.fromkeys(warnings):
         print(f'- {warning}')
-failures = data.get('failures') or []
 if failures:
     print('Failures:')
-    for failure in failures:
+    for failure in dict.fromkeys(failures):
         print(f'- {failure}')
 print('Artifacts:')
 print(data.get('artifactDirectory') or 'unavailable')
@@ -423,9 +457,9 @@ qualify_run_remote_operation() {
   QUALIFY_ACTIVE_OPERATION_MESSAGE=''
   overall="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("overallStatus") or ""))' "$output_file" 2>/dev/null || true)"
   case "$status:$overall" in
-    0:WARNING) level='warning'; marker='!' ;;
-    0:*) level='success'; marker='✓' ;;
-    1:*) level='warning'; marker='!' ;;
+    0:WARNING) level='progress'; marker='!' ;;
+    0:*) level='progress'; marker='✓' ;;
+    1:*) level='progress'; marker='!' ;;
     *) level='error'; marker='✗' ;;
   esac
   status_end "$message $marker" "$level"
@@ -483,6 +517,7 @@ Resolve the model inconsistency before running qualification."
   export CLAWBOX_QUALIFY_MODEL_RUNNING="$model_running"
   export CLAWBOX_QUALIFY_MODEL_WARNING=''
 
+  blank_line
   qualify_progress "Model under qualification: $model_display"
   qualify_progress "OpenClaw alias: $model_ref"
   qualify_ensure_suite_installed_polished || qualify_fail 2 'Unable to publish or install the VM qualification suite.'
