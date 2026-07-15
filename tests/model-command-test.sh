@@ -312,6 +312,11 @@ test_primary_model_switch_offers_qualification_after_successful_match() {
         printf 'PROMPT:%s\n' "$1"
         if [ "$prompt_count" -eq 1 ]; then REPLY=true; else REPLY=false; fi
       }
+      prompt_with_suffix() {
+        prompt_count=$((prompt_count + 1))
+        printf 'PROMPT:%s %s\n' "$1" "$2"
+        REPLY='3'
+      }
       setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
       write_env_from_template() { :; }
       detect_model_llama_mode() { REPLY=user; }
@@ -323,10 +328,13 @@ test_primary_model_switch_offers_qualification_after_successful_match() {
       printf 'PROMPT_COUNT:%s\n' "$prompt_count"
     }
   2>&1)"
-  assert_contains 'successful primary switch offers qualification' "$output" 'Run the qualification suite against the new model? This may take several minutes.'
-  assert_contains 'qualification prompt is visually separated after switch output' "$output" $'Check status with: ./clawbox status\n\nPROMPT:Run the qualification suite against the new model? This may take several minutes.'
+  assert_contains 'successful primary switch offers qualification menu' "$output" 'Choose qualification:'
+  assert_contains 'qualification prompt is visually separated after switch output' "$output" $'Check status with: ./clawbox status\n\nChoose qualification:'
+  assert_contains 'qualification menu offers fast profile' "$output" '1) Fast (reduced test set)'
+  assert_contains 'qualification menu offers full profile' "$output" '2) Full (complete suite)'
+  assert_contains 'qualification menu defaults to skip' "$output" 'PROMPT:Selection [1-3, default 3]'
   assert_contains 'declining qualification keeps model command successful' "$output" 'Qualification skipped. The selected model remains active.'
-  assert_contains 'qualification prompt defaults to no after switch prompt' "$output" 'PROMPT_COUNT:2'
+  assert_contains 'qualification prompt runs after switch prompt' "$output" 'PROMPT_COUNT:2'
   assert_not_contains 'declining qualification does not run suite' "$output" 'QUALIFY_UNEXPECTED'
 }
 
@@ -344,7 +352,7 @@ test_primary_model_qualification_prompt_enter_or_no_declines() {
       offer_qualification_after_primary_model_switch
     }
   2>&1)"
-  assert_contains 'qualification prompt uses default-no suffix' "$enter_output" 'PROMPT:Run the qualification suite against the new model? This may take several minutes. [y/N]'
+  assert_contains 'qualification prompt uses default-skip suffix' "$enter_output" 'PROMPT:Selection [1-3, default 3]'
   assert_contains 'enter declines qualification' "$enter_output" 'Qualification skipped. The selected model remains active.'
   assert_not_contains 'enter decline does not run qualification' "$enter_output" 'QUALIFY_UNEXPECTED'
 
@@ -355,16 +363,36 @@ test_primary_model_qualification_prompt_enter_or_no_declines() {
       LLAMA_PORT=11434
       model_command_is_interactive() { return 0; }
       primary_model_matches_running_model() { return 0; }
-      prompt_with_suffix() { printf 'PROMPT:%s %s\n' "$1" "$2"; REPLY='n'; }
+      prompt_with_suffix() { printf 'PROMPT:%s %s\n' "$1" "$2"; REPLY='3'; }
       run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       offer_qualification_after_primary_model_switch
     }
   2>&1)"
-  assert_contains 'explicit no declines qualification' "$no_output" 'Qualification skipped. The selected model remains active.'
-  assert_not_contains 'explicit no does not run qualification' "$no_output" 'QUALIFY_UNEXPECTED'
+  assert_contains 'explicit skip declines qualification' "$no_output" 'Qualification skipped. The selected model remains active.'
+  assert_not_contains 'explicit skip does not run qualification' "$no_output" 'QUALIFY_UNEXPECTED'
+
+  no_output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      MODEL_PATH='/models/primary-new.gguf'
+      LLAMA_PORT=11434
+      model_command_is_interactive() { return 0; }
+      primary_model_matches_running_model() { return 0; }
+      prompt_count=0
+      prompt_with_suffix() {
+        prompt_count=$((prompt_count + 1))
+        if [ "$prompt_count" -eq 1 ]; then REPLY='bogus'; else REPLY='3'; fi
+      }
+      run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
+      offer_qualification_after_primary_model_switch
+      printf 'PROMPT_COUNT:%s\n' "$prompt_count"
+    }
+  2>&1)"
+  assert_contains 'invalid qualification menu input reprompts' "$no_output" 'PROMPT_COUNT:2'
+  assert_not_contains 'invalid then skip does not run qualification' "$no_output" 'QUALIFY_UNEXPECTED'
 }
 
-test_primary_model_qualification_yes_invokes_full_suite_once() {
+test_primary_model_qualification_menu_invokes_selected_profile_once() {
   local output
   output="$(
     {
@@ -374,19 +402,39 @@ test_primary_model_qualification_yes_invokes_full_suite_once() {
       qualify_count=0
       model_command_is_interactive() { return 0; }
       primary_model_matches_running_model() { return 0; }
-      prompt_yes_no() { printf 'PROMPT:%s\n' "$1"; REPLY=true; }
+      prompt_with_suffix() { printf 'PROMPT:%s %s\n' "$1" "$2"; REPLY='1'; }
       run_qualification_suite_after_model_switch() {
         qualify_count=$((qualify_count + 1))
-        printf 'QUALIFY_FULL_SUITE\n'
+        printf 'QUALIFY_PROFILE:%s\n' "$1"
         return 0
       }
       offer_qualification_after_primary_model_switch
       printf 'QUALIFY_COUNT:%s\n' "$qualify_count"
     }
   2>&1)"
-  assert_contains 'yes invokes ordinary full qualification suite' "$output" 'QUALIFY_FULL_SUITE'
-  assert_contains 'yes invokes qualification exactly once' "$output" 'QUALIFY_COUNT:1'
-  assert_not_contains 'yes path does not select a single scenario' "$output" '--scenario'
+  assert_contains 'option 1 invokes fast qualification profile' "$output" 'QUALIFY_PROFILE:fast'
+  assert_contains 'option 1 invokes qualification exactly once' "$output" 'QUALIFY_COUNT:1'
+
+  output="$(
+    {
+      CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+      MODEL_PATH='/models/primary-new.gguf'
+      LLAMA_PORT=11434
+      qualify_count=0
+      model_command_is_interactive() { return 0; }
+      primary_model_matches_running_model() { return 0; }
+      prompt_with_suffix() { printf 'PROMPT:%s %s\n' "$1" "$2"; REPLY='2'; }
+      run_qualification_suite_after_model_switch() {
+        qualify_count=$((qualify_count + 1))
+        printf 'QUALIFY_PROFILE:%s\n' "$1"
+        return 0
+      }
+      offer_qualification_after_primary_model_switch
+      printf 'QUALIFY_COUNT:%s\n' "$qualify_count"
+    }
+  2>&1)"
+  assert_contains 'option 2 invokes full qualification profile' "$output" 'QUALIFY_PROFILE:full'
+  assert_contains 'option 2 invokes qualification exactly once' "$output" 'QUALIFY_COUNT:1'
 }
 
 test_primary_model_qualification_exit_status_composition() {
@@ -398,8 +446,8 @@ test_primary_model_qualification_exit_status_composition() {
     LLAMA_PORT=11434
     model_command_is_interactive() { return 0; }
     primary_model_matches_running_model() { return 0; }
-    prompt_yes_no() { REPLY=true; }
-    run_qualification_suite_after_model_switch() { return 0; }
+    prompt_with_suffix() { REPLY=1; }
+    run_qualification_suite_after_model_switch() { [ "$1" = fast ]; return 0; }
     offer_qualification_after_primary_model_switch
   ) >/dev/null 2>&1
   pass_status=$?
@@ -410,8 +458,8 @@ test_primary_model_qualification_exit_status_composition() {
     LLAMA_PORT=11434
     model_command_is_interactive() { return 0; }
     primary_model_matches_running_model() { return 0; }
-    prompt_yes_no() { REPLY=true; }
-    run_qualification_suite_after_model_switch() { return 1; }
+    prompt_with_suffix() { REPLY=2; }
+    run_qualification_suite_after_model_switch() { [ "$1" = full ]; return 1; }
     offer_qualification_after_primary_model_switch
   ) >/dev/null 2>&1
   fail_status=$?
@@ -422,8 +470,8 @@ test_primary_model_qualification_exit_status_composition() {
     LLAMA_PORT=11434
     model_command_is_interactive() { return 0; }
     primary_model_matches_running_model() { return 0; }
-    prompt_yes_no() { REPLY=true; }
-    run_qualification_suite_after_model_switch() { return 2; }
+    prompt_with_suffix() { REPLY=1; }
+    run_qualification_suite_after_model_switch() { [ "$1" = fast ]; return 2; }
     offer_qualification_after_primary_model_switch
   ) >/dev/null 2>&1
   error_status=$?
@@ -434,7 +482,7 @@ test_primary_model_qualification_exit_status_composition() {
     LLAMA_PORT=11434
     model_command_is_interactive() { return 0; }
     primary_model_matches_running_model() { return 0; }
-    prompt_yes_no() { return 130; }
+    prompt_with_suffix() { return 130; }
     run_qualification_suite_after_model_switch() { return 0; }
     offer_qualification_after_primary_model_switch
   ) >/dev/null 2>&1
@@ -517,7 +565,7 @@ test_primary_model_noop_or_failed_switch_does_not_offer_qualification() {
     }
   2>&1)"
   assert_contains 'canceled primary switch remains no-op' "$cancel_output" 'Model switch cancelled; host model is unchanged.'
-  assert_not_contains 'canceled primary switch does not offer qualification' "$cancel_output" 'Run the qualification suite against the new model'
+  assert_not_contains 'canceled primary switch does not offer qualification' "$cancel_output" 'Choose qualification:'
   assert_not_contains 'canceled primary switch does not run qualification' "$cancel_output" 'QUALIFY_UNEXPECTED'
 
   failure_output="$(
@@ -540,7 +588,7 @@ test_primary_model_noop_or_failed_switch_does_not_offer_qualification() {
     }
   2>&1 || true)"
   assert_contains 'failed service restart reports recovery guidance' "$failure_output" 'Review the llama-server logs, correct the host service, then run ./clawbox model again.'
-  assert_not_contains 'failed service restart does not offer qualification' "$failure_output" 'Run the qualification suite against the new model'
+  assert_not_contains 'failed service restart does not offer qualification' "$failure_output" 'Choose qualification:'
   assert_not_contains 'failed service restart does not run qualification' "$failure_output" 'QUALIFY_UNEXPECTED'
 }
 
@@ -574,7 +622,7 @@ test_embeddings_model_subcommands_are_isolated() {
   assert_contains 'embeddings subcommand invokes targeted memorySearch sync with basename' "$embeddings_output" 'TARGETED_SYNC:memorySearch:embeddings-new.gguf'
   assert_not_contains 'embeddings subcommand does not restart primary service' "$embeddings_output" 'PRIMARY_SERVICE_UNEXPECTED'
   assert_not_contains 'embeddings subcommand does not directly overwrite OpenClaw config' "$embeddings_output" 'openclaw.json'
-  assert_not_contains 'embeddings subcommand does not offer primary qualification' "$embeddings_output" 'Run the qualification suite against the new model'
+  assert_not_contains 'embeddings subcommand does not offer primary qualification' "$embeddings_output" 'Choose qualification:'
   assert_not_contains 'embeddings subcommand does not run qualification' "$embeddings_output" 'QUALIFY_UNEXPECTED'
   assert_contains 'embeddings subcommand reports its existing endpoint' "$embeddings_output" 'Embeddings llama-server API: http://127.0.0.1:11435/v1'
 
@@ -736,7 +784,7 @@ run_test test_primary_model_subcommand_reports_no_openclaw_changes_when_sync_has
 run_test test_primary_model_subcommand_reports_actual_openclaw_sync_when_updated
 run_test test_primary_model_switch_offers_qualification_after_successful_match
 run_test test_primary_model_qualification_prompt_enter_or_no_declines
-run_test test_primary_model_qualification_yes_invokes_full_suite_once
+run_test test_primary_model_qualification_menu_invokes_selected_profile_once
 run_test test_primary_model_qualification_exit_status_composition
 run_test test_primary_model_qualification_offer_is_suppressed_when_unsafe_or_unavailable
 run_test test_primary_model_noop_or_failed_switch_does_not_offer_qualification

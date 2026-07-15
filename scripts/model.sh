@@ -105,7 +105,8 @@ primary_model_matches_running_model() {
 }
 
 run_qualification_suite_after_model_switch() {
-  "$BASE_DIR/clawbox" qualify
+  local profile="${1:-full}"
+  "$BASE_DIR/clawbox" qualify --profile "$profile"
 }
 
 offer_qualification_after_primary_model_switch() {
@@ -123,14 +124,31 @@ offer_qualification_after_primary_model_switch() {
     return 0
   fi
 
-  blank_line
-  prompt_yes_no 'Run the qualification suite against the new model? This may take several minutes.' 'n' || return $?
-  if ! is_yes "$REPLY"; then
-    out 'Qualification skipped. The selected model remains active.'
-    return 0
-  fi
-
-  run_qualification_suite_after_model_switch
+  while true; do
+    blank_line
+    out 'Choose qualification:'
+    out '  1) Fast (reduced test set)'
+    out '  2) Full (complete suite)'
+    out '  3) Skip'
+    prompt_with_suffix 'Selection' '[1-3, default 3]' || return $?
+    case "${REPLY:-}" in
+      1)
+        run_qualification_suite_after_model_switch fast
+        return $?
+        ;;
+      2)
+        run_qualification_suite_after_model_switch full
+        return $?
+        ;;
+      ''|3|[Ss][Kk][Ii][Pp])
+        out 'Qualification skipped. The selected model remains active.'
+        return 0
+        ;;
+      *)
+        error 'Invalid selection. Enter 1, 2, or 3.'
+        ;;
+    esac
+  done
 }
 
 detect_model_llama_mode() {

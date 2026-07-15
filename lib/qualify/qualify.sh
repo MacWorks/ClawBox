@@ -126,11 +126,11 @@ qualify_ensure_suite_installed() {
 }
 
 qualify_remote_runner_command() {
-  local scenario="$1" json_mode="$2"
+  local scenario="$1" json_mode="$2" profile="${3:-full}"
   local remote_dir='' command=''
 
   remote_dir="$(qualify_remote_dir)"
-  command="cd \"$remote_dir\" && ./runner.sh"
+  command="cd \"$remote_dir\" && ./runner.sh --profile $(qualify_shell_quote "$profile")"
   if [ -n "$scenario" ]; then
     command="$command --scenario $(qualify_shell_quote "$scenario")"
   fi

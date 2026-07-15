@@ -29,6 +29,8 @@ Examples:
   ./clawbox model embedding
   ./clawbox model embeddings
   ./clawbox qualify
+  ./clawbox qualify --profile fast
+  ./clawbox qualify --profile full
   ./clawbox openclaw reset
 EOF
 }

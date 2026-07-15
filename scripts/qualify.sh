@@ -10,6 +10,8 @@ source "$BASE_DIR/lib/ssh.sh"
 source "$BASE_DIR/lib/qualify/qualify.sh"
 
 QUALIFY_JSON=false
+QUALIFY_PROFILE='full'
+QUALIFY_PROFILE_EXPLICIT=false
 QUALIFY_SCENARIO=''
 QUALIFY_ACTIVE_OPERATION_PID=''
 QUALIFY_ACTIVE_OPERATION_MESSAGE=''
@@ -28,16 +30,31 @@ done
 
 usage() {
   cat <<'EOF'
-Usage: ./clawbox qualify [--scenario <scenario-id>] [--json]
+Usage: ./clawbox qualify [--profile fast|full] [--scenario <scenario-id>] [--json]
 
 Run the ClawBox model qualification suite inside the VM against the currently
 configured OpenClaw model.
 
 Options:
+  --profile <id>   Select fast or full qualification profile (default: full)
   --scenario <id>  Run one scenario by ID
   --json           Print only the aggregate JSON result to stdout
   -h, --help       Show this help
+
+Examples:
+  ./clawbox qualify
+  ./clawbox qualify --profile fast
+  ./clawbox qualify --profile full
+  ./clawbox qualify --profile fast --scenario 01-tool-reliability
 EOF
+}
+
+qualify_profile_name() {
+  case "$1" in
+    fast) printf 'Fast\n' ;;
+    full) printf 'Full\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
 }
 
 die_usage() {
@@ -54,13 +71,15 @@ die_usage() {
 qualify_json_error_document() {
   local message="$1"
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$message" "${QUALIFY_ERROR_CODE:-}" "${QUALIFY_ERROR_MODEL_ALIAS:-unknown}" "${QUALIFY_ERROR_MODEL_CONFIGURED:-unknown}" "${QUALIFY_ERROR_MODEL_RUNNING:-unknown}" <<'PY'
+    python3 - "$message" "${QUALIFY_ERROR_CODE:-}" "${QUALIFY_ERROR_MODEL_ALIAS:-unknown}" "${QUALIFY_ERROR_MODEL_CONFIGURED:-unknown}" "${QUALIFY_ERROR_MODEL_RUNNING:-unknown}" "${QUALIFY_PROFILE:-full}" "$(qualify_profile_name "${QUALIFY_PROFILE:-full}" 2>/dev/null || printf '%s' "${QUALIFY_PROFILE:-full}")" <<'PY'
 import json, sys
 message = sys.argv[1]
 error_code = sys.argv[2] or None
 model_alias = sys.argv[3] or "unknown"
 model_configured = sys.argv[4] or "unknown"
 model_running = sys.argv[5] or "unknown"
+profile_id = sys.argv[6] or "full"
+profile_name = sys.argv[7] or profile_id
 print(json.dumps({
     "schemaVersion": "1",
     "runId": None,
@@ -70,6 +89,8 @@ print(json.dumps({
     "completed": False,
     "suite": {"schemaVersion": "1", "checksum": None},
     "clawbox": {"commit": None, "dirty": None},
+    "profile": {"id": profile_id, "name": profile_name},
+    "coverage": {"profile": profile_id, "scenariosRun": 0, "reliabilityIterations": 0, "workflowCases": 0},
     "model": {"alias": model_alias, "configured": model_configured, "running": model_running},
     "overallStatus": "ERROR",
     "errorCode": error_code,
@@ -84,7 +105,7 @@ PY
   else
     local escaped
     escaped="$(printf '%s' "$message" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-    printf '{"schemaVersion":"1","runId":null,"startedAt":null,"completedAt":null,"durationSeconds":null,"completed":false,"suite":{"schemaVersion":"1","checksum":null},"clawbox":{"commit":null,"dirty":null},"model":{"alias":"unknown","configured":"unknown","running":"unknown"},"overallStatus":"ERROR","score":null,"categories":{},"warnings":[],"failures":["%s"],"scenarios":[],"artifactDirectory":null}\n' "$escaped"
+    printf '{"schemaVersion":"1","runId":null,"startedAt":null,"completedAt":null,"durationSeconds":null,"completed":false,"suite":{"schemaVersion":"1","checksum":null},"clawbox":{"commit":null,"dirty":null},"profile":{"id":"%s","name":"%s"},"coverage":{"profile":"%s","scenariosRun":0,"reliabilityIterations":0,"workflowCases":0},"model":{"alias":"unknown","configured":"unknown","running":"unknown"},"overallStatus":"ERROR","score":null,"categories":{},"warnings":[],"failures":["%s"],"scenarios":[],"artifactDirectory":null}\n' "${QUALIFY_PROFILE:-full}" "$(qualify_profile_name "${QUALIFY_PROFILE:-full}" 2>/dev/null || printf '%s' "${QUALIFY_PROFILE:-full}")" "${QUALIFY_PROFILE:-full}" "$escaped"
   fi
 }
 
@@ -122,6 +143,13 @@ _append_trap 'qualify_cleanup_active_operation; exit 143' TERM
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --profile)
+      [ "$#" -ge 2 ] || die_usage 'Missing value for --profile.'
+      [ "$QUALIFY_PROFILE_EXPLICIT" = false ] || die_usage 'Duplicate --profile option.'
+      QUALIFY_PROFILE="$2"
+      QUALIFY_PROFILE_EXPLICIT=true
+      shift 2
+      ;;
     --scenario)
       [ "$#" -ge 2 ] || die_usage 'Missing value for --scenario.'
       QUALIFY_SCENARIO="$2"
@@ -235,6 +263,14 @@ validate_scenario_id() {
   esac
 }
 
+validate_profile_id() {
+  local profile="$1"
+  case "$profile" in
+    fast|full) return 0 ;;
+    *) die_usage "Unknown qualification profile: $profile" ;;
+  esac
+}
+
 require_host_inference() {
   local url="${LLAMA_BASE_URL:-}"
   [ -n "$url" ] || { printf 'LLAMA_BASE_URL is not configured.\n' >&2; return 2; }
@@ -345,12 +381,20 @@ qualify_ensure_suite_installed_polished() {
 }
 
 qualify_scenario_description() {
-  case "$1" in
+  local scenario="$1"
+  local profile="${2:-full}"
+  case "$scenario" in
     01-tool-reliability) printf '01-tool-reliability qualification\n' ;;
     02-tool-workflows) printf '02-tool-workflows qualification\n' ;;
     03-code-repair) printf '03-code-repair qualification\n' ;;
-    '') printf 'model qualification suite\n' ;;
-    *) printf '%s qualification\n' "$1" ;;
+    '')
+      case "$profile" in
+        fast) printf 'fast model qualification\n' ;;
+        full) printf 'full model qualification\n' ;;
+        *) printf '%s model qualification\n' "$profile" ;;
+      esac
+      ;;
+    *) printf '%s qualification\n' "$scenario" ;;
   esac
 }
 
@@ -387,6 +431,20 @@ def fmt_average(value):
         return str(value)
 
 scenarios = data.get('scenarios', [])
+profile = data.get('profile') or {}
+profile_name = profile.get('name') or profile.get('id') or 'unknown'
+coverage = data.get('coverage') or {}
+line('Profile', profile_name)
+coverage_parts = []
+if coverage.get('scenariosRun') is not None:
+    coverage_parts.append(f"{coverage.get('scenariosRun')} scenarios")
+if coverage.get('reliabilityIterations') is not None:
+    coverage_parts.append(f"{coverage.get('reliabilityIterations')} reliability iterations")
+if coverage.get('workflowCases') is not None:
+    coverage_parts.append(f"{coverage.get('workflowCases')} workflow cases")
+if coverage_parts:
+    line('Coverage', f"{profile_name} profile ({', '.join(coverage_parts)})")
+print('')
 for index, scenario in enumerate(scenarios):
     sid = scenario.get('scenarioId', 'unknown')
     name = scenario.get('scenarioName', '')
@@ -511,6 +569,7 @@ main() {
   local remote_command='' remote_status=0 remote_env='' remote_output='' remote_stderr=''
   local run_label='' suite_checksum='' clawbox_commit='' clawbox_dirty='null'
 
+  validate_profile_id "$QUALIFY_PROFILE"
   validate_scenario_id "$QUALIFY_SCENARIO"
   require_env
 
@@ -560,6 +619,7 @@ Resolve the model inconsistency before running qualification."
   blank_line
   qualify_progress "Model under qualification: $model_display"
   qualify_progress "OpenClaw alias: $model_ref"
+  qualify_progress "Qualification profile: $(qualify_profile_name "$QUALIFY_PROFILE")"
   suite_checksum="$(qualify_suite_checksum)" || qualify_fail 2 'Unable to calculate the VM qualification suite checksum.'
   qualify_ensure_suite_installed_polished || qualify_fail 2 'Unable to publish or install the VM qualification suite.'
   clawbox_commit="$(qualify_clawbox_commit)"
@@ -567,9 +627,9 @@ Resolve the model inconsistency before running qualification."
 
   remote_output="$(mktemp)" || qualify_fail 2 'Unable to create qualification output file.'
   remote_stderr="$(mktemp)" || qualify_fail 2 'Unable to create qualification stderr file.'
-  remote_command="$(qualify_remote_runner_command "$QUALIFY_SCENARIO" true)"
-  remote_env="CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_ALIAS=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_CONFIGURED=$(qualify_shell_quote "$model_configured") CLAWBOX_QUALIFY_MODEL_RUNNING=$(qualify_shell_quote "$model_running") CLAWBOX_QUALIFY_MODEL_WARNING='' CLAWBOX_QUALIFY_SUITE_VERSION=$(qualify_shell_quote "$QUALIFY_SUITE_VERSION") CLAWBOX_QUALIFY_SUITE_CHECKSUM=$(qualify_shell_quote "$suite_checksum") CLAWBOX_QUALIFY_CLAWBOX_COMMIT=$(qualify_shell_quote "$clawbox_commit") CLAWBOX_QUALIFY_CLAWBOX_DIRTY=$(qualify_shell_quote "$clawbox_dirty")"
-  run_label="Running $(qualify_scenario_description "$QUALIFY_SCENARIO")"
+  remote_command="$(qualify_remote_runner_command "$QUALIFY_SCENARIO" true "$QUALIFY_PROFILE")"
+  remote_env="CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_ALIAS=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_CONFIGURED=$(qualify_shell_quote "$model_configured") CLAWBOX_QUALIFY_MODEL_RUNNING=$(qualify_shell_quote "$model_running") CLAWBOX_QUALIFY_MODEL_WARNING='' CLAWBOX_QUALIFY_PROFILE_ID=$(qualify_shell_quote "$QUALIFY_PROFILE") CLAWBOX_QUALIFY_PROFILE_NAME=$(qualify_shell_quote "$(qualify_profile_name "$QUALIFY_PROFILE")") CLAWBOX_QUALIFY_SUITE_VERSION=$(qualify_shell_quote "$QUALIFY_SUITE_VERSION") CLAWBOX_QUALIFY_SUITE_CHECKSUM=$(qualify_shell_quote "$suite_checksum") CLAWBOX_QUALIFY_CLAWBOX_COMMIT=$(qualify_shell_quote "$clawbox_commit") CLAWBOX_QUALIFY_CLAWBOX_DIRTY=$(qualify_shell_quote "$clawbox_dirty")"
+  run_label="Running $(qualify_scenario_description "$QUALIFY_SCENARIO" "$QUALIFY_PROFILE")"
   qualify_begin_execution_group
   set +e
   qualify_run_remote_operation "$run_label" "$remote_command" "$remote_output" "$remote_stderr" "$remote_env"

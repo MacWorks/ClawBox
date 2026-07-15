@@ -8,9 +8,20 @@ RUN_ID="$1"
 ARTIFACT_DIR="$2"
 SCENARIO_ID="01-tool-reliability"
 SCENARIO_NAME="Tool-calling reliability"
-TOTAL="${CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL:-10}"
+TOTAL="${CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL:-${CLAWBOX_QUALIFY_RELIABILITY_ITERATIONS:-10}}"
 START="$(qualification_now_epoch)"
 mkdir -p "$ARTIFACT_DIR"
+
+case "$TOTAL" in
+  ''|*[!0-9]*)
+    qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" "invalid reliability iteration count: $TOTAL" '' 2 '' '' 0
+    exit 0
+    ;;
+esac
+if [ "$TOTAL" -lt 1 ]; then
+  qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" "invalid reliability iteration count: $TOTAL" '' 2 '' '' 0
+  exit 0
+fi
 
 RULES='Tool-use rules:
 - Use only the tool and arguments required for the task.
@@ -100,7 +111,7 @@ warnings_json="$(cat "$warnings_file" | qualification_json_string_array)"
 failures_json="$(cat "$failures_file" | qualification_json_string_array)"
 iterations_json="$(jq -s '.' "$iterations_jsonl")"
 avg_tool_calls="$(jq -n --arg sum "$tool_sum" --arg total "$TOTAL" 'if ($total|tonumber) == 0 then 0 else (($sum|tonumber) / ($total|tonumber)) end')"
-metrics="$(jq -n --arg total "$TOTAL" --arg correct "$correct" --arg efficient "$efficient" --argjson avg "$avg_tool_calls" --argjson iterations "$iterations_json" '{totalIterations:($total|tonumber),correctIterations:($correct|tonumber),efficientIterations:($efficient|tonumber),correctnessRate:(($correct|tonumber) / ($total|tonumber)),efficientCallRate:(($efficient|tonumber) / ($total|tonumber)),averageToolCalls:$avg,toolCallsReliable:true,toolCalls:$avg,expectedMin:1,expectedMax:1,iterations:$iterations}')"
+metrics="$(jq -n --arg total "$TOTAL" --arg correct "$correct" --arg efficient "$efficient" --arg profileId "${CLAWBOX_QUALIFY_PROFILE_ID:-full}" --arg profileName "${CLAWBOX_QUALIFY_PROFILE_NAME:-Full}" --argjson avg "$avg_tool_calls" --argjson iterations "$iterations_json" '{profile:{id:$profileId,name:$profileName},totalIterations:($total|tonumber),correctIterations:($correct|tonumber),efficientIterations:($efficient|tonumber),correctnessRate:(($correct|tonumber) / ($total|tonumber)),efficientCallRate:(($efficient|tonumber) / ($total|tonumber)),averageToolCalls:$avg,toolCallsReliable:true,toolCalls:$avg,expectedMin:1,expectedMax:1,iterations:$iterations}')"
 
 if [ "$scenario_status" = ERROR ]; then
   assertions="$(qualification_assertions_json evidence ERROR "${scenario_error:-infrastructure evidence error}" tool_correctness)"

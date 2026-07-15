@@ -166,17 +166,24 @@ exit 99
 '
   output="$(PATH="$MOCK_BIN_DIR:$PATH" "$ROOT_DIR/clawbox" qualify --help 2>&1)"
   assert_contains 'qualify help shows usage' "$output" 'Usage: ./clawbox qualify'
+  assert_contains 'qualify help shows profile option' "$output" '--profile fast|full'
   assert_not_contains 'qualify help does not contact ssh' "$output" 'SSH_UNEXPECTED'
 }
 
 test_qualify_unknown_options_and_scenarios_fail_clearly() {
-  local option_output scenario_output status=0
+  local option_output scenario_output profile_output duplicate_output status=0
   set +e; option_output="$(bash "$ROOT_DIR/scripts/qualify.sh" --bogus 2>&1)"; status=$?; set -e
   assert_equals 'unknown qualify option exits infrastructure error' "$status" '2'
   assert_contains 'unknown qualify option fails clearly' "$option_output" 'Unknown qualify option: --bogus'
   set +e; scenario_output="$(bash "$ROOT_DIR/scripts/qualify.sh" --scenario nope 2>&1)"; status=$?; set -e
   assert_equals 'unknown qualify scenario exits infrastructure error' "$status" '2'
   assert_contains 'unknown qualify scenario fails clearly' "$scenario_output" 'Unknown qualification scenario: nope'
+  set +e; profile_output="$(bash "$ROOT_DIR/scripts/qualify.sh" --profile turbo 2>&1)"; status=$?; set -e
+  assert_equals 'unknown qualify profile exits infrastructure error' "$status" '2'
+  assert_contains 'unknown qualify profile fails clearly' "$profile_output" 'Unknown qualification profile: turbo'
+  set +e; duplicate_output="$(bash "$ROOT_DIR/scripts/qualify.sh" --profile fast --profile full 2>&1)"; status=$?; set -e
+  assert_equals 'duplicate qualify profile exits infrastructure error' "$status" '2'
+  assert_contains 'duplicate qualify profile fails clearly' "$duplicate_output" 'Duplicate --profile option.'
 }
 
 test_qualify_runner_errors_when_openclaw_missing() {
@@ -265,6 +272,12 @@ assert data['suite']['schemaVersion']=='1'
 assert data['suite']['checksum']=='suite-checksum'
 assert data['clawbox']['commit']=='abc123'
 assert data['clawbox']['dirty'] is False
+assert data['profile']['id']=='full'
+assert data['profile']['name']=='Full'
+assert data['coverage']['profile']=='full'
+assert data['coverage']['scenariosRun']==3
+assert data['coverage']['reliabilityIterations']==2
+assert data['coverage']['workflowCases']==5
 assert data['model']['alias']=='clawbox/local'
 assert data['model']['configured']=='Configured.gguf'
 assert data['model']['running']=='Running.gguf'
@@ -276,6 +289,98 @@ PY
   pass 'runner default json is valid and includes real scenario results'
   assert_contains 'fake openclaw was invoked through agent command' "$(cat "$CLAWBOX_FAKE_OPENCLAW_LOG")" 'agent --session-id'
   assert_contains 'fake openclaw received json flag' "$(cat "$CLAWBOX_FAKE_OPENCLAW_LOG")" '--json'
+}
+
+test_qualify_profiles_select_expected_coverage() {
+  local fast_output full_output fast_workflow full_workflow fast_repair scenario_default status=0
+  install_fake_openclaw
+  set +e; fast_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-reliability' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'fast reliability exits success' "$status" '0'
+  python3 - "$fast_output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['profile']['id']=='fast'
+assert data['profile']['name']=='Fast'
+assert data['coverage']['reliabilityIterations']==3
+assert data['coverage']['workflowCases']==0
+assert data['scenarios'][0]['metrics']['totalIterations']==3
+assert data['scenarios'][0]['metrics']['profile']['id']=='fast'
+PY
+  pass 'fast profile reliability uses three iterations'
+
+  install_fake_openclaw
+  set +e; full_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='full-reliability' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile full --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'full reliability exits success' "$status" '0'
+  python3 - "$full_output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['profile']['id']=='full'
+assert data['coverage']['reliabilityIterations']==10
+assert data['scenarios'][0]['metrics']['totalIterations']==10
+PY
+  pass 'full profile reliability uses ten iterations'
+
+  install_fake_openclaw
+  set +e; fast_workflow="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-workflow' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 02-tool-workflows --json)"; status=$?; set -e
+  assert_equals 'fast workflow exits success' "$status" '0'
+  python3 - "$fast_workflow" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+cases=[case['case'] for case in data['scenarios'][0]['metrics']['cases']]
+assert cases == ['exact-output', 'grounded-read', 'absence-check']
+assert data['coverage']['workflowCases']==3
+assert data['failures']==[]
+PY
+  pass 'fast profile runs only reduced workflow case set without failures'
+  assert_not_contains 'fast workflow omits two-step case' "$fast_workflow" 'two-step'
+  assert_not_contains 'fast workflow omits transform case' "$fast_workflow" 'transform'
+
+  install_fake_openclaw
+  set +e; full_workflow="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='full-workflow' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile full --scenario 02-tool-workflows --json)"; status=$?; set -e
+  assert_equals 'full workflow exits success' "$status" '0'
+  python3 - "$full_workflow" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+cases=[case['case'] for case in data['scenarios'][0]['metrics']['cases']]
+assert cases == ['exact-output', 'grounded-read', 'absence-check', 'two-step', 'transform']
+assert data['coverage']['workflowCases']==5
+PY
+  pass 'full profile runs all workflow cases'
+
+  install_fake_openclaw
+  set +e; fast_repair="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-repair' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 03-code-repair --json)"; status=$?; set -e
+  assert_equals 'fast code repair still runs full code repair scenario' "$status" '0'
+  assert_contains 'fast code repair includes code repair scenario' "$fast_repair" '03-code-repair'
+
+  install_fake_openclaw
+  set +e; scenario_default="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='scenario-default-full' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'scenario without profile exits success' "$status" '0'
+  python3 - "$scenario_default" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['profile']['id']=='full'
+assert data['coverage']['reliabilityIterations']==10
+PY
+  pass 'scenario without explicit profile uses full parameters'
+}
+
+test_qualify_fast_profile_aggregate_includes_all_scenarios() {
+  local output status=0
+  install_fake_openclaw
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-suite' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --json)"; status=$?; set -e
+  assert_equals 'fast aggregate exits success' "$status" '0'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+ids=[scenario['scenarioId'] for scenario in data['scenarios']]
+assert ids == ['01-tool-reliability', '02-tool-workflows', '03-code-repair']
+assert data['profile']['id']=='fast'
+assert data['coverage']['scenariosRun']==3
+assert data['coverage']['reliabilityIterations']==3
+assert data['coverage']['workflowCases']==3
+assert all(s['status'] != 'SKIPPED' for s in data['scenarios'])
+PY
+  pass 'fast aggregate includes all three scenarios with reduced coverage'
 }
 
 test_qualify_runner_records_null_git_provenance_outside_checkout() {
@@ -367,12 +472,14 @@ if [[ "$command" == *"tar -C"* ]]; then
 fi
 if [[ "$command" == *"runner.sh"* ]]; then
   printf "RUNNER\n" >> "$CLAWBOX_FAKE_SSH_LOG"
+  [[ "$command" == *"./runner.sh --profile full --scenario 01-tool-reliability --json"* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_MODEL_ALIAS=clawbox/local"* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_MODEL_CONFIGURED=Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_MODEL_RUNNING=Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_PROFILE_ID=full"* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_SUITE_CHECKSUM="* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_CLAWBOX_COMMIT="* ]]
-  printf "{\"schemaVersion\":\"1\",\"runId\":\"self-heal\",\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"PASS\",\"score\":100,\"categories\":{},\"warnings\":[],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"status\":\"PASS\"}],\"artifactDirectory\":\"runs/self-heal\"}\n"
+  printf "{\"schemaVersion\":\"1\",\"runId\":\"self-heal\",\"profile\":{\"id\":\"full\",\"name\":\"Full\"},\"coverage\":{\"profile\":\"full\",\"scenariosRun\":1,\"reliabilityIterations\":10,\"workflowCases\":0},\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"PASS\",\"score\":100,\"categories\":{},\"warnings\":[],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"status\":\"PASS\"}],\"artifactDirectory\":\"runs/self-heal\"}\n"
   exit 0
 fi
 if [[ "$command" == *"zsh -l"* ]]; then
@@ -410,12 +517,14 @@ assert data["overallStatus"] == "PASS"
 assert data["model"]["alias"] == "clawbox/local"
 assert data["model"]["configured"] == "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 assert data["model"]["running"] == "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+assert data["profile"]["id"] == "full"
 assert data["scenarios"][0]["scenarioId"] == "01-tool-reliability"
 PY
   pass 'qualify self-heal stdout remains JSON'
   assert_contains 'qualify self-heal publishes missing suite' "$(cat "$log_file")" 'PUBLISH'
   assert_contains 'qualify self-heal installs missing suite' "$(cat "$log_file")" 'INSTALL'
   assert_contains 'qualify self-heal executes requested scenario' "$(cat "$log_file")" 'RUNNER'
+  assert_contains 'qualify self-heal passes default full profile to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_PROFILE_ID=full'
   assert_contains 'qualify self-heal passes suite checksum to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_SUITE_CHECKSUM='
   assert_contains 'qualify self-heal passes ClawBox commit to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_CLAWBOX_COMMIT='
   assert_contains 'qualify self-heal progress stays on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Publishing qualification suite to VM'
@@ -459,7 +568,7 @@ if [ "$command" = "echo ok" ]; then exit 0; fi
 if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
 if [[ "$command" == rm\ -f* ]]; then exit 0; fi
 if [[ "$command" == *"runner.sh"* ]]; then
-  printf "{\"schemaVersion\":\"1\",\"runId\":\"human-run\",\"startedAt\":\"2026-07-15T13:03:52Z\",\"completedAt\":\"2026-07-15T13:24:17Z\",\"durationSeconds\":1225,\"completed\":true,\"suite\":{\"schemaVersion\":\"1\",\"checksum\":\"suite-checksum\"},\"clawbox\":{\"commit\":\"abc123\",\"dirty\":false},\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"WARNING\",\"score\":97,\"categories\":{},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"scenarioName\":\"Tool-calling reliability\",\"status\":\"WARNING\",\"score\":97,\"durationSeconds\":714,\"metrics\":{\"totalIterations\":10,\"correctIterations\":10,\"efficientIterations\":9,\"averageToolCalls\":1.1},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[]}],\"artifactDirectory\":\"runs/human-run\"}\n"
+  printf "{\"schemaVersion\":\"1\",\"runId\":\"human-run\",\"startedAt\":\"2026-07-15T13:03:52Z\",\"completedAt\":\"2026-07-15T13:24:17Z\",\"durationSeconds\":1225,\"completed\":true,\"suite\":{\"schemaVersion\":\"1\",\"checksum\":\"suite-checksum\"},\"clawbox\":{\"commit\":\"abc123\",\"dirty\":false},\"profile\":{\"id\":\"full\",\"name\":\"Full\"},\"coverage\":{\"profile\":\"full\",\"scenariosRun\":1,\"reliabilityIterations\":10,\"workflowCases\":0},\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"WARNING\",\"score\":97,\"categories\":{},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"scenarioName\":\"Tool-calling reliability\",\"status\":\"WARNING\",\"score\":97,\"durationSeconds\":714,\"metrics\":{\"totalIterations\":10,\"correctIterations\":10,\"efficientIterations\":9,\"averageToolCalls\":1.1},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[]}],\"artifactDirectory\":\"runs/human-run\"}\n"
   exit 0
 fi
 if [[ "$command" == *"zsh -l"* ]]; then
@@ -482,15 +591,18 @@ exit 0
   assert_contains 'human output shows selected scenario running progress' "$output" 'Running 01-tool-reliability qualification... !'
   assert_contains 'human output shows compact model identity' "$output" 'Model under qualification: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
   assert_contains 'human output shows OpenClaw alias' "$output" 'OpenClaw alias: clawbox/local'
+  assert_contains 'human output shows qualification profile metadata' "$output" 'Qualification profile: Full'
   assert_contains 'human output separates checks from model metadata' "$output" $'Checking configured model matches running model... ✓\n\nModel under qualification:'
-  assert_contains 'human output separates metadata from execution group once' "$output" $'OpenClaw alias: clawbox/local\n\nRunning 01-tool-reliability qualification'
-  assert_not_contains 'human output does not over-separate metadata from execution group' "$output" $'OpenClaw alias: clawbox/local\n\n\nRunning 01-tool-reliability qualification'
+  assert_contains 'human output separates metadata from execution group once' "$output" $'Qualification profile: Full\n\nRunning 01-tool-reliability qualification'
+  assert_not_contains 'human output does not over-separate metadata from execution group' "$output" $'Qualification profile: Full\n\n\nRunning 01-tool-reliability qualification'
   assert_not_contains 'human output omits redundant configured model line' "$output" 'Configured model:'
   assert_not_contains 'human output omits redundant running model line' "$output" 'Running model:'
   assert_contains 'human report uses shared section heading' "$output" ' > Model Qualification Report'
   assert_contains 'human report has one blank line before heading' "$output" $'Running 01-tool-reliability qualification... !\n\n-----------------------------------------'
   assert_not_contains 'human report no longer prints model row' "$output" 'Model: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
   assert_contains 'human report shows scenario id' "$output" '01-tool-reliability'
+  assert_contains 'human report shows selected profile' "$output" 'Profile'
+  assert_contains 'human report shows coverage for selected profile' "$output" 'Full profile'
   assert_contains 'human report shows scenario score' "$output" 'Scenario Score'
   assert_contains 'human report shows scenario duration' "$output" 'Duration'
   assert_contains 'human report formats long duration compactly' "$output" '11m 54s'
@@ -514,7 +626,7 @@ exit 0
   status=$?
   set -e
   assert_equals 'human qualify full-suite warning exits success' "$status" '0'
-  assert_contains 'human output shows complete suite running progress' "$suite_output" 'Running model qualification suite... !'
+  assert_contains 'human output shows complete suite running progress' "$suite_output" 'Running full model qualification... !'
 }
 
 test_qualify_model_mismatch_stops_before_publish() {
@@ -725,6 +837,8 @@ run_test test_qualify_runner_errors_when_openclaw_missing
 run_test test_qualify_json_host_errors_keep_stdout_machine_readable
 run_test test_qualify_runner_dependency_preflight_errors
 run_test test_qualify_runner_default_json_runs_real_scenarios_with_fake_openclaw
+run_test test_qualify_profiles_select_expected_coverage
+run_test test_qualify_fast_profile_aggregate_includes_all_scenarios
 run_test test_qualify_runner_records_null_git_provenance_outside_checkout
 run_test test_qualify_command_self_heals_without_setup
 run_test test_qualify_human_output_is_polished

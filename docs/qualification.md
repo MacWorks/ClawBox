@@ -24,10 +24,39 @@ structured results, aggregate reporting, and automatic VM publication.
 
 ```bash
 ./clawbox qualify
+./clawbox qualify --profile fast
+./clawbox qualify --profile full
+./clawbox qualify --profile fast --scenario 01-tool-reliability
 ./clawbox qualify --scenario 01-tool-reliability
 ./clawbox qualify --json
 ./clawbox qualify --help
 ```
+
+`./clawbox qualify` with no `--profile` uses the `full` profile for backward
+compatibility. `--profile full` is the complete qualification suite:
+
+- `01-tool-reliability`: 10 iterations
+- `02-tool-workflows`: all five workflow cases (`exact-output`,
+  `grounded-read`, `absence-check`, `two-step`, and `transform`)
+- `03-code-repair`: full code-repair scenario
+
+`--profile fast` is reduced coverage intended for quicker post-switch
+validation:
+
+- `01-tool-reliability`: 3 iterations
+- `02-tool-workflows`: `exact-output`, `grounded-read`, and `absence-check`
+- `03-code-repair`: full code-repair scenario
+
+Fast keeps high-signal coverage for repeated tool use, exact-output discipline,
+grounded reading, hallucination restraint, code repair, scope preservation, and
+final test verification, but it is not a full qualification. Reports and JSON
+include the selected profile and coverage counts. Scores from Fast and Full
+should not be compared without considering the different evidence coverage.
+
+When `--scenario <id>` is supplied, ClawBox runs only that scenario using the
+selected profile’s parameters. Without `--profile`, selected scenarios use Full
+parameters. For example, `--profile fast --scenario 01-tool-reliability` runs
+three reliability iterations, while `--scenario 01-tool-reliability` runs ten.
 
 `--json` writes only the aggregate JSON document to stdout. Progress and
 diagnostics are written to stderr. The aggregate `model` field is an object with
@@ -125,8 +154,17 @@ suite checksum and version manifest, republishes stale or missing files, and
 then runs the VM-side runner.
 
 After a successful interactive `./clawbox model primary` switch, ClawBox offers
-to run the normal qualification suite against the newly running model. The
-prompt defaults to No, and declining leaves the completed model switch active.
+a Fast/Full/Skip qualification menu for the newly running model:
+
+```text
+Choose qualification:
+  1) Fast (reduced test set)
+  2) Full (complete suite)
+  3) Skip
+Selection [1-3, default 3]:
+```
+
+The default is Skip, and declining leaves the completed model switch active.
 Noninteractive model switches do not prompt. If qualification is accepted, its
 normal result and exit status are preserved; a qualification failure does not
 roll back the selected model.

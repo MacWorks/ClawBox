@@ -11,6 +11,7 @@ SCENARIO_NAME="Tool workflow correctness"
 START="$(qualification_now_epoch)"
 ROOT="$ARTIFACT_DIR/work"
 mkdir -p "$ROOT"
+WORKFLOW_CASES="${CLAWBOX_QUALIFY_WORKFLOW_CASES:-exact-output grounded-read absence-check two-step transform}"
 
 RULES='Tool-use rules:
 - Use only the tool and arguments required for the task.
@@ -27,6 +28,34 @@ rm -f "$ROOT/missing.txt" "$ROOT/input.txt" "$ROOT/output.txt" "$ROOT/numbers.tx
 warnings_file="$ARTIFACT_DIR/warnings.txt"; failures_file="$ARTIFACT_DIR/failures.txt"; cases_jsonl="$ARTIFACT_DIR/cases.jsonl"
 : > "$warnings_file"; : > "$failures_file"; : > "$cases_jsonl"
 scenario_status=PASS; scenario_error=''; pass_cases=0; efficient_cases=0; total_cases=0; tool_sum=0
+
+workflow_case_enabled() {
+  local wanted="$1" selected=''
+  for selected in $WORKFLOW_CASES; do
+    if [ "$selected" = "$wanted" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+workflow_validate_cases() {
+  local selected=''
+  [ -n "$WORKFLOW_CASES" ] || return 1
+  for selected in $WORKFLOW_CASES; do
+    case "$selected" in
+      exact-output|grounded-read|absence-check|two-step|transform) ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+if ! workflow_validate_cases; then
+  duration=$(($(qualification_now_epoch) - START))
+  qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" "invalid workflow case selection: $WORKFLOW_CASES" '' 2 '' '' "$duration"
+  exit 0
+fi
 
 run_case() {
   local name="$1" prompt="$2" expected_min="$3" expected_max="$4" expected_reply="$5" expected_file="${6:-}" expected_content="${7:-}"
@@ -56,18 +85,28 @@ run_case() {
   jq -n --arg name "$name" --arg sessionId "$session" --arg agentStatus "$final_status" --arg toolCalls "$tools" --arg expectedMin "$expected_min" --arg expectedMax "$expected_max" --arg replyCorrect "$reply_ok" --arg fileCorrect "$file_ok" --arg status "$case_status" --arg trajectory "$QUALIFICATION_TRAJECTORY" --arg transcript "$QUALIFICATION_TRANSCRIPT" --argjson warnings "$case_warnings" '{case:$name,sessionId:$sessionId,agentStatus:$agentStatus,toolCalls:($toolCalls|tonumber),expectedEfficientRange:{min:($expectedMin|tonumber),max:($expectedMax|tonumber)},replyCorrect:($replyCorrect=="true"),filesystemCorrect:($fileCorrect=="true"),status:$status,warnings:$warnings,artifacts:{trajectory:$trajectory,transcript:$transcript}}' >> "$cases_jsonl"
 }
 
+if workflow_case_enabled exact-output; then
 run_case exact-output "Use exec exactly once to run:
 printf 'RED\nGREEN\nBLUE\n'
 
 Reply with exactly the complete command output, preserving all lines and adding nothing." 1 1 $'RED\nGREEN\nBLUE'
+fi
+
+if workflow_case_enabled grounded-read; then
 run_case grounded-read "Use exec exactly once to read:
 $ROOT/source.txt
 
 Reply with exactly the verification code and nothing else." 1 1 'NCC1701'
+fi
+
+if workflow_case_enabled absence-check; then
 run_case absence-check "Use exec exactly once to determine whether this file exists:
 $ROOT/missing.txt
 
 Do not create it. Reply with exactly ABSENT when it does not exist." 1 1 'ABSENT'
+fi
+
+if workflow_case_enabled two-step; then
 run_case two-step "Use exec exactly twice.
 
 First create $ROOT/input.txt containing alpha, beta, and gamma on separate lines.
@@ -75,6 +114,9 @@ First create $ROOT/input.txt containing alpha, beta, and gamma on separate lines
 Second extract the beta line, write it to $ROOT/output.txt, and print it.
 
 Reply with exactly beta." 2 2 'beta' "$ROOT/output.txt" 'beta'
+fi
+
+if workflow_case_enabled transform; then
 run_case transform "Use exec exactly twice.
 
 First create $ROOT/numbers.txt containing 9, 3, and 7 on separate lines.
@@ -82,11 +124,12 @@ First create $ROOT/numbers.txt containing 9, 3, and 7 on separate lines.
 Second sort the numbers numerically, write the result to $ROOT/sorted.txt, and print the result.
 
 Reply with exactly the printed lines and no Markdown formatting." 2 2 $'3\n7\n9' "$ROOT/sorted.txt" $'3\n7\n9'
+fi
 
 duration=$(($(qualification_now_epoch) - START))
 warnings_json="$(cat "$warnings_file" | qualification_json_string_array)"; failures_json="$(cat "$failures_file" | qualification_json_string_array)"; cases_json="$(jq -s '.' "$cases_jsonl")"
 avg_tool_calls="$(jq -n --arg sum "$tool_sum" --arg total "$total_cases" 'if ($total|tonumber) == 0 then 0 else (($sum|tonumber) / ($total|tonumber)) end')"
-metrics="$(jq -n --arg total "$total_cases" --arg pass "$pass_cases" --arg efficient "$efficient_cases" --argjson avg "$avg_tool_calls" --argjson cases "$cases_json" '{totalCases:($total|tonumber),passingCases:($pass|tonumber),efficientCases:($efficient|tonumber),averageToolCalls:$avg,toolCallsReliable:true,toolCalls:$avg,cases:$cases}')"
+metrics="$(jq -n --arg total "$total_cases" --arg pass "$pass_cases" --arg efficient "$efficient_cases" --arg profileId "${CLAWBOX_QUALIFY_PROFILE_ID:-full}" --arg profileName "${CLAWBOX_QUALIFY_PROFILE_NAME:-Full}" --arg selectedCases "$WORKFLOW_CASES" --argjson avg "$avg_tool_calls" --argjson cases "$cases_json" '{profile:{id:$profileId,name:$profileName},selectedCases:($selectedCases | split(" ") | map(select(. != ""))),totalCases:($total|tonumber),passingCases:($pass|tonumber),efficientCases:($efficient|tonumber),averageToolCalls:$avg,toolCallsReliable:true,toolCalls:$avg,cases:$cases}')"
 if [ "$scenario_status" = ERROR ]; then assertions="$(qualification_assertions_json evidence ERROR "${scenario_error:-evidence error}" workflow_correctness)"; qualification_emit_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" ERROR unrated "$duration" "$ARTIFACT_DIR" "$assertions" "$warnings_json" "$failures_json" '' '' '' '' "$metrics"; exit 0; fi
 score="$(jq -n --arg pass "$pass_cases" --arg efficient "$efficient_cases" --arg total "$total_cases" '(((($pass|tonumber) / ($total|tonumber)) * 90) + ((($efficient|tonumber) / ($total|tonumber)) * 10)) | round')"
 assertions="$(qualification_assertions_json workflow_cases "$([ "$pass_cases" -eq "$total_cases" ] && echo PASS || echo FAIL)" "$pass_cases/$total_cases workflow cases completed correctly" workflow_correctness grounding "$([ "$pass_cases" -eq "$total_cases" ] && echo PASS || echo FAIL)" 'reply and filesystem evidence were checked against expected values' grounding efficiency "$([ "$efficient_cases" -eq "$total_cases" ] && echo PASS || echo WARNING)" "$efficient_cases/$total_cases cases used efficient tool-call ranges" efficiency)"

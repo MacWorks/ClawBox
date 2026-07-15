@@ -171,19 +171,24 @@ updates `MODEL_PATH`, restarts the managed host `llama-server`, and leaves VM
 provisioning and the OpenClaw config file intact. It may verify and correct
 only ClawBox-managed OpenClaw provider keys such as `clawbox/local` with
 targeted `openclaw config set` calls. After a successful interactive primary
-model switch, ClawBox offers to run the qualification suite against the new
-model. The prompt defaults to No, may take several minutes if accepted, and
-declining does not affect the completed switch.
+model switch, ClawBox offers a Fast/Full/Skip qualification menu. The default
+is Skip, and declining does not affect the completed switch. Fast is a reduced
+post-switch validation profile; Full is the complete qualification suite.
 
 To run the VM-side model qualification framework against the currently
 configured host model behind the OpenClaw alias, use:
 
 ```bash
 ./clawbox qualify
+./clawbox qualify --profile fast
+./clawbox qualify --profile full
+./clawbox qualify --profile fast --scenario 01-tool-reliability
 ```
 
-The report shows both the actual configured/running GGUF model and the stable
-OpenClaw alias such as `clawbox/local`. Qualification artifacts are stored under
+Without `--profile`, qualification uses the Full profile. The report identifies
+the selected profile and coverage so Fast results are not confused with Full
+results. It also shows both the actual configured/running GGUF model and the
+stable OpenClaw alias such as `clawbox/local`. Qualification artifacts are stored under
 `~/.openclaw/workspace/.clawbox/qualification/runs/` inside the VM. The command
 does not switch models, replace OpenClaw config, rerun onboarding, or install
 inference software in the VM. See `docs/qualification.md`.
