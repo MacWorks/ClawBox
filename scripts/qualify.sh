@@ -17,6 +17,7 @@ QUALIFY_ERROR_CODE=''
 QUALIFY_ERROR_MODEL_ALIAS='unknown'
 QUALIFY_ERROR_MODEL_CONFIGURED='unknown'
 QUALIFY_ERROR_MODEL_RUNNING='unknown'
+QUALIFY_EXECUTION_GROUP_STARTED=false
 
 for arg in "$@"; do
   if [ "$arg" = '--json' ]; then
@@ -63,6 +64,12 @@ model_running = sys.argv[5] or "unknown"
 print(json.dumps({
     "schemaVersion": "1",
     "runId": None,
+    "startedAt": None,
+    "completedAt": None,
+    "durationSeconds": None,
+    "completed": False,
+    "suite": {"schemaVersion": "1", "checksum": None},
+    "clawbox": {"commit": None, "dirty": None},
     "model": {"alias": model_alias, "configured": model_configured, "running": model_running},
     "overallStatus": "ERROR",
     "errorCode": error_code,
@@ -77,7 +84,7 @@ PY
   else
     local escaped
     escaped="$(printf '%s' "$message" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-    printf '{"schemaVersion":"1","runId":null,"model":{"alias":"unknown","configured":"unknown","running":"unknown"},"overallStatus":"ERROR","score":null,"categories":{},"warnings":[],"failures":["%s"],"scenarios":[],"artifactDirectory":null}\n' "$escaped"
+    printf '{"schemaVersion":"1","runId":null,"startedAt":null,"completedAt":null,"durationSeconds":null,"completed":false,"suite":{"schemaVersion":"1","checksum":null},"clawbox":{"commit":null,"dirty":null},"model":{"alias":"unknown","configured":"unknown","running":"unknown"},"overallStatus":"ERROR","score":null,"categories":{},"warnings":[],"failures":["%s"],"scenarios":[],"artifactDirectory":null}\n' "$escaped"
   fi
 }
 
@@ -150,6 +157,16 @@ qualify_status_spinner_message() {
   fi
 }
 
+qualify_begin_execution_group() {
+  if [ "$QUALIFY_JSON" = true ]; then
+    return 0
+  fi
+  if [ "${QUALIFY_EXECUTION_GROUP_STARTED:-false}" != true ]; then
+    blank_line
+    QUALIFY_EXECUTION_GROUP_STARTED=true
+  fi
+}
+
 qualify_run_operation() {
   local label="$1"
   shift
@@ -175,7 +192,7 @@ qualify_run_operation() {
   fi
 
   spinner_message="$(qualify_status_spinner_message "$label")"
-  status_begin "$spinner_message"
+  status_begin_compact "$spinner_message"
   set +e
   "$@" >/dev/null 2>"$stderr_file" &
   pid=$!
@@ -297,6 +314,23 @@ validate_model_consistency() {
   fi
 }
 
+qualify_clawbox_commit() {
+  git -C "$BASE_DIR" rev-parse HEAD 2>/dev/null || true
+}
+
+qualify_clawbox_dirty() {
+  if ! git -C "$BASE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf 'null\n'
+    return 0
+  fi
+  if git -C "$BASE_DIR" diff --quiet --ignore-submodules -- 2>/dev/null \
+    && git -C "$BASE_DIR" diff --cached --quiet --ignore-submodules -- 2>/dev/null; then
+    printf 'false\n'
+  else
+    printf 'true\n'
+  fi
+}
+
 qualify_ensure_suite_installed_polished() {
   local checksum=''
 
@@ -305,6 +339,7 @@ qualify_ensure_suite_installed_polished() {
     return 0
   fi
 
+  qualify_begin_execution_group
   qualify_run_operation 'Publishing qualification suite to VM' qualify_publish_suite_to_vm_runtime || return 1
   qualify_run_operation 'Installing qualification suite in OpenClaw workspace' qualify_install_suite_on_vm "$checksum"
 }
@@ -386,6 +421,8 @@ if scenarios:
 score = data.get('score')
 line('Overall Score', 'unrated' if score is None else f'{score}/100')
 line('Overall Result', data.get('overallStatus', 'unknown'))
+if data.get('completed') is False:
+    line('Completed', 'false')
 warnings = data.get('warnings') or []
 failures = data.get('failures') or []
 if score is not None and score < 100:
@@ -406,8 +443,11 @@ if failures:
     print('Failures:')
     for failure in dict.fromkeys(failures):
         print(f'- {failure}')
-print('Artifacts:')
-print(data.get('artifactDirectory') or 'unavailable')
+line('Run ID', data.get('runId') or 'unknown')
+aggregate_duration = duration(data.get('durationSeconds'))
+if aggregate_duration:
+    line('Duration', aggregate_duration)
+line('Artifacts', data.get('artifactDirectory') or 'unavailable')
 PY
 }
 
@@ -439,7 +479,7 @@ qualify_run_remote_operation() {
   fi
 
   spinner_message="$(qualify_status_spinner_message "$label")"
-  status_begin "$spinner_message"
+  status_begin_compact "$spinner_message"
   set +e
   qualify_run_remote_runner "$remote_command" "$output_file" "$stderr_file" "$remote_env" &
   pid=$!
@@ -469,7 +509,7 @@ qualify_run_remote_operation() {
 main() {
   local model_ref='' model_configured='' model_running='' model_display=''
   local remote_command='' remote_status=0 remote_env='' remote_output='' remote_stderr=''
-  local run_label=''
+  local run_label='' suite_checksum='' clawbox_commit='' clawbox_dirty='null'
 
   validate_scenario_id "$QUALIFY_SCENARIO"
   require_env
@@ -520,13 +560,17 @@ Resolve the model inconsistency before running qualification."
   blank_line
   qualify_progress "Model under qualification: $model_display"
   qualify_progress "OpenClaw alias: $model_ref"
+  suite_checksum="$(qualify_suite_checksum)" || qualify_fail 2 'Unable to calculate the VM qualification suite checksum.'
   qualify_ensure_suite_installed_polished || qualify_fail 2 'Unable to publish or install the VM qualification suite.'
+  clawbox_commit="$(qualify_clawbox_commit)"
+  clawbox_dirty="$(qualify_clawbox_dirty)"
 
   remote_output="$(mktemp)" || qualify_fail 2 'Unable to create qualification output file.'
   remote_stderr="$(mktemp)" || qualify_fail 2 'Unable to create qualification stderr file.'
   remote_command="$(qualify_remote_runner_command "$QUALIFY_SCENARIO" true)"
-  remote_env="CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_ALIAS=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_CONFIGURED=$(qualify_shell_quote "$model_configured") CLAWBOX_QUALIFY_MODEL_RUNNING=$(qualify_shell_quote "$model_running") CLAWBOX_QUALIFY_MODEL_WARNING=''"
+  remote_env="CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_ALIAS=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_CONFIGURED=$(qualify_shell_quote "$model_configured") CLAWBOX_QUALIFY_MODEL_RUNNING=$(qualify_shell_quote "$model_running") CLAWBOX_QUALIFY_MODEL_WARNING='' CLAWBOX_QUALIFY_SUITE_VERSION=$(qualify_shell_quote "$QUALIFY_SUITE_VERSION") CLAWBOX_QUALIFY_SUITE_CHECKSUM=$(qualify_shell_quote "$suite_checksum") CLAWBOX_QUALIFY_CLAWBOX_COMMIT=$(qualify_shell_quote "$clawbox_commit") CLAWBOX_QUALIFY_CLAWBOX_DIRTY=$(qualify_shell_quote "$clawbox_dirty")"
   run_label="Running $(qualify_scenario_description "$QUALIFY_SCENARIO")"
+  qualify_begin_execution_group
   set +e
   qualify_run_remote_operation "$run_label" "$remote_command" "$remote_output" "$remote_stderr" "$remote_env"
   remote_status=$?

@@ -237,18 +237,34 @@ EOF_OPENCLAW
   set +e; output="$(PATH="$bin" CLAWBOX_QUALIFY_RUN_ID='missing-git' bash "$ROOT_DIR/vm/qualification/runner.sh" --json 2>&1)"; status=$?; set -e
   assert_equals 'missing git exits infrastructure error' "$status" '2'
   assert_contains 'missing git reports dependency error' "$output" 'Missing required dependency: git'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['completed'] is False
+assert data['completedAt'] is None
+assert data['durationSeconds'] is None
+PY
+  pass 'missing git preflight error does not claim completion'
 }
 
 test_qualify_runner_default_json_runs_real_scenarios_with_fake_openclaw() {
   local output status=0
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='test-run' CLAWBOX_QUALIFY_MODEL_ALIAS='clawbox/local' CLAWBOX_QUALIFY_MODEL_CONFIGURED='Configured.gguf' CLAWBOX_QUALIFY_MODEL_RUNNING='Running.gguf' CLAWBOX_QUALIFY_MODEL_WARNING='configured and running differ' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='test-run' CLAWBOX_QUALIFY_STARTED_AT='2026-07-15T13:03:52Z' CLAWBOX_QUALIFY_START_EPOCH=100 CLAWBOX_QUALIFY_COMPLETED_AT='2026-07-15T13:24:17Z' CLAWBOX_QUALIFY_COMPLETED_EPOCH=1325 CLAWBOX_QUALIFY_SUITE_CHECKSUM='suite-checksum' CLAWBOX_QUALIFY_CLAWBOX_COMMIT='abc123' CLAWBOX_QUALIFY_CLAWBOX_DIRTY=false CLAWBOX_QUALIFY_MODEL_ALIAS='clawbox/local' CLAWBOX_QUALIFY_MODEL_CONFIGURED='Configured.gguf' CLAWBOX_QUALIFY_MODEL_RUNNING='Running.gguf' CLAWBOX_QUALIFY_MODEL_WARNING='configured and running differ' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --json)"; status=$?; set -e
   assert_equals 'runner exits success when fake model passes all scenarios' "$status" '0'
   python3 - "$output" <<'PY'
 import json, sys
 data=json.loads(sys.argv[1])
 assert data['schemaVersion']=='1'
 assert data['runId']=='test-run'
+assert data['startedAt']=='2026-07-15T13:03:52Z'
+assert data['completedAt']=='2026-07-15T13:24:17Z'
+assert data['durationSeconds']==1225
+assert data['completed'] is True
+assert data['suite']['schemaVersion']=='1'
+assert data['suite']['checksum']=='suite-checksum'
+assert data['clawbox']['commit']=='abc123'
+assert data['clawbox']['dirty'] is False
 assert data['model']['alias']=='clawbox/local'
 assert data['model']['configured']=='Configured.gguf'
 assert data['model']['running']=='Running.gguf'
@@ -260,6 +276,23 @@ PY
   pass 'runner default json is valid and includes real scenario results'
   assert_contains 'fake openclaw was invoked through agent command' "$(cat "$CLAWBOX_FAKE_OPENCLAW_LOG")" 'agent --session-id'
   assert_contains 'fake openclaw received json flag' "$(cat "$CLAWBOX_FAKE_OPENCLAW_LOG")" '--json'
+}
+
+test_qualify_runner_records_null_git_provenance_outside_checkout() {
+  local suite_copy="$TEMP_DIR/suite-copy" output status=0
+  install_fake_openclaw
+  mkdir -p "$suite_copy"
+  cp -R "$ROOT_DIR/vm/qualification"/. "$suite_copy"/
+  set +e; output="$(cd "$suite_copy" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='outside-git' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 ./runner.sh --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'qualification runner works outside a Git checkout' "$status" '0'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['clawbox']['commit'] is None
+assert data['clawbox']['dirty'] is None
+assert data['suite']['checksum']
+PY
+  pass 'outside checkout records null git provenance and suite checksum'
 }
 
 test_qualify_command_self_heals_without_setup() {
@@ -337,6 +370,8 @@ if [[ "$command" == *"runner.sh"* ]]; then
   [[ "$command" == *"CLAWBOX_QUALIFY_MODEL_ALIAS=clawbox/local"* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_MODEL_CONFIGURED=Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_MODEL_RUNNING=Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_SUITE_CHECKSUM="* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_CLAWBOX_COMMIT="* ]]
   printf "{\"schemaVersion\":\"1\",\"runId\":\"self-heal\",\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"PASS\",\"score\":100,\"categories\":{},\"warnings\":[],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"status\":\"PASS\"}],\"artifactDirectory\":\"runs/self-heal\"}\n"
   exit 0
 fi
@@ -381,6 +416,8 @@ PY
   assert_contains 'qualify self-heal publishes missing suite' "$(cat "$log_file")" 'PUBLISH'
   assert_contains 'qualify self-heal installs missing suite' "$(cat "$log_file")" 'INSTALL'
   assert_contains 'qualify self-heal executes requested scenario' "$(cat "$log_file")" 'RUNNER'
+  assert_contains 'qualify self-heal passes suite checksum to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_SUITE_CHECKSUM='
+  assert_contains 'qualify self-heal passes ClawBox commit to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_CLAWBOX_COMMIT='
   assert_contains 'qualify self-heal progress stays on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Publishing qualification suite to VM'
   assert_contains 'qualify reports actual running model separately from alias' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Model under qualification: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
   assert_contains 'qualify reports OpenClaw alias separately' "$(cat "$TEMP_DIR/self-heal.stderr")" 'OpenClaw alias: clawbox/local'
@@ -422,7 +459,7 @@ if [ "$command" = "echo ok" ]; then exit 0; fi
 if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
 if [[ "$command" == rm\ -f* ]]; then exit 0; fi
 if [[ "$command" == *"runner.sh"* ]]; then
-  printf "{\"schemaVersion\":\"1\",\"runId\":\"human-run\",\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"WARNING\",\"score\":97,\"categories\":{},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"scenarioName\":\"Tool-calling reliability\",\"status\":\"WARNING\",\"score\":97,\"durationSeconds\":714,\"metrics\":{\"totalIterations\":10,\"correctIterations\":10,\"efficientIterations\":9,\"averageToolCalls\":1.1},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[]}],\"artifactDirectory\":\"runs/human-run\"}\n"
+  printf "{\"schemaVersion\":\"1\",\"runId\":\"human-run\",\"startedAt\":\"2026-07-15T13:03:52Z\",\"completedAt\":\"2026-07-15T13:24:17Z\",\"durationSeconds\":1225,\"completed\":true,\"suite\":{\"schemaVersion\":\"1\",\"checksum\":\"suite-checksum\"},\"clawbox\":{\"commit\":\"abc123\",\"dirty\":false},\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"WARNING\",\"score\":97,\"categories\":{},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"scenarioName\":\"Tool-calling reliability\",\"status\":\"WARNING\",\"score\":97,\"durationSeconds\":714,\"metrics\":{\"totalIterations\":10,\"correctIterations\":10,\"efficientIterations\":9,\"averageToolCalls\":1.1},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[]}],\"artifactDirectory\":\"runs/human-run\"}\n"
   exit 0
 fi
 if [[ "$command" == *"zsh -l"* ]]; then
@@ -441,10 +478,13 @@ exit 0
   assert_equals 'human qualify warning exits success' "$status" '0'
   assert_contains 'human output checks host endpoint with final marker' "$output" 'Checking host inference endpoint... ✓'
   assert_contains 'human output checks configured/running model match' "$output" 'Checking configured model matches running model... ✓'
+  assert_not_contains 'compact progress has no blank line between completed operations' "$output" $'Checking host inference endpoint... ✓\n\nChecking VM SSH access'
   assert_contains 'human output shows selected scenario running progress' "$output" 'Running 01-tool-reliability qualification... !'
   assert_contains 'human output shows compact model identity' "$output" 'Model under qualification: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
   assert_contains 'human output shows OpenClaw alias' "$output" 'OpenClaw alias: clawbox/local'
   assert_contains 'human output separates checks from model metadata' "$output" $'Checking configured model matches running model... ✓\n\nModel under qualification:'
+  assert_contains 'human output separates metadata from execution group once' "$output" $'OpenClaw alias: clawbox/local\n\nRunning 01-tool-reliability qualification'
+  assert_not_contains 'human output does not over-separate metadata from execution group' "$output" $'OpenClaw alias: clawbox/local\n\n\nRunning 01-tool-reliability qualification'
   assert_not_contains 'human output omits redundant configured model line' "$output" 'Configured model:'
   assert_not_contains 'human output omits redundant running model line' "$output" 'Running model:'
   assert_contains 'human report uses shared section heading' "$output" ' > Model Qualification Report'
@@ -466,6 +506,8 @@ exit 0
     fail 'human report shows each warning once'
   fi
   assert_contains 'human report shows overall warning result' "$output" 'Overall Result'
+  assert_contains 'human report identifies run id' "$output" 'Run ID'
+  assert_contains 'human report labels artifacts compactly' "$output" 'Artifacts'
 
   set +e
   suite_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" bash "$ROOT_DIR/scripts/qualify.sh" 2>&1)"
@@ -618,6 +660,30 @@ test_run_directories_are_isolated() {
   assert_contains 'isolated run records its own artifact directory' "$output" 'isolation-run'
 }
 
+test_runner_distinct_runs_preserve_previous_artifacts() {
+  local first_output second_output status=0 first_dir='' second_dir='' sentinel=''
+  install_fake_openclaw
+  set +e; first_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='distinct-run-one' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'first distinct run exits success' "$status" '0'
+  first_dir="$(python3 - "$first_output" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])['artifactDirectory'])
+PY
+)"
+  sentinel="$first_dir/sentinel.txt"
+  printf 'keep\n' > "$sentinel"
+  install_fake_openclaw
+  set +e; second_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='distinct-run-two' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  assert_equals 'second distinct run exits success' "$status" '0'
+  second_dir="$(python3 - "$second_output" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])['artifactDirectory'])
+PY
+)"
+  if [ "$first_dir" != "$second_dir" ]; then pass 'two qualification runs use distinct artifact directories'; else fail 'two qualification runs use distinct artifact directories'; fi
+  if [ -f "$sentinel" ]; then pass 'second run does not delete prior run artifacts'; else fail 'second run does not delete prior run artifacts'; fi
+}
+
 test_qualify_suite_manifest_drives_self_healing() {
   local output
   output="$({ BASE_DIR="$ROOT_DIR"; VM_HOST='tester@vm'; VM_RUNTIME_PATH='/Users/tester/ClawBox'; source "$ROOT_DIR/lib/output.sh"; source "$ROOT_DIR/lib/qualify/qualify.sh"; calls=''; require_vm_host(){ :; }; qualify_suite_checksum(){ printf 'checksum\n'; }; qualify_remote_manifest_matches(){ return 1; }; qualify_publish_suite_to_vm_runtime(){ calls="${calls}publish "; }; qualify_install_suite_on_vm(){ calls="${calls}install:$1 "; }; qualify_ensure_suite_installed; printf 'CALLS:%s\n' "$calls"; } 2>&1)"
@@ -659,6 +725,7 @@ run_test test_qualify_runner_errors_when_openclaw_missing
 run_test test_qualify_json_host_errors_keep_stdout_machine_readable
 run_test test_qualify_runner_dependency_preflight_errors
 run_test test_qualify_runner_default_json_runs_real_scenarios_with_fake_openclaw
+run_test test_qualify_runner_records_null_git_provenance_outside_checkout
 run_test test_qualify_command_self_heals_without_setup
 run_test test_qualify_human_output_is_polished
 run_test test_qualify_model_mismatch_stops_before_publish
@@ -667,6 +734,7 @@ run_test test_tool_reliability_fabricated_success_fails
 run_test test_evidence_failures_are_errors
 run_test test_workflow_cases_and_code_repair_objective_behavior
 run_test test_run_directories_are_isolated
+run_test test_runner_distinct_runs_preserve_previous_artifacts
 run_test test_qualify_suite_manifest_drives_self_healing
 run_test test_setup_payload_publication_includes_qualification_suite
 run_test test_payload_excludes_prototypes_and_tests

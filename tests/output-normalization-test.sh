@@ -1744,6 +1744,22 @@ test_status_helper_suppresses_duplicate_noninteractive_wait_lines() {
   assert_contains 'status helper emits the stable completion line' "$output" 'VM network detected.'
 }
 
+test_status_helper_compact_mode_suppresses_interline_blank_spacing() {
+  local output
+
+  output="$({
+    load_setup_functions
+
+    status_begin_compact 'Checking host inference endpoint...'
+    status_end 'Checking host inference endpoint... ✓' 'progress'
+    status_begin_compact 'Checking VM SSH access...'
+    status_end 'Checking VM SSH access... ✓' 'progress'
+  } 2>&1)"
+
+  assert_contains 'compact status helper emits consecutive operation lines without separators' "$output" $'Checking host inference endpoint... ✓\nChecking VM SSH access...'
+  assert_not_contains 'compact status helper has no blank line between operations' "$output" $'Checking host inference endpoint... ✓\n\nChecking VM SSH access... ✓'
+}
+
 test_status_helper_renders_trailing_spinner_frames() {
   local output
 
@@ -2933,6 +2949,7 @@ run_test test_vm_connection_setup_reports_vm_settings_completion_without_progres
 run_test test_vm_connection_setup_prefers_configured_vm_ip_default
 run_test test_manual_ssh_setup_uses_section_heading
 run_test test_status_helper_suppresses_duplicate_noninteractive_wait_lines
+run_test test_status_helper_compact_mode_suppresses_interline_blank_spacing
 run_test test_status_helper_renders_trailing_spinner_frames
 run_test test_status_helper_uses_fast_spinner_cadence
 run_test test_status_helper_applies_semantic_result_styling

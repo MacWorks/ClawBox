@@ -137,6 +137,13 @@ Run artifacts are isolated by run ID:
 ~/.openclaw/workspace/.clawbox/qualification/runs/<run-id>/
 ```
 
+Run IDs include the UTC start timestamp plus a suffix, for example
+`20260715T130352Z-27276`. Previous run directories are retained; a new
+qualification run does not overwrite older artifacts. When comparing reports or
+inspecting files manually, compare the `runId` in the aggregate JSON and human
+report. Aggregate JSON also records UTC `startedAt` and `completedAt`
+timestamps, duration, suite checksum, and available ClawBox Git provenance.
+
 The suite is limited to ClawBox-managed hidden workspace paths. It does not
 replace `~/.openclaw/openclaw.json`, rerun onboarding, switch models, or install
 host inference software inside the VM.

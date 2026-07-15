@@ -389,6 +389,7 @@ CLAWBOX_STATUS_ACTIVE=false
 CLAWBOX_STATUS_MESSAGE=''
 CLAWBOX_STATUS_SPINNER_INDEX=0
 CLAWBOX_CURSOR_HIDDEN=false
+CLAWBOX_STATUS_COMPACT_ACTIVE=false
 
 _append_trap() {
   local trap_command="$1"
@@ -501,19 +502,25 @@ _status_prepare_begin() {
   fi
 }
 
-status_begin() {
+_status_begin_with_spacing() {
   local message="$1"
+  local compact="${2:-false}"
   local can_spin=false
 
   CLAWBOX_STATUS_ACTIVE=true
+  CLAWBOX_STATUS_COMPACT_ACTIVE="$compact"
   CLAWBOX_STATUS_MESSAGE="$message"
   CLAWBOX_STATUS_SPINNER_INDEX=0
 
   if _status_can_spin; then
     can_spin=true
-    _status_prepare_begin
+    if [ "$compact" != true ]; then
+      _status_prepare_begin
+    fi
   else
-    blank_line
+    if [ "$compact" != true ]; then
+      blank_line
+    fi
   fi
 
   if [ "$can_spin" = true ]; then
@@ -523,6 +530,14 @@ status_begin() {
   else
     out "$message"
   fi
+}
+
+status_begin() {
+  _status_begin_with_spacing "$1" false
+}
+
+status_begin_compact() {
+  _status_begin_with_spacing "$1" true
 }
 
 status_tick() {
@@ -588,6 +603,7 @@ status_end() {
       _set_output_state 'blank'
       REPLY="$preserved_reply"
       CLAWBOX_STATUS_ACTIVE=false
+      CLAWBOX_STATUS_COMPACT_ACTIVE=false
       CLAWBOX_STATUS_MESSAGE=''
       CLAWBOX_STATUS_SPINNER_INDEX=0
       return 0
@@ -620,6 +636,7 @@ status_end() {
   REPLY="$preserved_reply"
 
   CLAWBOX_STATUS_ACTIVE=false
+  CLAWBOX_STATUS_COMPACT_ACTIVE=false
   CLAWBOX_STATUS_MESSAGE=''
   CLAWBOX_STATUS_SPINNER_INDEX=0
 }
