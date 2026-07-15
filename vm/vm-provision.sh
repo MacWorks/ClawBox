@@ -12,6 +12,8 @@ OPENCLAW_DEFAULT_CONFIG_PATH="$OPENCLAW_DEFAULT_CONFIG_DIR/openclaw.json"
 SOURCE_CONFIG_PATH="$VM_RUNTIME_PATH/openclaw.json"
 QUALIFICATION_SOURCE_PATH="$VM_RUNTIME_PATH/qualification"
 QUALIFICATION_TARGET_PATH="$HOME/.openclaw/workspace/.clawbox/qualification"
+QUALIFICATION_CURRENT_PATH="$QUALIFICATION_TARGET_PATH/current"
+QUALIFICATION_RUNS_PATH="$QUALIFICATION_TARGET_PATH/runs"
 QUALIFICATION_SUITE_VERSION="1"
 
 fail() {
@@ -130,24 +132,25 @@ install_qualification_suite() {
 
 	checksum="$(qualification_checksum)"
 	manifest="{\"schemaVersion\":\"1\",\"suiteVersion\":\"$QUALIFICATION_SUITE_VERSION\",\"checksum\":\"$checksum\"}"
-	current_manifest="$(cat "$QUALIFICATION_TARGET_PATH/.clawbox-manifest.json" 2>/dev/null || true)"
+	current_manifest="$(cat "$QUALIFICATION_CURRENT_PATH/.clawbox-manifest.json" 2>/dev/null || true)"
 	if [ "$current_manifest" = "$manifest" ]; then
 		echo "Qualification suite already current at $QUALIFICATION_TARGET_PATH"
+		mkdir -p "$QUALIFICATION_RUNS_PATH"
 		return 0
 	fi
 
-	rm -rf "$QUALIFICATION_TARGET_PATH.tmp"
-	mkdir -p "$QUALIFICATION_TARGET_PATH.tmp"
-	cp -R "$QUALIFICATION_SOURCE_PATH"/. "$QUALIFICATION_TARGET_PATH.tmp"/
-	printf '%s\n' "$manifest" > "$QUALIFICATION_TARGET_PATH.tmp/.clawbox-manifest.json"
-	rm -rf "$QUALIFICATION_TARGET_PATH"
-	mkdir -p "$(dirname "$QUALIFICATION_TARGET_PATH")"
-	mv "$QUALIFICATION_TARGET_PATH.tmp" "$QUALIFICATION_TARGET_PATH"
-	find "$QUALIFICATION_TARGET_PATH" -type d -exec chmod 755 {} \;
-	find "$QUALIFICATION_TARGET_PATH" -type f -exec chmod 644 {} \;
-	chmod 755 "$QUALIFICATION_TARGET_PATH/runner.sh"
-	if [ -d "$QUALIFICATION_TARGET_PATH/scenarios" ]; then
-		find "$QUALIFICATION_TARGET_PATH/scenarios" -type f -name '*.sh' -exec chmod 755 {} \;
+	rm -rf "$QUALIFICATION_CURRENT_PATH.tmp"
+	mkdir -p "$QUALIFICATION_CURRENT_PATH.tmp" "$QUALIFICATION_RUNS_PATH"
+	cp -R "$QUALIFICATION_SOURCE_PATH"/. "$QUALIFICATION_CURRENT_PATH.tmp"/
+	printf '%s\n' "$manifest" > "$QUALIFICATION_CURRENT_PATH.tmp/.clawbox-manifest.json"
+	rm -rf "$QUALIFICATION_CURRENT_PATH"
+	mkdir -p "$QUALIFICATION_TARGET_PATH"
+	mv "$QUALIFICATION_CURRENT_PATH.tmp" "$QUALIFICATION_CURRENT_PATH"
+	find "$QUALIFICATION_CURRENT_PATH" -type d -exec chmod 755 {} \;
+	find "$QUALIFICATION_CURRENT_PATH" -type f -exec chmod 644 {} \;
+	chmod 755 "$QUALIFICATION_CURRENT_PATH/runner.sh"
+	if [ -d "$QUALIFICATION_CURRENT_PATH/scenarios" ]; then
+		find "$QUALIFICATION_CURRENT_PATH/scenarios" -type f -name '*.sh' -exec chmod 755 {} \;
 	fi
 	echo "Installed qualification suite at $QUALIFICATION_TARGET_PATH"
 }

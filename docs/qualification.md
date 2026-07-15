@@ -81,7 +81,8 @@ Scenario results use these statuses:
 - `WARNING`: task succeeded with noncritical deviations
 - `FAIL`: objective or critical behavioral requirement failed
 - `SKIPPED`: scenario was intentionally not run or a declared capability was unavailable
-- `ERROR`: qualification infrastructure malfunctioned or timed out
+- `ERROR`: qualification infrastructure, executor, dependency, filesystem, or
+  evidence collection malfunctioned
 
 Extra tool calls are not automatically failures. They should be warnings when
 the final answer and objective state are correct and no prohibited action
@@ -103,6 +104,13 @@ The runner records the `openclaw agent` process exit status separately from the
 trajectory `finalStatus` and the scenario assertion outcome. A nonzero process
 exit can still produce a warning rather than a failure when usable evidence
 shows the objective task succeeded.
+
+When OpenClaw provides structured error evidence, the suite records the error
+type, message, timeout flag, and command exit status in the scenario result. A
+model that fails to complete within a scenario timeout is treated as a model
+`FAIL` with timeout evidence when the surrounding executor and evidence are
+otherwise usable. Gateway, dependency, malformed transcript, missing trajectory,
+or executor-start failures are infrastructure `ERROR` results.
 
 Evidence is read from the OpenClaw session directory:
 
@@ -143,15 +151,19 @@ vm/qualification/
 ```
 
 Setup publishes it next to `vm-provision.sh` in `VM_RUNTIME_PATH`. VM
-provisioning installs or updates it under the OpenClaw workspace:
+provisioning installs or updates it under the OpenClaw workspace. Replaceable
+runtime code and persistent run artifacts are separated:
 
 ```text
 ~/.openclaw/workspace/.clawbox/qualification/
+├── current/  # installed runner, helpers, scenarios, manifest
+└── runs/     # retained run artifacts
 ```
 
 `./clawbox qualify` also self-heals this installation. It compares a deterministic
 suite checksum and version manifest, republishes stale or missing files, and
-then runs the VM-side runner.
+then runs the VM-side runner from `current/`. Updates replace only `current/`;
+they preserve existing `runs/` directories from earlier layouts and newer runs.
 
 After a successful interactive `./clawbox model primary` switch, ClawBox offers
 a Fast/Full/Skip qualification menu for the newly running model:
@@ -177,7 +189,8 @@ Run artifacts are isolated by run ID:
 
 Run IDs include the UTC start timestamp plus a suffix, for example
 `20260715T130352Z-27276`. Previous run directories are retained; a new
-qualification run does not overwrite older artifacts. When comparing reports or
+qualification run does not overwrite older artifacts, and suite publication or
+installation does not delete historical runs. When comparing reports or
 inspecting files manually, compare the `runId` in the aggregate JSON and human
 report. Aggregate JSON also records UTC `startedAt` and `completedAt`
 timestamps, duration, suite checksum, and available ClawBox Git provenance.

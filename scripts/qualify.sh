@@ -631,10 +631,11 @@ Resolve the model inconsistency before running qualification."
   remote_env="CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_ALIAS=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_CONFIGURED=$(qualify_shell_quote "$model_configured") CLAWBOX_QUALIFY_MODEL_RUNNING=$(qualify_shell_quote "$model_running") CLAWBOX_QUALIFY_MODEL_WARNING='' CLAWBOX_QUALIFY_PROFILE_ID=$(qualify_shell_quote "$QUALIFY_PROFILE") CLAWBOX_QUALIFY_PROFILE_NAME=$(qualify_shell_quote "$(qualify_profile_name "$QUALIFY_PROFILE")") CLAWBOX_QUALIFY_SUITE_VERSION=$(qualify_shell_quote "$QUALIFY_SUITE_VERSION") CLAWBOX_QUALIFY_SUITE_CHECKSUM=$(qualify_shell_quote "$suite_checksum") CLAWBOX_QUALIFY_CLAWBOX_COMMIT=$(qualify_shell_quote "$clawbox_commit") CLAWBOX_QUALIFY_CLAWBOX_DIRTY=$(qualify_shell_quote "$clawbox_dirty")"
   run_label="Running $(qualify_scenario_description "$QUALIFY_SCENARIO" "$QUALIFY_PROFILE")"
   qualify_begin_execution_group
-  set +e
-  qualify_run_remote_operation "$run_label" "$remote_command" "$remote_output" "$remote_stderr" "$remote_env"
-  remote_status=$?
-  set -e
+  if qualify_run_remote_operation "$run_label" "$remote_command" "$remote_output" "$remote_stderr" "$remote_env"; then
+    remote_status=0
+  else
+    remote_status=$?
+  fi
 
   if ! python3 -m json.tool "$remote_output" >/dev/null 2>&1; then
     cat "$remote_stderr" >&2 2>/dev/null || true

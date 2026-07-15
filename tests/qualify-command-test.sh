@@ -75,7 +75,13 @@ fi
 if [ "${CLAWBOX_FAKE_OPENCLAW_NO_TRAJECTORY:-false}" != true ]; then
   metas="[]"
   if [ "$tool_count" -gt 0 ] 2>/dev/null; then metas="$(jq -n --argjson n "$tool_count" '[range(0;$n)|{name:"exec"}]')"; fi
-  jq -nc --arg session "$session" --arg status "$final_status" --argjson metas "$metas" '{type:"trace.artifacts",session:$session,data:{finalStatus:$status,toolMetas:$metas}}' > "$trajectory"
+  jq_args=(--arg session "$session" --arg status "$final_status" --argjson metas "$metas")
+  jq_filter='{type:"trace.artifacts",session:$session,data:{finalStatus:$status,toolMetas:$metas}}'
+  if [ -n "${CLAWBOX_FAKE_OPENCLAW_ERROR_TYPE:-}" ] || [ -n "${CLAWBOX_FAKE_OPENCLAW_ERROR_MESSAGE:-}" ]; then
+    jq_args+=(--arg error_type "${CLAWBOX_FAKE_OPENCLAW_ERROR_TYPE:-agent_error}" --arg error_message "${CLAWBOX_FAKE_OPENCLAW_ERROR_MESSAGE:-OpenClaw agent error}" --argjson timeout "${CLAWBOX_FAKE_OPENCLAW_TIMEOUT:-false}")
+    jq_filter='{type:"trace.artifacts",session:$session,data:{finalStatus:$status,toolMetas:$metas,error:{type:$error_type,message:$error_message,timeout:$timeout}}}'
+  fi
+  jq -nc "${jq_args[@]}" "$jq_filter" > "$trajectory"
   if [ "${CLAWBOX_FAKE_OPENCLAW_MULTIPLE_TRAJECTORIES:-false}" = true ]; then cp "$trajectory" "$sessions/extra-$session.trajectory.jsonl"; fi
   if [ "${CLAWBOX_FAKE_OPENCLAW_MALFORMED_TRAJECTORY:-false}" = true ]; then printf "not-json\n" > "$trajectory"; fi
 fi
@@ -419,6 +425,10 @@ EOF_ENV
   export CLAWBOX_FAKE_REMOTE_RUNTIME="$remote_runtime"
   export CLAWBOX_HOST_REPO_ROOT="$ROOT_DIR"
   export CLAWBOX_FAKE_SSH_LOG="$log_file"
+  mkdir -p "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-a" \
+    "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-b"
+  printf 'keep-a\n' > "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-a/sentinel.txt"
+  printf 'keep-b\n' > "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-b/sentinel.txt"
   write_mock_command curl '#!/bin/bash
 printf "{\"data\":[{\"id\":\"/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"}]}\n"
 exit 0
@@ -494,8 +504,10 @@ if [[ "$command" == *"zsh -l"* ]]; then
       exit 72
     fi
     HOME="$CLAWBOX_FAKE_REMOTE_HOME" zsh "$script"
-    test -x "$CLAWBOX_FAKE_REMOTE_HOME/.openclaw/workspace/.clawbox/qualification/runner.sh"
-    test -x "$CLAWBOX_FAKE_REMOTE_HOME/.openclaw/workspace/.clawbox/qualification/scenarios/01-tool-reliability.sh"
+    test -x "$CLAWBOX_FAKE_REMOTE_HOME/.openclaw/workspace/.clawbox/qualification/current/runner.sh"
+    test -x "$CLAWBOX_FAKE_REMOTE_HOME/.openclaw/workspace/.clawbox/qualification/current/scenarios/01-tool-reliability.sh"
+    test -f "$CLAWBOX_FAKE_REMOTE_HOME/.openclaw/workspace/.clawbox/qualification/runs/old-run-a/sentinel.txt"
+    test -f "$CLAWBOX_FAKE_REMOTE_HOME/.openclaw/workspace/.clawbox/qualification/runs/old-run-b/sentinel.txt"
     printf "INSTALL\n" >> "$CLAWBOX_FAKE_SSH_LOG"
     exit 0
   fi
@@ -530,6 +542,8 @@ PY
   assert_contains 'qualify self-heal progress stays on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Publishing qualification suite to VM'
   assert_contains 'qualify reports actual running model separately from alias' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Model under qualification: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
   assert_contains 'qualify reports OpenClaw alias separately' "$(cat "$TEMP_DIR/self-heal.stderr")" 'OpenClaw alias: clawbox/local'
+  assert_equals 'qualify self-heal preserves first historical run sentinel' "$(cat "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-a/sentinel.txt")" 'keep-a'
+  assert_equals 'qualify self-heal preserves second historical run sentinel' "$(cat "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-b/sentinel.txt")" 'keep-b'
 }
 
 test_qualify_human_output_is_polished() {
@@ -627,6 +641,124 @@ exit 0
   set -e
   assert_equals 'human qualify full-suite warning exits success' "$status" '0'
   assert_contains 'human output shows complete suite running progress' "$suite_output" 'Running full model qualification... !'
+}
+
+test_qualify_renders_valid_remote_results_before_returning_status() {
+  local env_file="$TEMP_DIR/qualify-render.env" output status=0
+  local remote_home="$TEMP_DIR/render-remote/home" log_file="$TEMP_DIR/render.log"
+  setup_mock_bin_dir
+  mkdir -p "$remote_home"
+  cat > "$env_file" <<EOF_ENV
+VM_HOST="vm-user@192.168.64.8"
+VM_RUNTIME_PATH="$TEMP_DIR/render-runtime"
+LLAMA_BASE_URL="http://127.0.0.1:11434/v1"
+MODEL_PATH="/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+EOF_ENV
+  export CLAWBOX_FAKE_REMOTE_HOME="$remote_home"
+  export CLAWBOX_FAKE_SSH_LOG="$log_file"
+  write_mock_command curl '#!/bin/bash
+printf "{\"data\":[{\"id\":\"/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"}]}\n"
+exit 0
+'
+  write_mock_command scp '#!/bin/bash
+set -euo pipefail
+src=""; dest=""
+while [ "$#" -gt 0 ]; do case "$1" in -*) shift ;; *) if [ -z "$src" ]; then src="$1"; else dest="$1"; fi; shift ;; esac; done
+rel="${dest#*:}"; rel="${rel#~/}"
+mkdir -p "$CLAWBOX_FAKE_REMOTE_HOME/$(dirname "$rel")"
+cp "$src" "$CLAWBOX_FAKE_REMOTE_HOME/$rel"
+'
+  write_mock_command ssh '#!/bin/bash
+set -euo pipefail
+while [ "$#" -gt 0 ]; do case "$1" in -n|-o) if [ "$1" = "-o" ]; then shift 2; else shift; fi ;; *) break ;; esac; done
+host="$1"; shift; command="$*"
+printf "%s\n" "$command" >> "$CLAWBOX_FAKE_SSH_LOG"
+if [ "$command" = "echo ok" ]; then exit 0; fi
+if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
+if [[ "$command" == rm\ -f* ]]; then exit 0; fi
+if [[ "$command" == *"runner.sh"* ]]; then
+  if [ "${CLAWBOX_FAKE_REMOTE_MALFORMED_AGGREGATE:-false}" = true ]; then
+    printf "not-json\n"
+    exit 0
+  fi
+  status="${CLAWBOX_FAKE_REMOTE_OVERALL_STATUS:-PASS}"
+  score="${CLAWBOX_FAKE_REMOTE_SCORE:-100}"
+  failure="${CLAWBOX_FAKE_REMOTE_FAILURE:-iteration 3 failed critical assertions}"
+  warning="${CLAWBOX_FAKE_REMOTE_WARNING:-expected 1 efficient tool call, observed 2}"
+  python3 - "$status" "$score" "$failure" "$warning" <<PY
+import json, sys
+status, score, failure, warning = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+scenario_status = status if status in ("FAIL", "ERROR", "WARNING") else "PASS"
+data = {
+  "schemaVersion":"1","runId":"render-run","startedAt":"2026-07-15T13:03:52Z","completedAt":"2026-07-15T13:24:17Z","durationSeconds":1225,"completed": status != "ERROR",
+  "suite":{"schemaVersion":"1","checksum":"suite-checksum"},"clawbox":{"commit":"abc123","dirty":False},
+  "profile":{"id":"full","name":"Full"},"coverage":{"profile":"full","scenariosRun":1,"reliabilityIterations":10,"workflowCases":0},
+  "model":{"alias":"clawbox/local","configured":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","running":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"},
+  "overallStatus":status,"score":score,"categories":{},"warnings":[],"failures":[],"scenarios":[{"scenarioId":"01-tool-reliability","scenarioName":"Tool-calling reliability","status":scenario_status,"score":score,"durationSeconds":714,"metrics":{"totalIterations":10,"correctIterations":6,"efficientIterations":6,"averageToolCalls":1.0},"warnings":[],"failures":[]}],
+  "artifactDirectory":"runs/render-run"
+}
+if status == "WARNING":
+    data["warnings"].append(warning)
+    data["scenarios"][0]["warnings"].append(warning)
+if status in ("FAIL", "ERROR"):
+    data["failures"].append(failure)
+    data["scenarios"][0]["failures"].append(failure)
+print(json.dumps(data))
+PY
+  exit "${CLAWBOX_FAKE_REMOTE_EXIT_STATUS:-0}"
+fi
+if [[ "$command" == *"zsh -l"* ]]; then
+  remote_path="${command#*zsh -l }"; remote_path="${remote_path%\"}"; remote_path="${remote_path#\"}"; remote_path="${remote_path#\$HOME/}"
+  script="$CLAWBOX_FAKE_REMOTE_HOME/$remote_path"
+  if grep -Fq ".clawbox-manifest.json" "$script"; then exit 0; fi
+  if grep -Fq "openclaw config get agents.defaults.model.primary" "$script"; then printf "clawbox/local\n"; exit 0; fi
+  if grep -Fq "command -v openclaw" "$script"; then exit 0; fi
+fi
+exit 0
+'
+
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" CLAWBOX_FAKE_REMOTE_OVERALL_STATUS=PASS CLAWBOX_FAKE_REMOTE_SCORE=100 CLAWBOX_FAKE_REMOTE_EXIT_STATUS=0 bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
+  status=$?
+  set -e
+  assert_equals 'remote exit 0 PASS aggregate returns success' "$status" '0'
+  assert_contains 'remote exit 0 PASS renders report' "$output" 'Model Qualification Report'
+  assert_contains 'remote exit 0 PASS report shows PASS' "$output" 'PASS'
+
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" CLAWBOX_FAKE_REMOTE_OVERALL_STATUS=WARNING CLAWBOX_FAKE_REMOTE_SCORE=97 CLAWBOX_FAKE_REMOTE_EXIT_STATUS=0 bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
+  status=$?
+  set -e
+  assert_equals 'remote exit 0 WARNING aggregate returns success' "$status" '0'
+  assert_contains 'remote exit 0 WARNING renders report' "$output" 'Model Qualification Report'
+  assert_contains 'remote exit 0 WARNING report shows warning reason' "$output" 'expected 1 efficient tool call'
+
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" CLAWBOX_FAKE_REMOTE_OVERALL_STATUS=FAIL CLAWBOX_FAKE_REMOTE_SCORE=60 CLAWBOX_FAKE_REMOTE_EXIT_STATUS=1 bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
+  status=$?
+  set -e
+  assert_equals 'remote exit 1 FAIL aggregate returns model failure after rendering' "$status" '1'
+  assert_contains 'remote exit 1 FAIL renders full report before exit' "$output" 'Model Qualification Report'
+  assert_contains 'remote exit 1 FAIL report keeps successful report fields' "$output" '01-tool-reliability'
+  assert_contains 'remote exit 1 FAIL report shows failure reason' "$output" 'iteration 3 failed critical assertions'
+  assert_contains 'remote exit 1 FAIL progress uses non-success marker' "$output" 'Running 01-tool-reliability qualification... !'
+
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" CLAWBOX_FAKE_REMOTE_OVERALL_STATUS=ERROR CLAWBOX_FAKE_REMOTE_SCORE=0 CLAWBOX_FAKE_REMOTE_EXIT_STATUS=2 bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
+  status=$?
+  set -e
+  assert_equals 'remote exit 2 valid ERROR aggregate returns infrastructure error after rendering' "$status" '2'
+  assert_contains 'remote exit 2 ERROR renders diagnostic report' "$output" 'Model Qualification Report'
+  assert_contains 'remote exit 2 ERROR report shows failure reason' "$output" 'iteration 3 failed critical assertions'
+
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" CLAWBOX_FAKE_REMOTE_MALFORMED_AGGREGATE=true CLAWBOX_FAKE_REMOTE_EXIT_STATUS=0 bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
+  status=$?
+  set -e
+  assert_equals 'malformed aggregate remains infrastructure error' "$status" '2'
+  assert_contains 'malformed aggregate reports infrastructure failure' "$output" 'VM qualification runner did not produce valid aggregate JSON.'
 }
 
 test_qualify_model_mismatch_stops_before_publish() {
@@ -739,6 +871,65 @@ test_evidence_failures_are_errors() {
   assert_contains 'malformed transcript is reported' "$output" 'malformed transcript'
 }
 
+test_tool_reliability_captures_agent_error_evidence_and_classifies_it() {
+  local output status=0
+  install_fake_openclaw
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" \
+    CLAWBOX_QUALIFY_RUN_ID='agent-timeout-fail' \
+    CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 \
+    CLAWBOX_FAKE_OPENCLAW_FINAL_STATUS=error \
+    CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 \
+    CLAWBOX_FAKE_OPENCLAW_FABRICATE=true \
+    CLAWBOX_FAKE_OPENCLAW_EXIT_STATUS=1 \
+    CLAWBOX_FAKE_OPENCLAW_ERROR_TYPE=timeout \
+    CLAWBOX_FAKE_OPENCLAW_ERROR_MESSAGE='model did not complete before timeout' \
+    CLAWBOX_FAKE_OPENCLAW_TIMEOUT=true \
+    bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"
+  status=$?
+  set -e
+  assert_equals 'model timeout evidence exits model failure' "$status" '1'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+it=data['scenarios'][0]['metrics']['iterations'][0]
+assert data['overallStatus']=='FAIL'
+assert it['status']=='FAIL'
+assert it['openclawExitStatus']==1
+assert it['agentStatus']=='error'
+assert it['error']['type']=='timeout'
+assert it['error']['timeout'] is True
+assert 'model did not complete before timeout' in it['error']['message']
+assert any('timed out' in item or 'timeout' in item for item in data['failures'])
+PY
+  pass 'model-attributable agent error captures exit status and timeout evidence'
+
+  install_fake_openclaw
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" \
+    CLAWBOX_QUALIFY_RUN_ID='gateway-error' \
+    CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 \
+    CLAWBOX_FAKE_OPENCLAW_FINAL_STATUS=error \
+    CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 \
+    CLAWBOX_FAKE_OPENCLAW_FABRICATE=true \
+    CLAWBOX_FAKE_OPENCLAW_EXIT_STATUS=1 \
+    CLAWBOX_FAKE_OPENCLAW_ERROR_TYPE=gateway \
+    CLAWBOX_FAKE_OPENCLAW_ERROR_MESSAGE='gateway unavailable' \
+    bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"
+  status=$?
+  set -e
+  assert_equals 'infrastructure-attributable agent error exits infrastructure error' "$status" '2'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['overallStatus']=='ERROR'
+assert data['scenarios'][0]['status']=='ERROR'
+assert data['scenarios'][0]['metrics']['iterations'][0]['error']['type']=='gateway'
+assert any('gateway unavailable' in item for item in data['failures'])
+PY
+  pass 'infrastructure-attributable agent error is classified as ERROR'
+}
+
 test_workflow_cases_and_code_repair_objective_behavior() {
   local workflow_output repair_output status=0
   install_fake_openclaw
@@ -842,10 +1033,12 @@ run_test test_qualify_fast_profile_aggregate_includes_all_scenarios
 run_test test_qualify_runner_records_null_git_provenance_outside_checkout
 run_test test_qualify_command_self_heals_without_setup
 run_test test_qualify_human_output_is_polished
+run_test test_qualify_renders_valid_remote_results_before_returning_status
 run_test test_qualify_model_mismatch_stops_before_publish
 run_test test_tool_reliability_extra_calls_warn_but_do_not_fail
 run_test test_tool_reliability_fabricated_success_fails
 run_test test_evidence_failures_are_errors
+run_test test_tool_reliability_captures_agent_error_evidence_and_classifies_it
 run_test test_workflow_cases_and_code_repair_objective_behavior
 run_test test_run_directories_are_isolated
 run_test test_runner_distinct_runs_preserve_previous_artifacts

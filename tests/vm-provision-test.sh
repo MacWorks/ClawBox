@@ -169,7 +169,11 @@ test_vm_provision_installs_qualification_suite_idempotently() {
   local fixture_root
   local home_dir="$TEMP_DIR/home-qualification"
   local target_dir="$home_dir/.openclaw/workspace/.clawbox/qualification"
+  local current_dir="$target_dir/current"
+  local runs_dir="$target_dir/runs"
   local unrelated_file="$home_dir/.openclaw/workspace/notes.txt"
+  local old_run_a="$runs_dir/old-run-a/sentinel.txt"
+  local old_run_b="$runs_dir/old-run-b/sentinel.txt"
 
   setup_vm_provision_fixture
   fixture_root="$REPLY"
@@ -177,25 +181,28 @@ test_vm_provision_installs_qualification_suite_idempotently() {
 
   mkdir -p "$(dirname "$unrelated_file")"
   printf 'keep me\n' > "$unrelated_file"
+  mkdir -p "$(dirname "$old_run_a")" "$(dirname "$old_run_b")"
+  printf 'keep-a\n' > "$old_run_a"
+  printf 'keep-b\n' > "$old_run_b"
 
   run_vm_provision "$fixture_root" "$home_dir" '' true
 
   assert_equals 'vm provision qualification install succeeds' "$VM_PROVISION_LAST_STATUS" '0'
   assert_contains 'vm provision qualification install reports target' "$VM_PROVISION_LAST_OUTPUT" "Installed qualification suite at $target_dir"
-  if [ -f "$target_dir/runner.sh" ] && [ -f "$target_dir/.clawbox-manifest.json" ]; then
+  if [ -f "$current_dir/runner.sh" ] && [ -f "$current_dir/.clawbox-manifest.json" ]; then
     pass 'vm provision qualification install writes runner and manifest'
   else
     fail 'vm provision qualification install should write runner and manifest'
   fi
-  if [ -x "$target_dir/runner.sh" ]; then
+  if [ -x "$current_dir/runner.sh" ]; then
     pass 'vm provision qualification install makes runner executable'
   else
     fail 'vm provision qualification install should make runner executable'
   fi
   for scenario in \
-    "$target_dir/scenarios/01-tool-reliability.sh" \
-    "$target_dir/scenarios/02-tool-workflows.sh" \
-    "$target_dir/scenarios/03-code-repair.sh"
+    "$current_dir/scenarios/01-tool-reliability.sh" \
+    "$current_dir/scenarios/02-tool-workflows.sh" \
+    "$current_dir/scenarios/03-code-repair.sh"
   do
     if [ -x "$scenario" ]; then
       pass "vm provision qualification install makes scenario executable: ${scenario##*/}"
@@ -203,7 +210,7 @@ test_vm_provision_installs_qualification_suite_idempotently() {
       fail "vm provision qualification install should make scenario executable: ${scenario##*/}"
     fi
   done
-  if [ ! -x "$target_dir/lib/helpers.sh" ]; then
+  if [ ! -x "$current_dir/lib/helpers.sh" ]; then
     pass 'vm provision qualification install keeps helper library source-only'
   else
     fail 'vm provision qualification install should keep helper library source-only'
@@ -213,9 +220,22 @@ test_vm_provision_installs_qualification_suite_idempotently() {
   else
     fail 'vm provision qualification install should preserve unrelated workspace files'
   fi
+  assert_equals 'vm provision qualification install preserves first historical run' "$(cat "$old_run_a")" 'keep-a'
+  assert_equals 'vm provision qualification install preserves second historical run' "$(cat "$old_run_b")" 'keep-b'
+
+  printf '{"schemaVersion":"1","suiteVersion":"1","checksum":"stale"}\n' > "$current_dir/.clawbox-manifest.json"
+  printf '\n# stale update marker\n' >> "$fixture_root/vm/qualification/runner.sh"
+  run_vm_provision "$fixture_root" "$home_dir" '' true
+  assert_equals 'vm provision stale qualification update succeeds' "$VM_PROVISION_LAST_STATUS" '0'
+  assert_contains 'vm provision stale qualification update reinstalls runtime code' "$VM_PROVISION_LAST_OUTPUT" "Installed qualification suite at $target_dir"
+  assert_contains 'vm provision stale qualification update writes new runtime runner' "$(cat "$current_dir/runner.sh")" 'stale update marker'
+  assert_equals 'vm provision stale qualification update preserves first historical run' "$(cat "$old_run_a")" 'keep-a'
+  assert_equals 'vm provision stale qualification update preserves second historical run' "$(cat "$old_run_b")" 'keep-b'
 
   run_vm_provision "$fixture_root" "$home_dir" '' true
   assert_contains 'vm provision qualification install is idempotent' "$VM_PROVISION_LAST_OUTPUT" "Qualification suite already current at $target_dir"
+  assert_equals 'vm provision idempotent path preserves first historical run' "$(cat "$old_run_a")" 'keep-a'
+  assert_equals 'vm provision idempotent path preserves second historical run' "$(cat "$old_run_b")" 'keep-b'
 }
 
 test_vm_provision_deduplicates_zprofile_entries() {

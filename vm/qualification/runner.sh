@@ -7,7 +7,13 @@ case "$0" in
 esac
 SUITE_DIR="$(cd "$RUNNER_SCRIPT_DIR" && pwd)"
 SCENARIO_DIR="$SUITE_DIR/scenarios"
-RUNS_DIR="${CLAWBOX_QUALIFY_RUNS_DIR:-$SUITE_DIR/runs}"
+if [ -n "${CLAWBOX_QUALIFY_RUNS_DIR:-}" ]; then
+  RUNS_DIR="$CLAWBOX_QUALIFY_RUNS_DIR"
+elif [ "${SUITE_DIR##*/}" = current ]; then
+  RUNS_DIR="$(cd "$SUITE_DIR/.." && pwd)/runs"
+else
+  RUNS_DIR="$SUITE_DIR/runs"
+fi
 SCENARIO_FILTER=''
 JSON_MODE=false
 PROFILE_ID='full'

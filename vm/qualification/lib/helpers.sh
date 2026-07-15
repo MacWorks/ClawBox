@@ -102,6 +102,27 @@ qualification_trace_tool_count() {
   jq -er 'select(.type=="trace.artifacts") | (.data.toolMetas // [] | length)' "$1" | tail -1
 }
 
+qualification_trace_error_json() {
+  local trajectory="$1" fallback_status="${2:-unknown}" fallback_message="${3:-}"
+  jq -c --arg status "$fallback_status" --arg fallback "$fallback_message" '
+    [select(.type=="trace.artifacts") | .data] | last as $data
+    | ($data.error // $data.finalError // $data.lastError // null) as $error
+    | if ($error | type) == "object" then
+        {
+          type: (($error.type // $error.code // "agent_error") | tostring),
+          message: (($error.message // $error.detail // $fallback // "") | tostring),
+          timeout: (($error.timeout // false) == true)
+        }
+      elif ($data.errorMessage // "") != "" then
+        {type:"agent_error", message:($data.errorMessage|tostring), timeout:false}
+      elif $status != "success" then
+        {type:"agent_status", message:(if $fallback != "" then $fallback else "OpenClaw agent finalStatus=" + $status end), timeout:false}
+      else
+        {type:null, message:"", timeout:false}
+      end
+  ' "$trajectory"
+}
+
 qualification_final_reply() {
   jq -ers '[.[] | select(.type=="message" and .message.role=="assistant") | [.message.content[]? | select(.type=="text") | .text] | join("")] | last // ""' "$1"
 }

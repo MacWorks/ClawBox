@@ -43,6 +43,35 @@ iterations_jsonl="$ARTIFACT_DIR/iterations.jsonl"
 scenario_status=PASS
 scenario_error=''
 
+iteration_failure_is_infrastructure() {
+  local error_json="$1" error_type='' error_message=''
+  error_type="$(printf '%s\n' "$error_json" | jq -r '.type // ""' 2>/dev/null || true)"
+  error_message="$(printf '%s\n' "$error_json" | jq -r '.message // ""' 2>/dev/null || true)"
+  case "$error_type" in
+    infrastructure|executor|gateway|dependency|session|transport) return 0 ;;
+  esac
+  case "$error_message" in
+    *"OpenClaw process could not start"*|*"gateway unavailable"*|*"inference endpoint disconnected"*|*"connection refused"*|*"ECONNREFUSED"*|*"session directory missing"*) return 0 ;;
+  esac
+  return 1
+}
+
+iteration_failure_summary() {
+  local iteration="$1" final_status="$2" tools="$3" file_ok="$4" reply_ok="$5" error_json="$6"
+  jq -r --arg iteration "$iteration" --arg finalStatus "$final_status" --arg tools "$tools" --arg fileOk "$file_ok" --arg replyOk "$reply_ok" '
+    . as $error
+    | ($error.message // "") as $message
+    | ($error.type // "agent_error") as $type
+    | if ($error.timeout == true) then
+        "iteration \($iteration): OpenClaw agent timed out before completing the required tool workflow"
+      elif $message != "" then
+        "iteration \($iteration): \($message)"
+      else
+        "iteration \($iteration) failed critical assertions: agentStatus=\($finalStatus), toolCalls=\($tools), fileCorrect=\($fileOk), replyCorrect=\($replyOk), errorType=\($type)"
+      end
+  ' <<<"$error_json"
+}
+
 for n in $(seq 1 "$TOTAL"); do
   iter_dir="$ARTIFACT_DIR/iteration-$n"
   mkdir -p "$iter_dir"
@@ -84,6 +113,7 @@ EOF_PROMPT
   if ! reply="$(qualification_final_reply "$QUALIFICATION_TRANSCRIPT" 2>/dev/null)"; then
     scenario_status=ERROR; scenario_error='malformed transcript'; printf '%s\n' "iteration $n: $scenario_error" >> "$failures_file"; break
   fi
+  error_json="$(qualification_trace_error_json "$QUALIFICATION_TRAJECTORY" "$final_status" "OpenClaw agent finalStatus=$final_status" 2>/dev/null || printf '{"type":"agent_error","message":"unable to parse trajectory error details","timeout":false}\n')"
 
   file_ok=false; [ -f "$file" ] && [ "$(cat "$file")" = "PASS_$n" ] && file_ok=true
   reply_ok=false; [ "$reply" = DONE ] && reply_ok=true
@@ -91,19 +121,28 @@ EOF_PROMPT
   iter_status=PASS
   iter_warnings='[]'
   if [ "$status_ok" != true ] || [ "$file_ok" != true ] || [ "$reply_ok" != true ]; then
-    iter_status=FAIL
-    scenario_status=FAIL
-    printf '%s\n' "iteration $n failed critical assertions" >> "$failures_file"
+    failure_summary="$(iteration_failure_summary "$n" "$final_status" "$tools" "$file_ok" "$reply_ok" "$error_json")"
+    if [ "$final_status" = error ] && [ "$tools" = 0 ] && iteration_failure_is_infrastructure "$error_json"; then
+      iter_status=ERROR
+      scenario_status=ERROR
+      scenario_error="$failure_summary"
+      printf '%s\n' "$failure_summary" >> "$failures_file"
+    else
+      iter_status=FAIL
+      scenario_status=FAIL
+      printf '%s\n' "$failure_summary" >> "$failures_file"
+    fi
   elif [ "$tools" != 1 ]; then
     iter_status=WARNING
     [ "$scenario_status" = PASS ] && scenario_status=WARNING
     printf '%s\n' "iteration $n completed correctly but used $tools tool calls; efficient target is 1" >> "$warnings_file"
     iter_warnings="$(printf '%s\n' "expected 1 efficient tool call, observed $tools" | qualification_json_string_array)"
   fi
-  [ "$iter_status" != FAIL ] && correct=$((correct + 1))
+  case "$iter_status" in PASS|WARNING) correct=$((correct + 1)) ;; esac
   [ "$tools" = 1 ] && efficient=$((efficient + 1))
   tool_sum=$((tool_sum + tools))
-  jq -n --arg iteration "$n" --arg sessionId "$session" --arg agentStatus "$final_status" --arg toolCalls "$tools" --arg fileCorrect "$file_ok" --arg replyCorrect "$reply_ok" --arg status "$iter_status" --arg trajectory "$QUALIFICATION_TRAJECTORY" --arg transcript "$QUALIFICATION_TRANSCRIPT" --argjson warnings "$iter_warnings" '{iteration:($iteration|tonumber),sessionId:$sessionId,agentStatus:$agentStatus,toolCalls:($toolCalls|tonumber),expectedEfficientRange:{min:1,max:1},fileCorrect:($fileCorrect=="true"),replyCorrect:($replyCorrect=="true"),status:$status,warnings:$warnings,artifacts:{trajectory:$trajectory,transcript:$transcript}}' >> "$iterations_jsonl"
+  jq -n --arg iteration "$n" --arg sessionId "$session" --arg agentStatus "$final_status" --arg toolCalls "$tools" --arg openclawExitStatus "$openclaw_exit" --arg fileCorrect "$file_ok" --arg replyCorrect "$reply_ok" --arg status "$iter_status" --arg trajectory "$QUALIFICATION_TRAJECTORY" --arg transcript "$QUALIFICATION_TRANSCRIPT" --arg agentOutput "$agent_output" --argjson warnings "$iter_warnings" --argjson error "$error_json" '{iteration:($iteration|tonumber),sessionId:$sessionId,agentStatus:$agentStatus,openclawExitStatus:($openclawExitStatus|tonumber),toolCalls:($toolCalls|tonumber),expectedEfficientRange:{min:1,max:1},fileCorrect:($fileCorrect=="true"),replyCorrect:($replyCorrect=="true"),status:$status,error:$error,warnings:$warnings,artifacts:{trajectory:$trajectory,transcript:$transcript,agentOutput:$agentOutput}}' >> "$iterations_jsonl"
+  [ "$scenario_status" = ERROR ] && break
 done
 
 duration=$(($(qualification_now_epoch) - START))

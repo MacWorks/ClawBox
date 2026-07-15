@@ -5,6 +5,7 @@
 
 QUALIFY_SUITE_VERSION="1"
 QUALIFY_REMOTE_RELATIVE_PATH=".openclaw/workspace/.clawbox/qualification"
+QUALIFY_REMOTE_CURRENT_RELATIVE_PATH="$QUALIFY_REMOTE_RELATIVE_PATH/current"
 
 qualify_shell_quote() {
   printf '%q' "$1"
@@ -19,7 +20,7 @@ qualify_remote_payload_dir() {
 }
 
 qualify_remote_dir() {
-  printf '%s\n' "\$HOME/$QUALIFY_REMOTE_RELATIVE_PATH"
+  printf '%s\n' "\$HOME/$QUALIFY_REMOTE_CURRENT_RELATIVE_PATH"
 }
 
 qualify_remote_runs_dir() {
@@ -87,16 +88,18 @@ node -e 'const fs=require(\"fs\"); const m=JSON.parse(fs.readFileSync(process.ar
 }
 
 qualify_install_suite_on_vm() {
-  local checksum="$1" manifest='' remote_source='' remote_dir=''
+  local checksum="$1" manifest='' remote_source='' remote_base='' remote_dir=''
 
   remote_source="$(qualify_shell_quote "$(qualify_remote_payload_dir)")"
+  remote_base="\$HOME/$QUALIFY_REMOTE_RELATIVE_PATH"
   remote_dir="$(qualify_remote_dir)"
   manifest="$(qualify_manifest_json "$checksum")" || return 1
 
   ssh_exec_zsh "source_dir=$remote_source
+base_dir=\"$remote_base\"
 target_dir=\"$remote_dir\"
 [ -d \"\$source_dir\" ] || { printf 'Qualification source missing at %s\\n' \"\$source_dir\" >&2; exit 1; }
-mkdir -p \"\${target_dir:h}\"
+mkdir -p \"\$base_dir/runs\" \"\${target_dir:h}\"
 rm -rf \"\$target_dir.tmp\"
 mkdir -p \"\$target_dir.tmp\"
 cp -R \"\$source_dir\"/. \"\$target_dir.tmp\"/
