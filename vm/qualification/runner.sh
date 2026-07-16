@@ -80,6 +80,14 @@ profile_scenarios() {
   esac
 }
 
+count_words() {
+  local count=0 word
+  for word in $*; do
+    count=$((count + 1))
+  done
+  printf '%s\n' "$count"
+}
+
 case "$PROFILE_ID" in
   fast|full) ;;
   *) printf 'Unknown qualification profile: %s\n' "$PROFILE_ID" >&2; exit 2 ;;
@@ -87,6 +95,14 @@ esac
 PROFILE_NAME="$(profile_name "$PROFILE_ID")"
 PROFILE_RELIABILITY_ITERATIONS="$(profile_reliability_iterations "$PROFILE_ID")"
 PROFILE_WORKFLOW_CASES="$(profile_workflow_cases "$PROFILE_ID")"
+COVERAGE_RELIABILITY_ITERATIONS=0
+COVERAGE_WORKFLOW_CASES=0
+case "$SCENARIO_FILTER" in
+  ''|01-tool-reliability) COVERAGE_RELIABILITY_ITERATIONS="$PROFILE_RELIABILITY_ITERATIONS" ;;
+esac
+case "$SCENARIO_FILTER" in
+  ''|02-tool-workflows) COVERAGE_WORKFLOW_CASES="$(count_words "$PROFILE_WORKFLOW_CASES")" ;;
+esac
 export CLAWBOX_QUALIFY_PROFILE_ID="$PROFILE_ID"
 export CLAWBOX_QUALIFY_PROFILE_NAME="$PROFILE_NAME"
 export CLAWBOX_QUALIFY_RELIABILITY_ITERATIONS="$PROFILE_RELIABILITY_ITERATIONS"
@@ -271,6 +287,8 @@ jq -s \
   --arg modelWarning "${CLAWBOX_QUALIFY_MODEL_WARNING:-}" \
   --arg profileId "$PROFILE_ID" \
   --arg profileName "$PROFILE_NAME" \
+  --arg coverageReliabilityIterations "$COVERAGE_RELIABILITY_ITERATIONS" \
+  --arg coverageWorkflowCases "$COVERAGE_WORKFLOW_CASES" \
   --arg artifactDir "$RUNS_DIR/$RUN_ID" '
   def priority: {ERROR:0, FAIL:1, WARNING:2, SKIPPED:3, PASS:4};
   def category_status($names):
@@ -282,11 +300,11 @@ jq -s \
       else {status:"unrated"} end;
   . as $scenarios
   | ($scenarios | map(.status) | if length == 0 then "ERROR" else min_by(priority[.] // 99) end) as $overall
-  | ($scenarios | map(select(.unrated|not) | .score) ) as $scores
+  | ($scenarios | map(select((.unrated // false) | not) | .score) ) as $scores
+  | ($scenarios | map(select((.status == "ERROR") or (.unrated // false))) | length) as $unratedRequired
+  | ($scenarios | map(select((.unrated // false) | not)) | length) as $ratedScenarios
   | (if $modelWarning == "" then [] else [$modelWarning] end) as $modelWarnings
-  | ($scenarios | map(select(.scenarioId=="01-tool-reliability") | .metrics.totalIterations // 0) | add // 0) as $reliabilityIterations
-  | ($scenarios | map(select(.scenarioId=="02-tool-workflows") | .metrics.totalCases // 0) | add // 0) as $workflowCases
-  | {schemaVersion:"1",runId:$runId,startedAt:$startedAt,completedAt:$completedAt,durationSeconds:($durationSeconds|tonumber),completed:true,suite:{schemaVersion:$suiteSchemaVersion,checksum:$suiteChecksum},clawbox:{commit:(if $clawboxCommit == "" then null else $clawboxCommit end),dirty:$clawboxDirty},profile:{id:$profileId,name:$profileName},coverage:{profile:$profileId,scenariosRun:($scenarios|length),reliabilityIterations:$reliabilityIterations,workflowCases:$workflowCases},model:{alias:$modelAlias,configured:$modelConfigured,running:$modelRunning},overallStatus:$overall,score:(if ($scores|length)>0 then (($scores|add / length)|round) else null end),categories:{"Tool correctness": category_status(["tool_correctness"]),"Grounding": category_status(["grounding"]),"Workflow correctness": category_status(["workflow_correctness"]),"Instruction following": category_status(["instruction_following"]),"Code and state correctness": category_status(["code_state_correctness"]),"Hallucination avoidance": category_status(["hallucination_avoidance"]),"Efficiency": category_status(["efficiency"])},warnings:($modelWarnings + ($scenarios|map(.warnings[]?) )),failures:($scenarios|map(.failures[]?) ),scenarios:$scenarios,artifactDirectory:$artifactDir}' "${scenario_result_files[@]}" >"$results_dir/aggregate.json" 2>"$aggregate_stderr"
+  | {schemaVersion:"1",runId:$runId,startedAt:$startedAt,completedAt:$completedAt,durationSeconds:($durationSeconds|tonumber),completed:true,suite:{schemaVersion:$suiteSchemaVersion,checksum:$suiteChecksum},clawbox:{commit:(if $clawboxCommit == "" then null else $clawboxCommit end),dirty:$clawboxDirty},profile:{id:$profileId,name:$profileName},coverage:{profile:$profileId,scenariosRun:($scenarios|length),reliabilityIterations:($coverageReliabilityIterations|tonumber),workflowCases:($coverageWorkflowCases|tonumber)},scoreComplete:($unratedRequired == 0),ratedScenarios:$ratedScenarios,requiredScenarios:($scenarios|length),model:{alias:$modelAlias,configured:$modelConfigured,running:$modelRunning},overallStatus:$overall,score:(if $unratedRequired > 0 then null elif ($scores|length)>0 then (($scores|add / length)|round) else null end),categories:{"Tool correctness": category_status(["tool_correctness"]),"Grounding": category_status(["grounding"]),"Workflow correctness": category_status(["workflow_correctness"]),"Instruction following": category_status(["instruction_following"]),"Code and state correctness": category_status(["code_state_correctness"]),"Hallucination avoidance": category_status(["hallucination_avoidance"]),"Efficiency": category_status(["efficiency"])},warnings:($modelWarnings + ($scenarios|map(.warnings[]?) )),failures:($scenarios|map(.failures[]?) ),scenarios:$scenarios,artifactDirectory:$artifactDir}' "${scenario_result_files[@]}" >"$results_dir/aggregate.json" 2>"$aggregate_stderr"
 aggregate_status=$?
 set -e
 

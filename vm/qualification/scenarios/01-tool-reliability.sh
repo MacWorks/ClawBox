@@ -37,9 +37,14 @@ tool_sum=0
 warnings_file="$ARTIFACT_DIR/warnings.txt"
 failures_file="$ARTIFACT_DIR/failures.txt"
 iterations_jsonl="$ARTIFACT_DIR/iterations.jsonl"
+iterations_array_json="$ARTIFACT_DIR/iterations-array.json"
+result_build_stderr="$ARTIFACT_DIR/result-build.stderr"
+result_build_inputs="$ARTIFACT_DIR/result-build-inputs"
 : > "$warnings_file"
 : > "$failures_file"
 : > "$iterations_jsonl"
+: > "$result_build_stderr"
+mkdir -p "$result_build_inputs"
 scenario_status=PASS
 scenario_error=''
 
@@ -113,7 +118,12 @@ EOF_PROMPT
   if ! reply="$(qualification_final_reply "$QUALIFICATION_TRANSCRIPT" 2>/dev/null)"; then
     scenario_status=ERROR; scenario_error='malformed transcript'; printf '%s\n' "iteration $n: $scenario_error" >> "$failures_file"; break
   fi
-  error_json="$(qualification_trace_error_json "$QUALIFICATION_TRAJECTORY" "$final_status" "OpenClaw agent finalStatus=$final_status" 2>/dev/null || printf '{"type":"agent_error","message":"unable to parse trajectory error details","timeout":false}\n')"
+  error_json_file="$iter_dir/error.json"
+  if ! qualification_trace_error_json "$QUALIFICATION_TRAJECTORY" "$final_status" "OpenClaw agent finalStatus=$final_status" >"$error_json_file" 2>"$iter_dir/error-build.stderr" ||
+     ! jq -e 'type == "object"' "$error_json_file" >/dev/null 2>&1; then
+    printf '{"type":"agent_error","message":"unable to parse trajectory error details","timeout":false}\n' >"$error_json_file"
+  fi
+  error_json="$(cat "$error_json_file")"
 
   file_ok=false; [ -f "$file" ] && [ "$(cat "$file")" = "PASS_$n" ] && file_ok=true
   reply_ok=false; [ "$reply" = DONE ] && reply_ok=true
@@ -141,16 +151,35 @@ EOF_PROMPT
   case "$iter_status" in PASS|WARNING) correct=$((correct + 1)) ;; esac
   [ "$tools" = 1 ] && efficient=$((efficient + 1))
   tool_sum=$((tool_sum + tools))
-  jq -n --arg iteration "$n" --arg sessionId "$session" --arg agentStatus "$final_status" --arg toolCalls "$tools" --arg openclawExitStatus "$openclaw_exit" --arg fileCorrect "$file_ok" --arg replyCorrect "$reply_ok" --arg status "$iter_status" --arg trajectory "$QUALIFICATION_TRAJECTORY" --arg transcript "$QUALIFICATION_TRANSCRIPT" --arg agentOutput "$agent_output" --argjson warnings "$iter_warnings" --argjson error "$error_json" '{iteration:($iteration|tonumber),sessionId:$sessionId,agentStatus:$agentStatus,openclawExitStatus:($openclawExitStatus|tonumber),toolCalls:($toolCalls|tonumber),expectedEfficientRange:{min:1,max:1},fileCorrect:($fileCorrect=="true"),replyCorrect:($replyCorrect=="true"),status:$status,error:$error,warnings:$warnings,artifacts:{trajectory:$trajectory,transcript:$transcript,agentOutput:$agentOutput}}' >> "$iterations_jsonl"
+  iteration_json="$iter_dir/iteration.json"
+  if ! jq -n --arg iteration "$n" --arg sessionId "$session" --arg agentStatus "$final_status" --arg toolCalls "$tools" --arg openclawExitStatus "$openclaw_exit" --arg fileCorrect "$file_ok" --arg replyCorrect "$reply_ok" --arg status "$iter_status" --arg trajectory "$QUALIFICATION_TRAJECTORY" --arg transcript "$QUALIFICATION_TRANSCRIPT" --arg agentOutput "$agent_output" --slurpfile warnings <(printf '%s\n' "$iter_warnings") --slurpfile error "$error_json_file" '{iteration:($iteration|tonumber),sessionId:$sessionId,agentStatus:$agentStatus,openclawExitStatus:($openclawExitStatus|tonumber),toolCalls:($toolCalls|tonumber),expectedEfficientRange:{min:1,max:1},fileCorrect:($fileCorrect=="true"),replyCorrect:($replyCorrect=="true"),status:$status,error:($error[0] // {type:"agent_error",message:"missing error details",timeout:false}),warnings:($warnings[0] // []),artifacts:{trajectory:$trajectory,transcript:$transcript,agentOutput:$agentOutput}}' >"$iteration_json" 2>"$iter_dir/iteration-build.stderr" ||
+     ! jq -e 'type == "object"' "$iteration_json" >/dev/null 2>&1; then
+    printf '01-tool-reliability result construction failed while building iteration %s JSON\n' "$n" >&2
+    qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" "result construction failed while building iteration $n JSON" "$session" "$openclaw_exit" "$QUALIFICATION_TRAJECTORY" "$QUALIFICATION_TRANSCRIPT" "$(($(qualification_now_epoch) - START))"
+    exit 0
+  fi
+  cat "$iteration_json" >> "$iterations_jsonl"
+  printf '\n' >> "$iterations_jsonl"
   [ "$scenario_status" = ERROR ] && break
 done
 
 duration=$(($(qualification_now_epoch) - START))
 warnings_json="$(cat "$warnings_file" | qualification_json_string_array)"
 failures_json="$(cat "$failures_file" | qualification_json_string_array)"
-iterations_json="$(jq -s '.' "$iterations_jsonl")"
+if ! jq -s '.' "$iterations_jsonl" >"$iterations_array_json" 2>"$result_build_stderr" ||
+   ! jq -e 'type == "array"' "$iterations_array_json" >/dev/null 2>&1; then
+  printf '01-tool-reliability result construction failed while building iterations array\n' >&2
+  cp "$iterations_jsonl" "$result_build_inputs/iterations.jsonl" 2>/dev/null || true
+  qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" "result construction failed while building iterations array" '' '' '' '' "$duration"
+  exit 0
+fi
 avg_tool_calls="$(jq -n --arg sum "$tool_sum" --arg total "$TOTAL" 'if ($total|tonumber) == 0 then 0 else (($sum|tonumber) / ($total|tonumber)) end')"
-metrics="$(jq -n --arg total "$TOTAL" --arg correct "$correct" --arg efficient "$efficient" --arg profileId "${CLAWBOX_QUALIFY_PROFILE_ID:-full}" --arg profileName "${CLAWBOX_QUALIFY_PROFILE_NAME:-Full}" --argjson avg "$avg_tool_calls" --argjson iterations "$iterations_json" '{profile:{id:$profileId,name:$profileName},totalIterations:($total|tonumber),correctIterations:($correct|tonumber),efficientIterations:($efficient|tonumber),correctnessRate:(($correct|tonumber) / ($total|tonumber)),efficientCallRate:(($efficient|tonumber) / ($total|tonumber)),averageToolCalls:$avg,toolCallsReliable:true,toolCalls:$avg,expectedMin:1,expectedMax:1,iterations:$iterations}')"
+if ! metrics="$(jq -n --arg total "$TOTAL" --arg correct "$correct" --arg efficient "$efficient" --arg profileId "${CLAWBOX_QUALIFY_PROFILE_ID:-full}" --arg profileName "${CLAWBOX_QUALIFY_PROFILE_NAME:-Full}" --argjson avg "$avg_tool_calls" --slurpfile iterations "$iterations_array_json" '{profile:{id:$profileId,name:$profileName},totalIterations:($total|tonumber),correctIterations:($correct|tonumber),efficientIterations:($efficient|tonumber),correctnessRate:(($correct|tonumber) / ($total|tonumber)),efficientCallRate:(($efficient|tonumber) / ($total|tonumber)),averageToolCalls:$avg,toolCallsReliable:true,toolCalls:$avg,expectedMin:1,expectedMax:1,iterations:($iterations[0] // [])}' 2>>"$result_build_stderr")"; then
+  printf '01-tool-reliability result construction failed while building metrics\n' >&2
+  cp "$iterations_array_json" "$result_build_inputs/iterations-array.json" 2>/dev/null || true
+  qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" "result construction failed while building metrics" '' '' '' '' "$duration"
+  exit 0
+fi
 
 if [ "$scenario_status" = ERROR ]; then
   assertions="$(qualification_assertions_json evidence ERROR "${scenario_error:-infrastructure evidence error}" tool_correctness)"

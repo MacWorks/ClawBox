@@ -81,7 +81,12 @@ if [ "${CLAWBOX_FAKE_OPENCLAW_NO_TRAJECTORY:-false}" != true ]; then
     jq_args+=(--arg error_type "${CLAWBOX_FAKE_OPENCLAW_ERROR_TYPE:-agent_error}" --arg error_message "${CLAWBOX_FAKE_OPENCLAW_ERROR_MESSAGE:-OpenClaw agent error}" --argjson timeout "${CLAWBOX_FAKE_OPENCLAW_TIMEOUT:-false}")
     jq_filter='{type:"trace.artifacts",session:$session,data:{finalStatus:$status,toolMetas:$metas,error:{type:$error_type,message:$error_message,timeout:$timeout}}}'
   fi
-  jq -nc "${jq_args[@]}" "$jq_filter" > "$trajectory"
+  if [ "${CLAWBOX_FAKE_OPENCLAW_TRAJECTORY_PRELUDE:-false}" = true ]; then
+    jq -nc --arg session "$session" '{type:"trace.step",session:$session,data:{message:"prelude"}}' > "$trajectory"
+    jq -nc "${jq_args[@]}" "$jq_filter" >> "$trajectory"
+  else
+    jq -nc "${jq_args[@]}" "$jq_filter" > "$trajectory"
+  fi
   if [ "${CLAWBOX_FAKE_OPENCLAW_MULTIPLE_TRAJECTORIES:-false}" = true ]; then cp "$trajectory" "$sessions/extra-$session.trajectory.jsonl"; fi
   if [ "${CLAWBOX_FAKE_OPENCLAW_MALFORMED_TRAJECTORY:-false}" = true ]; then printf "not-json\n" > "$trajectory"; fi
 fi
@@ -282,7 +287,7 @@ assert data['profile']['id']=='full'
 assert data['profile']['name']=='Full'
 assert data['coverage']['profile']=='full'
 assert data['coverage']['scenariosRun']==3
-assert data['coverage']['reliabilityIterations']==2
+assert data['coverage']['reliabilityIterations']==10
 assert data['coverage']['workflowCases']==5
 assert data['model']['alias']=='clawbox/local'
 assert data['model']['configured']=='Configured.gguf'
@@ -414,6 +419,14 @@ elif [ "$status" = FAIL ]; then
   correct=$((total - 1))
   efficient=$((total - 1))
   failures="$(jq -n '["iteration 3 failed critical assertions\nagentStatus=error"]')"
+elif [ "$status" = ERROR ]; then
+  failures="$(jq -n '["scenario 01-tool-reliability did not produce valid result JSON"]')"
+  jq -n \
+    --arg runId "$run_id" \
+    --arg artifactDir "$artifact_dir" \
+    --argjson failures "$failures" \
+    '{schemaVersion:"1",runId:$runId,scenarioId:"01-tool-reliability",scenarioName:"Tool-calling reliability",status:"ERROR",score:null,unrated:true,durationSeconds:0,assertions:[{name:"result_json",status:"ERROR",message:"fixture infrastructure error",category:"tool_correctness"}],toolCalls:{observed:null,expectedMin:null,expectedMax:null,reliable:false},metrics:{},warnings:[],failures:$failures,sessionId:"fixture-01",openclawExitStatus:null,artifacts:{directory:$artifactDir,trajectory:null,transcript:null}}'
+  exit "$exit_status"
 fi
 jq -n \
   --arg runId "$run_id" \
@@ -521,6 +534,24 @@ PY
   pass 'fixture fast valid FAIL aggregates despite scenario process exit 1'
 
   set +e
+  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-error' CLAWBOX_FIXTURE_01_STATUS=ERROR CLAWBOX_FIXTURE_01_EXIT=2 ./runner.sh --profile fast --json)"
+  status=$?
+  set -e
+  assert_equals 'fixture fast ERROR aggregate returns infrastructure error' "$status" '2'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['overallStatus']=='ERROR'
+assert data['score'] is None
+assert data['scoreComplete'] is False
+assert data['ratedScenarios']==2
+assert data['requiredScenarios']==3
+assert data['coverage']['reliabilityIterations']==3
+assert data['coverage']['workflowCases']==3
+PY
+  pass 'fixture fast ERROR aggregate is unrated while preserving configured coverage'
+
+  set +e
   output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-full-pass' ./runner.sh --profile full --json)"
   status=$?
   set -e
@@ -534,6 +565,80 @@ assert data['coverage']['workflowCases']==5
 assert data['coverage']['scenariosRun']==3
 PY
   pass 'fixture full aggregate uses full profile coverage'
+}
+
+test_tool_reliability_serializes_multi_record_trajectories() {
+  local output status=0
+  install_fake_openclaw
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" \
+    CLAWBOX_QUALIFY_RUN_ID='multi-record-fast-pass' \
+    CLAWBOX_FAKE_OPENCLAW_TRAJECTORY_PRELUDE=true \
+    bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 01-tool-reliability --json)"
+  status=$?
+  set -e
+  assert_equals 'fast reliability with multi-record trajectories exits success' "$status" '0'
+  python3 - "$output" "$CLAWBOX_QUALIFY_RUNS_DIR/multi-record-fast-pass/01-tool-reliability/iterations-array.json" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['overallStatus']=='PASS'
+scenario=data['scenarios'][0]
+assert scenario['metrics']['totalIterations']==3
+assert len(scenario['metrics']['iterations'])==3
+assert scenario['metrics']['averageToolCalls']==1
+with open(sys.argv[2], encoding='utf-8') as fh:
+    iterations=json.load(fh)
+assert isinstance(iterations, list)
+assert len(iterations)==3
+assert all(item['error']['type'] is None for item in iterations)
+PY
+  pass 'fast reliability serializes three iterations from multi-record trajectories'
+
+  install_fake_openclaw
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" \
+    CLAWBOX_QUALIFY_RUN_ID='multi-record-full-pass' \
+    CLAWBOX_FAKE_OPENCLAW_TRAJECTORY_PRELUDE=true \
+    bash "$ROOT_DIR/vm/qualification/runner.sh" --profile full --scenario 01-tool-reliability --json)"
+  status=$?
+  set -e
+  assert_equals 'full reliability with multi-record trajectories exits success' "$status" '0'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+assert data['overallStatus']=='PASS'
+assert data['scenarios'][0]['metrics']['totalIterations']==10
+assert len(data['scenarios'][0]['metrics']['iterations'])==10
+PY
+  pass 'full reliability serializes ten iterations from multi-record trajectories'
+}
+
+test_tool_reliability_model_failures_continue_all_iterations() {
+  local output status=0
+  install_fake_openclaw
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" \
+    CLAWBOX_QUALIFY_RUN_ID='reliability-fail-continues' \
+    CLAWBOX_FAKE_OPENCLAW_TRAJECTORY_PRELUDE=true \
+    CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 \
+    CLAWBOX_FAKE_OPENCLAW_FABRICATE=true \
+    bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 01-tool-reliability --json)"
+  status=$?
+  set -e
+  assert_equals 'fast reliability model failures return model failure' "$status" '1'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+scenario=data['scenarios'][0]
+assert data['overallStatus']=='FAIL'
+assert data['score'] == 0
+assert scenario['metrics']['totalIterations']==3
+assert len(scenario['metrics']['iterations'])==3
+assert all(item['status']=='FAIL' for item in scenario['metrics']['iterations'])
+assert all(item['error']['message'] == '' for item in scenario['metrics']['iterations'])
+assert all(item['error']['type'] is None for item in scenario['metrics']['iterations'])
+PY
+  pass 'model-attributable reliability failures continue through all fast iterations with valid empty error objects'
 }
 
 test_qualify_runner_records_null_git_provenance_outside_checkout() {
@@ -836,14 +941,15 @@ if [[ "$command" == *"runner.sh"* ]]; then
   warning="${CLAWBOX_FAKE_REMOTE_WARNING:-expected 1 efficient tool call, observed 2}"
   python3 - "$status" "$score" "$failure" "$warning" <<PY
 import json, sys
-status, score, failure, warning = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+status, score_arg, failure, warning = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+score = None if score_arg == "null" else int(score_arg)
 scenario_status = status if status in ("FAIL", "ERROR", "WARNING") else "PASS"
 data = {
   "schemaVersion":"1","runId":"render-run","startedAt":"2026-07-15T13:03:52Z","completedAt":"2026-07-15T13:24:17Z","durationSeconds":1225,"completed": status != "ERROR",
   "suite":{"schemaVersion":"1","checksum":"suite-checksum"},"clawbox":{"commit":"abc123","dirty":False},
   "profile":{"id":"full","name":"Full"},"coverage":{"profile":"full","scenariosRun":1,"reliabilityIterations":10,"workflowCases":0},
   "model":{"alias":"clawbox/local","configured":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","running":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"},
-  "overallStatus":status,"score":score,"categories":{},"warnings":[],"failures":[],"scenarios":[{"scenarioId":"01-tool-reliability","scenarioName":"Tool-calling reliability","status":scenario_status,"score":score,"durationSeconds":714,"metrics":{"totalIterations":10,"correctIterations":6,"efficientIterations":6,"averageToolCalls":1.0},"warnings":[],"failures":[]}],
+  "overallStatus":status,"score":score,"scoreComplete": score is not None,"categories":{},"warnings":[],"failures":[],"scenarios":[{"scenarioId":"01-tool-reliability","scenarioName":"Tool-calling reliability","status":scenario_status,"score":score,"durationSeconds":714,"metrics":{"totalIterations":10,"correctIterations":6,"efficientIterations":6,"averageToolCalls":1.0},"warnings":[],"failures":[]}],
   "artifactDirectory":"runs/render-run"
 }
 if status == "WARNING":
@@ -893,12 +999,13 @@ exit 0
   assert_contains 'remote exit 1 FAIL progress uses non-success marker' "$output" 'Running 01-tool-reliability qualification... !'
 
   set +e
-  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" CLAWBOX_FAKE_REMOTE_OVERALL_STATUS=ERROR CLAWBOX_FAKE_REMOTE_SCORE=0 CLAWBOX_FAKE_REMOTE_EXIT_STATUS=2 bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" CLAWBOX_FAKE_REMOTE_OVERALL_STATUS=ERROR CLAWBOX_FAKE_REMOTE_SCORE=null CLAWBOX_FAKE_REMOTE_EXIT_STATUS=2 bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
   status=$?
   set -e
   assert_equals 'remote exit 2 valid ERROR aggregate returns infrastructure error after rendering' "$status" '2'
   assert_contains 'remote exit 2 ERROR renders diagnostic report' "$output" 'Model Qualification Report'
   assert_contains 'remote exit 2 ERROR report shows failure reason' "$output" 'iteration 3 failed critical assertions'
+  assert_contains 'remote exit 2 ERROR report shows unrated score' "$output" 'Unrated'
 
   set +e
   output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" CLAWBOX_FAKE_REMOTE_MALFORMED_AGGREGATE=true CLAWBOX_FAKE_REMOTE_EXIT_STATUS=0 bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
@@ -1178,6 +1285,7 @@ run_test test_qualify_runner_default_json_runs_real_scenarios_with_fake_openclaw
 run_test test_qualify_profiles_select_expected_coverage
 run_test test_qualify_fast_profile_aggregate_includes_all_scenarios
 run_test test_runner_aggregates_fast_and_full_fixture_results_robustly
+run_test test_tool_reliability_serializes_multi_record_trajectories
 run_test test_qualify_runner_records_null_git_provenance_outside_checkout
 run_test test_qualify_command_self_heals_without_setup
 run_test test_qualify_human_output_is_polished
@@ -1185,6 +1293,7 @@ run_test test_qualify_renders_valid_remote_results_before_returning_status
 run_test test_qualify_model_mismatch_stops_before_publish
 run_test test_tool_reliability_extra_calls_warn_but_do_not_fail
 run_test test_tool_reliability_fabricated_success_fails
+run_test test_tool_reliability_model_failures_continue_all_iterations
 run_test test_evidence_failures_are_errors
 run_test test_tool_reliability_captures_agent_error_evidence_and_classifies_it
 run_test test_workflow_cases_and_code_repair_objective_behavior

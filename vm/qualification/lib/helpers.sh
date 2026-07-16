@@ -104,8 +104,8 @@ qualification_trace_tool_count() {
 
 qualification_trace_error_json() {
   local trajectory="$1" fallback_status="${2:-unknown}" fallback_message="${3:-}"
-  jq -c --arg status "$fallback_status" --arg fallback "$fallback_message" '
-    [select(.type=="trace.artifacts") | .data] | last as $data
+  jq -cs --arg status "$fallback_status" --arg fallback "$fallback_message" '
+    [.[] | select(.type=="trace.artifacts") | .data] | last as $data
     | ($data.error // $data.finalError // $data.lastError // null) as $error
     | if ($error | type) == "object" then
         {

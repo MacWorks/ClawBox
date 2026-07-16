@@ -477,7 +477,7 @@ for index, scenario in enumerate(scenarios):
 if scenarios:
     print('')
 score = data.get('score')
-line('Overall Score', 'unrated' if score is None else f'{score}/100')
+line('Overall Score', 'Unrated' if score is None else f'{score}/100')
 line('Overall Result', data.get('overallStatus', 'unknown'))
 if data.get('completed') is False:
     line('Completed', 'false')
