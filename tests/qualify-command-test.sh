@@ -568,13 +568,13 @@ PY
 }
 
 test_tool_reliability_serializes_multi_record_trajectories() {
-  local output status=0
+  local output status=0 stderr_file="$TEMP_DIR/multi-record-fast.stderr"
   install_fake_openclaw
   set +e
   output="$(PATH="$MOCK_BIN_DIR:$PATH" \
     CLAWBOX_QUALIFY_RUN_ID='multi-record-fast-pass' \
     CLAWBOX_FAKE_OPENCLAW_TRAJECTORY_PRELUDE=true \
-    bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 01-tool-reliability --json)"
+    bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 01-tool-reliability --json 2>"$stderr_file")"
   status=$?
   set -e
   assert_equals 'fast reliability with multi-record trajectories exits success' "$status" '0'
@@ -593,13 +593,16 @@ assert len(iterations)==3
 assert all(item['error']['type'] is None for item in iterations)
 PY
   pass 'fast reliability serializes three iterations from multi-record trajectories'
+  assert_contains 'fast reliability emits first progress event' "$(cat "$stderr_file")" $'CLAWBOX_PROGRESS\t1\t3\t01-tool-reliability\titeration 1'
+  assert_contains 'fast reliability emits final progress event' "$(cat "$stderr_file")" $'CLAWBOX_PROGRESS\t3\t3\t01-tool-reliability\titeration 3'
 
   install_fake_openclaw
+  stderr_file="$TEMP_DIR/multi-record-full.stderr"
   set +e
   output="$(PATH="$MOCK_BIN_DIR:$PATH" \
     CLAWBOX_QUALIFY_RUN_ID='multi-record-full-pass' \
     CLAWBOX_FAKE_OPENCLAW_TRAJECTORY_PRELUDE=true \
-    bash "$ROOT_DIR/vm/qualification/runner.sh" --profile full --scenario 01-tool-reliability --json)"
+    bash "$ROOT_DIR/vm/qualification/runner.sh" --profile full --scenario 01-tool-reliability --json 2>"$stderr_file")"
   status=$?
   set -e
   assert_equals 'full reliability with multi-record trajectories exits success' "$status" '0'
@@ -611,6 +614,60 @@ assert data['scenarios'][0]['metrics']['totalIterations']==10
 assert len(data['scenarios'][0]['metrics']['iterations'])==10
 PY
   pass 'full reliability serializes ten iterations from multi-record trajectories'
+  assert_contains 'full reliability emits final progress event' "$(cat "$stderr_file")" $'CLAWBOX_PROGRESS\t10\t10\t01-tool-reliability\titeration 10'
+}
+
+test_vm_progress_events_cover_profiles_and_scenarios() {
+  local output status=0 stderr_file="$TEMP_DIR/progress-fast-suite.stderr"
+  install_fake_openclaw
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='progress-fast-suite' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --json 2>"$stderr_file")"
+  status=$?
+  set -e
+  assert_equals 'fast suite with progress exits success' "$status" '0'
+  assert_contains 'fast suite progress total is seven' "$(cat "$stderr_file")" $'CLAWBOX_PROGRESS\t7\t7\t03-code-repair\tcompleted'
+  assert_contains 'fast workflow progress includes grounded-read' "$(cat "$stderr_file")" $'CLAWBOX_PROGRESS\t5\t7\t02-tool-workflows\tgrounded-read'
+  python3 - "$stderr_file" <<'PY'
+import sys
+completed=[]
+with open(sys.argv[1], encoding='utf-8') as fh:
+    for line in fh:
+        if line.startswith('CLAWBOX_PROGRESS\t'):
+            _, c, t, *_ = line.rstrip('\n').split('\t')
+            c, t = int(c), int(t)
+            assert c <= t
+            completed.append(c)
+assert completed == sorted(completed)
+assert completed[-1] == 7
+PY
+  pass 'fast suite progress is monotonic and bounded'
+
+  install_fake_openclaw
+  stderr_file="$TEMP_DIR/progress-full-suite.stderr"
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='progress-full-suite' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile full --json 2>"$stderr_file")"
+  status=$?
+  set -e
+  assert_equals 'full suite with progress exits success' "$status" '0'
+  assert_contains 'full suite progress total is sixteen' "$(cat "$stderr_file")" $'CLAWBOX_PROGRESS\t16\t16\t03-code-repair\tcompleted'
+
+  install_fake_openclaw
+  stderr_file="$TEMP_DIR/progress-fast-workflows.stderr"
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='progress-fast-workflows' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 02-tool-workflows --json 2>"$stderr_file")"
+  status=$?
+  set -e
+  assert_equals 'fast workflows selected scenario exits success' "$status" '0'
+  assert_contains 'fast workflows selected scenario total is three' "$(cat "$stderr_file")" $'CLAWBOX_PROGRESS\t3\t3\t02-tool-workflows\tabsence-check'
+
+  install_fake_openclaw
+  stderr_file="$TEMP_DIR/progress-code-repair.stderr"
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='progress-code-repair' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json 2>"$stderr_file")"
+  status=$?
+  set -e
+  assert_equals 'code repair selected scenario exits success' "$status" '0'
+  assert_contains 'code repair selected scenario total is one' "$(cat "$stderr_file")" $'CLAWBOX_PROGRESS\t1\t1\t03-code-repair\tcompleted'
 }
 
 test_tool_reliability_model_failures_continue_all_iterations() {
@@ -741,6 +798,9 @@ if [[ "$command" == *"runner.sh"* ]]; then
   [[ "$command" == *"CLAWBOX_QUALIFY_PROFILE_ID=full"* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_SUITE_CHECKSUM="* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_CLAWBOX_COMMIT="* ]]
+  printf "CLAWBOX_PROGRESS\t1\t10\t01-tool-reliability\titeration 1\n" >&2
+  printf "remote diagnostic line\n" >&2
+  printf "CLAWBOX_PROGRESS\t10\t10\t01-tool-reliability\titeration 10\n" >&2
   printf "{\"schemaVersion\":\"1\",\"runId\":\"self-heal\",\"profile\":{\"id\":\"full\",\"name\":\"Full\"},\"coverage\":{\"profile\":\"full\",\"scenariosRun\":1,\"reliabilityIterations\":10,\"workflowCases\":0},\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"PASS\",\"score\":100,\"categories\":{},\"warnings\":[],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"status\":\"PASS\"}],\"artifactDirectory\":\"runs/self-heal\"}\n"
   exit 0
 fi
@@ -792,6 +852,10 @@ PY
   assert_contains 'qualify self-heal passes suite checksum to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_SUITE_CHECKSUM='
   assert_contains 'qualify self-heal passes ClawBox commit to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_CLAWBOX_COMMIT='
   assert_contains 'qualify self-heal progress stays on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Publishing qualification suite to VM'
+  assert_contains 'json mode progress is line-oriented on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Qualification progress: 1/10'
+  assert_contains 'json mode progress reaches final unit on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Qualification progress: 10/10'
+  assert_not_contains 'json stdout is uncontaminated by progress protocol' "$output" 'CLAWBOX_PROGRESS'
+  assert_not_contains 'json stdout is uncontaminated by progress text' "$output" 'Qualification progress'
   assert_contains 'qualify reports actual running model separately from alias' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Model under qualification: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
   assert_contains 'qualify reports OpenClaw alias separately' "$(cat "$TEMP_DIR/self-heal.stderr")" 'OpenClaw alias: clawbox/local'
   assert_equals 'qualify self-heal preserves first historical run sentinel' "$(cat "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-a/sentinel.txt")" 'keep-a'
@@ -834,6 +898,15 @@ if [ "$command" = "echo ok" ]; then exit 0; fi
 if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
 if [[ "$command" == rm\ -f* ]]; then exit 0; fi
 if [[ "$command" == *"runner.sh"* ]]; then
+  if [[ "$command" == *"01-tool-reliability"* ]]; then
+    printf "CLAWBOX_PROGRESS\t1\t10\t01-tool-reliability\titeration 1\n" >&2
+    printf "not a progress line\n" >&2
+    printf "CLAWBOX_PROGRESS\t10\t10\t01-tool-reliability\titeration 10\n" >&2
+  else
+    printf "CLAWBOX_PROGRESS\t3\t16\t01-tool-reliability\titeration 3\n" >&2
+    printf "CLAWBOX_PROGRESS\t11\t16\t02-tool-workflows\texact-output\n" >&2
+    printf "CLAWBOX_PROGRESS\t16\t16\t03-code-repair\tcompleted\n" >&2
+  fi
   printf "{\"schemaVersion\":\"1\",\"runId\":\"human-run\",\"startedAt\":\"2026-07-15T13:03:52Z\",\"completedAt\":\"2026-07-15T13:24:17Z\",\"durationSeconds\":1225,\"completed\":true,\"suite\":{\"schemaVersion\":\"1\",\"checksum\":\"suite-checksum\"},\"clawbox\":{\"commit\":\"abc123\",\"dirty\":false},\"profile\":{\"id\":\"full\",\"name\":\"Full\"},\"coverage\":{\"profile\":\"full\",\"scenariosRun\":1,\"reliabilityIterations\":10,\"workflowCases\":0},\"model\":{\"alias\":\"clawbox/local\",\"configured\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\",\"running\":\"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"},\"overallStatus\":\"WARNING\",\"score\":97,\"categories\":{},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[],\"scenarios\":[{\"scenarioId\":\"01-tool-reliability\",\"scenarioName\":\"Tool-calling reliability\",\"status\":\"WARNING\",\"score\":97,\"durationSeconds\":714,\"metrics\":{\"totalIterations\":10,\"correctIterations\":10,\"efficientIterations\":9,\"averageToolCalls\":1.1},\"warnings\":[\"expected 1 efficient tool call, observed 2\"],\"failures\":[]}],\"artifactDirectory\":\"runs/human-run\"}\n"
   exit 0
 fi
@@ -854,7 +927,9 @@ exit 0
   assert_contains 'human output checks host endpoint with final marker' "$output" 'Checking host inference endpoint... ✓'
   assert_contains 'human output checks configured/running model match' "$output" 'Checking configured model matches running model... ✓'
   assert_not_contains 'compact progress has no blank line between completed operations' "$output" $'Checking host inference endpoint... ✓\n\nChecking VM SSH access'
-  assert_contains 'human output shows selected scenario running progress' "$output" 'Running 01-tool-reliability qualification... !'
+  assert_contains 'human output shows selected scenario running progress' "$output" 'Running 01-tool-reliability qualification...'
+  assert_contains 'human output shows line-oriented qualification progress' "$output" 'Qualification progress: 1/10'
+  assert_contains 'human output shows final progress count' "$output" '[████████████████] 10/10 !'
   assert_contains 'human output shows compact model identity' "$output" 'Model under qualification: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
   assert_contains 'human output shows OpenClaw alias' "$output" 'OpenClaw alias: clawbox/local'
   assert_contains 'human output shows qualification profile metadata' "$output" 'Qualification profile: Full'
@@ -864,7 +939,7 @@ exit 0
   assert_not_contains 'human output omits redundant configured model line' "$output" 'Configured model:'
   assert_not_contains 'human output omits redundant running model line' "$output" 'Running model:'
   assert_contains 'human report uses shared section heading' "$output" ' > Model Qualification Report'
-  assert_contains 'human report has one blank line before heading' "$output" $'Running 01-tool-reliability qualification... !\n\n-----------------------------------------'
+  assert_contains 'human report has one blank line before heading' "$output" $'Running 01-tool-reliability qualification... [████████████████] 10/10 !\n\n-----------------------------------------'
   assert_not_contains 'human report no longer prints model row' "$output" 'Model: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
   assert_contains 'human report shows scenario id' "$output" '01-tool-reliability'
   assert_contains 'human report shows selected profile' "$output" 'Profile'
@@ -892,7 +967,8 @@ exit 0
   status=$?
   set -e
   assert_equals 'human qualify full-suite warning exits success' "$status" '0'
-  assert_contains 'human output shows complete suite running progress' "$suite_output" 'Running full model qualification... !'
+  assert_contains 'human output shows complete suite running progress' "$suite_output" 'Running full model qualification...'
+  assert_contains 'human output shows complete suite progress total' "$suite_output" '[████████████████] 16/16 !'
 }
 
 test_qualify_renders_valid_remote_results_before_returning_status() {
@@ -931,6 +1007,8 @@ if [ "$command" = "echo ok" ]; then exit 0; fi
 if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
 if [[ "$command" == rm\ -f* ]]; then exit 0; fi
 if [[ "$command" == *"runner.sh"* ]]; then
+  printf "CLAWBOX_PROGRESS\t1\t10\t01-tool-reliability\titeration 1\n" >&2
+  printf "CLAWBOX_PROGRESS\t10\t10\t01-tool-reliability\titeration 10\n" >&2
   if [ "${CLAWBOX_FAKE_REMOTE_MALFORMED_AGGREGATE:-false}" = true ]; then
     printf "not-json\n"
     exit 0
@@ -996,7 +1074,7 @@ exit 0
   assert_contains 'remote exit 1 FAIL renders full report before exit' "$output" 'Model Qualification Report'
   assert_contains 'remote exit 1 FAIL report keeps successful report fields' "$output" '01-tool-reliability'
   assert_contains 'remote exit 1 FAIL report shows failure reason' "$output" 'iteration 3 failed critical assertions'
-  assert_contains 'remote exit 1 FAIL progress uses non-success marker' "$output" 'Running 01-tool-reliability qualification... !'
+  assert_contains 'remote exit 1 FAIL progress uses non-success marker' "$output" 'Running 01-tool-reliability qualification... [████████████████] 10/10 !'
 
   set +e
   output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" CLAWBOX_FAKE_REMOTE_OVERALL_STATUS=ERROR CLAWBOX_FAKE_REMOTE_SCORE=null CLAWBOX_FAKE_REMOTE_EXIT_STATUS=2 bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
@@ -1286,6 +1364,7 @@ run_test test_qualify_profiles_select_expected_coverage
 run_test test_qualify_fast_profile_aggregate_includes_all_scenarios
 run_test test_runner_aggregates_fast_and_full_fixture_results_robustly
 run_test test_tool_reliability_serializes_multi_record_trajectories
+run_test test_vm_progress_events_cover_profiles_and_scenarios
 run_test test_qualify_runner_records_null_git_provenance_outside_checkout
 run_test test_qualify_command_self_heals_without_setup
 run_test test_qualify_human_output_is_polished

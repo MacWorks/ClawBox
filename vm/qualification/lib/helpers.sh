@@ -21,6 +21,27 @@ qualification_empty_json_array() {
   printf '[]\n'
 }
 
+qualification_progress_sanitize() {
+  printf '%s' "$1" | tr '\t\r\n' '   ' | sed 's/[^[:print:]]//g'
+}
+
+qualification_progress_event() {
+  local local_completed="$1" scenario_id="$2" unit_label="$3"
+  local total="${CLAWBOX_QUALIFY_PROGRESS_TOTAL:-0}" offset="${CLAWBOX_QUALIFY_PROGRESS_OFFSET:-0}"
+  local completed=0 clean_scenario='' clean_label=''
+
+  case "$local_completed:$total:$offset" in
+    *[!0-9:]*|:*|*:|*::*) return 0 ;;
+  esac
+
+  completed=$((offset + local_completed))
+  [ "$completed" -le "$total" ] || completed="$total"
+  [ "$completed" -ge 0 ] || completed=0
+  clean_scenario="$(qualification_progress_sanitize "$scenario_id")"
+  clean_label="$(qualification_progress_sanitize "$unit_label")"
+  printf 'CLAWBOX_PROGRESS\t%s\t%s\t%s\t%s\n' "$completed" "$total" "$clean_scenario" "$clean_label" >&2
+}
+
 qualification_assertions_json() {
   jq -n '$ARGS.positional | [range(0; length; 4) as $i | {name:.[$i], status:.[$i+1], message:.[$i+2], category:.[$i+3]}]' --args "$@"
 }

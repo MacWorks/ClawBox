@@ -73,6 +73,27 @@ OpenClaw availability, model consistency, suite publication, installation, and
 the long-running scenario/suite execution. In JSON mode, stdout remains JSON
 only while progress stays on stderr.
 
+Qualification execution progress is evidence-based rather than time-based.
+The VM runner emits a progress event only after a scenario unit reaches a
+terminal state (`PASS`, `WARNING`, `FAIL`, or `ERROR`). Failed units still count
+as completed work. The source of truth is an internal stderr event format used
+between the VM runner and host command; it is not a public API.
+
+Profile progress units are:
+
+- Fast: 7 units total
+  - 3 tool-reliability iterations
+  - 3 workflow cases
+  - 1 code-repair scenario
+- Full: 16 units total
+  - 10 tool-reliability iterations
+  - 5 workflow cases
+  - 1 code-repair scenario
+
+When a single scenario is selected, the progress total is scoped to that
+scenario and profile. For redirected logs and JSON mode, progress is
+line-oriented on stderr, for example `Qualification progress: 4/7 — ...`.
+
 ## What it measures
 
 Scenario results use these statuses:

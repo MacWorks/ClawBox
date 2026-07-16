@@ -97,16 +97,22 @@ PROFILE_RELIABILITY_ITERATIONS="$(profile_reliability_iterations "$PROFILE_ID")"
 PROFILE_WORKFLOW_CASES="$(profile_workflow_cases "$PROFILE_ID")"
 COVERAGE_RELIABILITY_ITERATIONS=0
 COVERAGE_WORKFLOW_CASES=0
+COVERAGE_CODE_REPAIR_UNITS=0
 case "$SCENARIO_FILTER" in
   ''|01-tool-reliability) COVERAGE_RELIABILITY_ITERATIONS="$PROFILE_RELIABILITY_ITERATIONS" ;;
 esac
 case "$SCENARIO_FILTER" in
   ''|02-tool-workflows) COVERAGE_WORKFLOW_CASES="$(count_words "$PROFILE_WORKFLOW_CASES")" ;;
 esac
+case "$SCENARIO_FILTER" in
+  ''|03-code-repair) COVERAGE_CODE_REPAIR_UNITS=1 ;;
+esac
+PROGRESS_TOTAL=$((COVERAGE_RELIABILITY_ITERATIONS + COVERAGE_WORKFLOW_CASES + COVERAGE_CODE_REPAIR_UNITS))
 export CLAWBOX_QUALIFY_PROFILE_ID="$PROFILE_ID"
 export CLAWBOX_QUALIFY_PROFILE_NAME="$PROFILE_NAME"
 export CLAWBOX_QUALIFY_RELIABILITY_ITERATIONS="$PROFILE_RELIABILITY_ITERATIONS"
 export CLAWBOX_QUALIFY_WORKFLOW_CASES="$PROFILE_WORKFLOW_CASES"
+export CLAWBOX_QUALIFY_PROGRESS_TOTAL="$PROGRESS_TOTAL"
 
 emit_preflight_error() {
   local message="$1"
@@ -210,16 +216,35 @@ EOF_PROFILE_SCENARIOS
   esac
 }
 
+scenario_progress_units() {
+  case "$1" in
+    01-tool-reliability) printf '%s\n' "$COVERAGE_RELIABILITY_ITERATIONS" ;;
+    02-tool-workflows) printf '%s\n' "$COVERAGE_WORKFLOW_CASES" ;;
+    03-code-repair) printf '%s\n' "$COVERAGE_CODE_REPAIR_UNITS" ;;
+    *) printf '0\n' ;;
+  esac
+}
+
+progress_offset=0
 while IFS= read -r scenario; do
   [ -n "$scenario" ] || continue
   [ -x "$scenario" ] || chmod +x "$scenario"
   scenario_id="$(basename "$scenario" .sh)"
+  scenario_units="$(scenario_progress_units "$scenario_id")"
   scenario_result="$results_dir/$scenario_id.json"
   scenario_stderr="$results_dir/$scenario_id.stderr"
+  scenario_stderr_fifo="$results_dir/$scenario_id.stderr.fifo"
+  rm -f "$scenario_stderr_fifo"
+  mkfifo "$scenario_stderr_fifo"
+  tee "$scenario_stderr" <"$scenario_stderr_fifo" >&2 &
+  scenario_stderr_tee_pid=$!
   set +e
-  "$scenario" "$RUN_ID" "$RUNS_DIR/$RUN_ID/$scenario_id" >"$scenario_result" 2>"$scenario_stderr"
+  CLAWBOX_QUALIFY_PROGRESS_OFFSET="$progress_offset" "$scenario" "$RUN_ID" "$RUNS_DIR/$RUN_ID/$scenario_id" >"$scenario_result" 2>"$scenario_stderr_fifo"
   scenario_exit=$?
+  wait "$scenario_stderr_tee_pid" >/dev/null 2>&1
   set -e
+  rm -f "$scenario_stderr_fifo"
+  progress_offset=$((progress_offset + scenario_units))
   printf '%s\t%s\n' "$scenario_id" "$scenario_exit" >> "$scenario_statuses_file"
   if jq -e 'type == "object"' "$scenario_result" >/dev/null 2>&1; then
     printf '%s\n' "$scenario_result" >> "$scenario_results_list"
@@ -289,6 +314,7 @@ jq -s \
   --arg profileName "$PROFILE_NAME" \
   --arg coverageReliabilityIterations "$COVERAGE_RELIABILITY_ITERATIONS" \
   --arg coverageWorkflowCases "$COVERAGE_WORKFLOW_CASES" \
+  --arg coverageProgressUnits "$PROGRESS_TOTAL" \
   --arg artifactDir "$RUNS_DIR/$RUN_ID" '
   def priority: {ERROR:0, FAIL:1, WARNING:2, SKIPPED:3, PASS:4};
   def category_status($names):
@@ -304,7 +330,7 @@ jq -s \
   | ($scenarios | map(select((.status == "ERROR") or (.unrated // false))) | length) as $unratedRequired
   | ($scenarios | map(select((.unrated // false) | not)) | length) as $ratedScenarios
   | (if $modelWarning == "" then [] else [$modelWarning] end) as $modelWarnings
-  | {schemaVersion:"1",runId:$runId,startedAt:$startedAt,completedAt:$completedAt,durationSeconds:($durationSeconds|tonumber),completed:true,suite:{schemaVersion:$suiteSchemaVersion,checksum:$suiteChecksum},clawbox:{commit:(if $clawboxCommit == "" then null else $clawboxCommit end),dirty:$clawboxDirty},profile:{id:$profileId,name:$profileName},coverage:{profile:$profileId,scenariosRun:($scenarios|length),reliabilityIterations:($coverageReliabilityIterations|tonumber),workflowCases:($coverageWorkflowCases|tonumber)},scoreComplete:($unratedRequired == 0),ratedScenarios:$ratedScenarios,requiredScenarios:($scenarios|length),model:{alias:$modelAlias,configured:$modelConfigured,running:$modelRunning},overallStatus:$overall,score:(if $unratedRequired > 0 then null elif ($scores|length)>0 then (($scores|add / length)|round) else null end),categories:{"Tool correctness": category_status(["tool_correctness"]),"Grounding": category_status(["grounding"]),"Workflow correctness": category_status(["workflow_correctness"]),"Instruction following": category_status(["instruction_following"]),"Code and state correctness": category_status(["code_state_correctness"]),"Hallucination avoidance": category_status(["hallucination_avoidance"]),"Efficiency": category_status(["efficiency"])},warnings:($modelWarnings + ($scenarios|map(.warnings[]?) )),failures:($scenarios|map(.failures[]?) ),scenarios:$scenarios,artifactDirectory:$artifactDir}' "${scenario_result_files[@]}" >"$results_dir/aggregate.json" 2>"$aggregate_stderr"
+  | {schemaVersion:"1",runId:$runId,startedAt:$startedAt,completedAt:$completedAt,durationSeconds:($durationSeconds|tonumber),completed:true,suite:{schemaVersion:$suiteSchemaVersion,checksum:$suiteChecksum},clawbox:{commit:(if $clawboxCommit == "" then null else $clawboxCommit end),dirty:$clawboxDirty},profile:{id:$profileId,name:$profileName},coverage:{profile:$profileId,scenariosRun:($scenarios|length),reliabilityIterations:($coverageReliabilityIterations|tonumber),workflowCases:($coverageWorkflowCases|tonumber),progressUnits:($coverageProgressUnits|tonumber)},scoreComplete:($unratedRequired == 0),ratedScenarios:$ratedScenarios,requiredScenarios:($scenarios|length),model:{alias:$modelAlias,configured:$modelConfigured,running:$modelRunning},overallStatus:$overall,score:(if $unratedRequired > 0 then null elif ($scores|length)>0 then (($scores|add / length)|round) else null end),categories:{"Tool correctness": category_status(["tool_correctness"]),"Grounding": category_status(["grounding"]),"Workflow correctness": category_status(["workflow_correctness"]),"Instruction following": category_status(["instruction_following"]),"Code and state correctness": category_status(["code_state_correctness"]),"Hallucination avoidance": category_status(["hallucination_avoidance"]),"Efficiency": category_status(["efficiency"])},warnings:($modelWarnings + ($scenarios|map(.warnings[]?) )),failures:($scenarios|map(.failures[]?) ),scenarios:$scenarios,artifactDirectory:$artifactDir}' "${scenario_result_files[@]}" >"$results_dir/aggregate.json" 2>"$aggregate_stderr"
 aggregate_status=$?
 set -e
 

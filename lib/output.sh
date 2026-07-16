@@ -666,3 +666,102 @@ status_wait_for_pid() {
     status_sleep "$wait_interval" "$message"
   done
 }
+
+status_progress_bar() {
+  local completed="$1" total="$2" width="${3:-16}"
+  local filled=0 empty=0 i=0 fill_char='█' empty_char='░'
+
+  case "${CLAWBOX_ASCII_PROGRESS:-false}" in
+    true|1|yes)
+      fill_char='#'
+      empty_char='-'
+      ;;
+  esac
+
+  if [ "$total" -gt 0 ] 2>/dev/null; then
+    filled=$((completed * width / total))
+  else
+    filled=0
+  fi
+  [ "$filled" -le "$width" ] || filled="$width"
+  [ "$filled" -ge 0 ] || filled=0
+  empty=$((width - filled))
+
+  printf '['
+  i=0
+  while [ "$i" -lt "$filled" ]; do printf '%s' "$fill_char"; i=$((i + 1)); done
+  i=0
+  while [ "$i" -lt "$empty" ]; do printf '%s' "$empty_char"; i=$((i + 1)); done
+  printf ']'
+}
+
+status_progress_message() {
+  local label="$1" completed="$2" total="$3" current="${4:-}" bar=''
+
+  bar="$(status_progress_bar "$completed" "$total")"
+  if [ -n "$current" ]; then
+    printf '%s... %s %s/%s %s\n' "$label" "$bar" "$completed" "$total" "$current"
+  else
+    printf '%s... %s %s/%s\n' "$label" "$bar" "$completed" "$total"
+  fi
+}
+
+status_progress_begin() {
+  local label="$1" total="$2" current="${3:-}"
+  local message=''
+
+  CLAWBOX_STATUS_ACTIVE=true
+  CLAWBOX_STATUS_COMPACT_ACTIVE=true
+  CLAWBOX_STATUS_MESSAGE="$label"
+  CLAWBOX_STATUS_SPINNER_INDEX=0
+
+  if _status_can_spin; then
+    _status_hide_cursor
+    message="$(status_progress_message "$label" 0 "$total" "$current")"
+    _status_render_active_line "${message%$'\n'}"
+  else
+    printf '%s...\n' "$label" >&2
+    _set_output_state "normal"
+  fi
+}
+
+status_progress_update() {
+  local label="$1" completed="$2" total="$3" current="${4:-}" log_prefix="${5:-Progress}"
+  local message=''
+
+  if _status_can_spin; then
+    message="$(status_progress_message "$label" "$completed" "$total" "$current")"
+    _status_render_active_line "${message%$'\n'}"
+  else
+    if [ -n "$current" ]; then
+      printf '%s: %s/%s — %s\n' "$log_prefix" "$completed" "$total" "$current" >&2
+    else
+      printf '%s: %s/%s\n' "$log_prefix" "$completed" "$total" >&2
+    fi
+    _set_output_state "normal"
+  fi
+}
+
+status_progress_end() {
+  local label="$1" completed="$2" total="$3" marker="$4" level="${5:-progress}" current="${6:-}"
+  local message='' final_message='' preserved_reply="${REPLY-}"
+
+  _status_show_cursor
+  message="$(status_progress_message "$label" "$completed" "$total" "$current")"
+  message="${message%$'\n'} $marker"
+
+  if [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] && _status_can_spin; then
+    _status_finalize_message "$message" "$level"
+    final_message="$REPLY"
+    REPLY="$preserved_reply"
+    _status_render_final_line "$final_message"
+  else
+    printf '%s\n' "$message" >&2
+    _set_output_state "normal"
+  fi
+
+  CLAWBOX_STATUS_ACTIVE=false
+  CLAWBOX_STATUS_COMPACT_ACTIVE=false
+  CLAWBOX_STATUS_MESSAGE=''
+  CLAWBOX_STATUS_SPINNER_INDEX=0
+}

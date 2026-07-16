@@ -66,10 +66,10 @@ run_case() {
   prompt_file="$case_dir/prompt.txt"; agent_output="$case_dir/agent-output.json"
   printf '%s\n\n%s\n' "$RULES" "$prompt" > "$prompt_file"
   set +e; qualification_run_openclaw_agent "$session" 240 "$prompt_file" "$agent_output"; openclaw_exit=$?; set -e
-  if ! qualification_find_session_files "$session"; then scenario_status=ERROR; scenario_error="$name: $QUALIFICATION_EVIDENCE_ERROR"; printf '%s\n' "$scenario_error" >> "$failures_file"; return; fi
-  if ! final_status="$(qualification_trace_final_status "$QUALIFICATION_TRAJECTORY" 2>/dev/null)"; then scenario_status=ERROR; scenario_error="$name: malformed trajectory finalStatus"; printf '%s\n' "$scenario_error" >> "$failures_file"; return; fi
-  if ! tools="$(qualification_trace_tool_count "$QUALIFICATION_TRAJECTORY" 2>/dev/null)"; then scenario_status=ERROR; scenario_error="$name: malformed trajectory toolMetas"; printf '%s\n' "$scenario_error" >> "$failures_file"; return; fi
-  if ! reply="$(qualification_final_reply "$QUALIFICATION_TRANSCRIPT" 2>/dev/null)"; then scenario_status=ERROR; scenario_error="$name: malformed transcript"; printf '%s\n' "$scenario_error" >> "$failures_file"; return; fi
+  if ! qualification_find_session_files "$session"; then scenario_status=ERROR; scenario_error="$name: $QUALIFICATION_EVIDENCE_ERROR"; printf '%s\n' "$scenario_error" >> "$failures_file"; qualification_progress_event "$total_cases" "$SCENARIO_ID" "$name"; return; fi
+  if ! final_status="$(qualification_trace_final_status "$QUALIFICATION_TRAJECTORY" 2>/dev/null)"; then scenario_status=ERROR; scenario_error="$name: malformed trajectory finalStatus"; printf '%s\n' "$scenario_error" >> "$failures_file"; qualification_progress_event "$total_cases" "$SCENARIO_ID" "$name"; return; fi
+  if ! tools="$(qualification_trace_tool_count "$QUALIFICATION_TRAJECTORY" 2>/dev/null)"; then scenario_status=ERROR; scenario_error="$name: malformed trajectory toolMetas"; printf '%s\n' "$scenario_error" >> "$failures_file"; qualification_progress_event "$total_cases" "$SCENARIO_ID" "$name"; return; fi
+  if ! reply="$(qualification_final_reply "$QUALIFICATION_TRANSCRIPT" 2>/dev/null)"; then scenario_status=ERROR; scenario_error="$name: malformed transcript"; printf '%s\n' "$scenario_error" >> "$failures_file"; qualification_progress_event "$total_cases" "$SCENARIO_ID" "$name"; return; fi
   [ "$final_status" = success ] && status_ok=true
   [ "$reply" = "$expected_reply" ] && reply_ok=true
   if [ -n "$expected_file" ]; then [ -f "$expected_file" ] && [ "$(cat "$expected_file")" = "$expected_content" ] || file_ok=false; fi
@@ -83,6 +83,7 @@ run_case() {
   [ "$case_status" != FAIL ] && pass_cases=$((pass_cases + 1))
   tool_sum=$((tool_sum + tools))
   jq -n --arg name "$name" --arg sessionId "$session" --arg agentStatus "$final_status" --arg toolCalls "$tools" --arg expectedMin "$expected_min" --arg expectedMax "$expected_max" --arg replyCorrect "$reply_ok" --arg fileCorrect "$file_ok" --arg status "$case_status" --arg trajectory "$QUALIFICATION_TRAJECTORY" --arg transcript "$QUALIFICATION_TRANSCRIPT" --argjson warnings "$case_warnings" '{case:$name,sessionId:$sessionId,agentStatus:$agentStatus,toolCalls:($toolCalls|tonumber),expectedEfficientRange:{min:($expectedMin|tonumber),max:($expectedMax|tonumber)},replyCorrect:($replyCorrect=="true"),filesystemCorrect:($fileCorrect=="true"),status:$status,warnings:$warnings,artifacts:{trajectory:$trajectory,transcript:$transcript}}' >> "$cases_jsonl"
+  qualification_progress_event "$total_cases" "$SCENARIO_ID" "$name"
 }
 
 if workflow_case_enabled exact-output; then

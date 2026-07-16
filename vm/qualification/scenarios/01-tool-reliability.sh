@@ -106,17 +106,18 @@ EOF_PROMPT
     scenario_status=ERROR
     scenario_error="$QUALIFICATION_EVIDENCE_ERROR"
     printf '%s\n' "iteration $n: $scenario_error" >> "$failures_file"
+    qualification_progress_event "$n" "$SCENARIO_ID" "iteration $n"
     break
   fi
 
   if ! final_status="$(qualification_trace_final_status "$QUALIFICATION_TRAJECTORY" 2>/dev/null)"; then
-    scenario_status=ERROR; scenario_error='malformed trajectory finalStatus'; printf '%s\n' "iteration $n: $scenario_error" >> "$failures_file"; break
+    scenario_status=ERROR; scenario_error='malformed trajectory finalStatus'; printf '%s\n' "iteration $n: $scenario_error" >> "$failures_file"; qualification_progress_event "$n" "$SCENARIO_ID" "iteration $n"; break
   fi
   if ! tools="$(qualification_trace_tool_count "$QUALIFICATION_TRAJECTORY" 2>/dev/null)"; then
-    scenario_status=ERROR; scenario_error='malformed trajectory toolMetas'; printf '%s\n' "iteration $n: $scenario_error" >> "$failures_file"; break
+    scenario_status=ERROR; scenario_error='malformed trajectory toolMetas'; printf '%s\n' "iteration $n: $scenario_error" >> "$failures_file"; qualification_progress_event "$n" "$SCENARIO_ID" "iteration $n"; break
   fi
   if ! reply="$(qualification_final_reply "$QUALIFICATION_TRANSCRIPT" 2>/dev/null)"; then
-    scenario_status=ERROR; scenario_error='malformed transcript'; printf '%s\n' "iteration $n: $scenario_error" >> "$failures_file"; break
+    scenario_status=ERROR; scenario_error='malformed transcript'; printf '%s\n' "iteration $n: $scenario_error" >> "$failures_file"; qualification_progress_event "$n" "$SCENARIO_ID" "iteration $n"; break
   fi
   error_json_file="$iter_dir/error.json"
   if ! qualification_trace_error_json "$QUALIFICATION_TRAJECTORY" "$final_status" "OpenClaw agent finalStatus=$final_status" >"$error_json_file" 2>"$iter_dir/error-build.stderr" ||
@@ -155,11 +156,13 @@ EOF_PROMPT
   if ! jq -n --arg iteration "$n" --arg sessionId "$session" --arg agentStatus "$final_status" --arg toolCalls "$tools" --arg openclawExitStatus "$openclaw_exit" --arg fileCorrect "$file_ok" --arg replyCorrect "$reply_ok" --arg status "$iter_status" --arg trajectory "$QUALIFICATION_TRAJECTORY" --arg transcript "$QUALIFICATION_TRANSCRIPT" --arg agentOutput "$agent_output" --slurpfile warnings <(printf '%s\n' "$iter_warnings") --slurpfile error "$error_json_file" '{iteration:($iteration|tonumber),sessionId:$sessionId,agentStatus:$agentStatus,openclawExitStatus:($openclawExitStatus|tonumber),toolCalls:($toolCalls|tonumber),expectedEfficientRange:{min:1,max:1},fileCorrect:($fileCorrect=="true"),replyCorrect:($replyCorrect=="true"),status:$status,error:($error[0] // {type:"agent_error",message:"missing error details",timeout:false}),warnings:($warnings[0] // []),artifacts:{trajectory:$trajectory,transcript:$transcript,agentOutput:$agentOutput}}' >"$iteration_json" 2>"$iter_dir/iteration-build.stderr" ||
      ! jq -e 'type == "object"' "$iteration_json" >/dev/null 2>&1; then
     printf '01-tool-reliability result construction failed while building iteration %s JSON\n' "$n" >&2
+    qualification_progress_event "$n" "$SCENARIO_ID" "iteration $n"
     qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" "result construction failed while building iteration $n JSON" "$session" "$openclaw_exit" "$QUALIFICATION_TRAJECTORY" "$QUALIFICATION_TRANSCRIPT" "$(($(qualification_now_epoch) - START))"
     exit 0
   fi
   cat "$iteration_json" >> "$iterations_jsonl"
   printf '\n' >> "$iterations_jsonl"
+  qualification_progress_event "$n" "$SCENARIO_ID" "iteration $n"
   [ "$scenario_status" = ERROR ] && break
 done
 

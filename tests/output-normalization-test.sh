@@ -1760,6 +1760,25 @@ test_status_helper_compact_mode_suppresses_interline_blank_spacing() {
   assert_not_contains 'compact status helper has no blank line between operations' "$output" $'Checking host inference endpoint... ✓\n\nChecking VM SSH access... ✓'
 }
 
+test_status_progress_helper_is_opt_in_and_line_oriented_without_tty() {
+  local output
+
+  output="$({
+    load_setup_functions
+
+    status_progress_begin 'Running fast model qualification' 7
+    status_progress_update 'Running fast model qualification' 1 7 '01-tool-reliability — iteration 1' 'Qualification progress'
+    status_progress_update 'Running fast model qualification' 7 7 '03-code-repair — completed' 'Qualification progress'
+    status_progress_end 'Running fast model qualification' 7 7 '✓' 'progress'
+    status_begin_compact 'Checking VM SSH access...'
+    status_end 'Checking VM SSH access... ✓' 'progress'
+  } 2>&1)"
+
+  assert_contains 'progress helper emits line-oriented non-tty progress' "$output" 'Qualification progress: 1/7 — 01-tool-reliability — iteration 1'
+  assert_contains 'progress helper emits final progress bar' "$output" '[████████████████] 7/7 ✓'
+  assert_contains 'progress helper does not alter later compact status spacing' "$output" $'Running fast model qualification... [████████████████] 7/7 ✓\nChecking VM SSH access...\nChecking VM SSH access... ✓'
+}
+
 test_status_helper_renders_trailing_spinner_frames() {
   local output
 
@@ -2950,6 +2969,7 @@ run_test test_vm_connection_setup_prefers_configured_vm_ip_default
 run_test test_manual_ssh_setup_uses_section_heading
 run_test test_status_helper_suppresses_duplicate_noninteractive_wait_lines
 run_test test_status_helper_compact_mode_suppresses_interline_blank_spacing
+run_test test_status_progress_helper_is_opt_in_and_line_oriented_without_tty
 run_test test_status_helper_renders_trailing_spinner_frames
 run_test test_status_helper_uses_fast_spinner_cadence
 run_test test_status_helper_applies_semantic_result_styling

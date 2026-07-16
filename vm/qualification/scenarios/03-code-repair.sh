@@ -88,17 +88,18 @@ warnings_file="$LOGS/warnings.txt"; failures_file="$LOGS/failures.txt"
 
 if ! qualification_find_session_files "$session"; then
   duration=$(($(qualification_now_epoch) - START))
+  qualification_progress_event 1 "$SCENARIO_ID" completed
   qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" "$QUALIFICATION_EVIDENCE_ERROR" "$session" "$openclaw_exit" '' '' "$duration"
   exit 0
 fi
 if ! final_status="$(qualification_trace_final_status "$QUALIFICATION_TRAJECTORY" 2>/dev/null)"; then
-  duration=$(($(qualification_now_epoch) - START)); qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" 'malformed trajectory finalStatus' "$session" "$openclaw_exit" "$QUALIFICATION_TRAJECTORY" "$QUALIFICATION_TRANSCRIPT" "$duration"; exit 0
+  duration=$(($(qualification_now_epoch) - START)); qualification_progress_event 1 "$SCENARIO_ID" completed; qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" 'malformed trajectory finalStatus' "$session" "$openclaw_exit" "$QUALIFICATION_TRAJECTORY" "$QUALIFICATION_TRANSCRIPT" "$duration"; exit 0
 fi
 if ! tools="$(qualification_trace_tool_count "$QUALIFICATION_TRAJECTORY" 2>/dev/null)"; then
-  duration=$(($(qualification_now_epoch) - START)); qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" 'malformed trajectory toolMetas' "$session" "$openclaw_exit" "$QUALIFICATION_TRAJECTORY" "$QUALIFICATION_TRANSCRIPT" "$duration"; exit 0
+  duration=$(($(qualification_now_epoch) - START)); qualification_progress_event 1 "$SCENARIO_ID" completed; qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" 'malformed trajectory toolMetas' "$session" "$openclaw_exit" "$QUALIFICATION_TRAJECTORY" "$QUALIFICATION_TRANSCRIPT" "$duration"; exit 0
 fi
 if ! reply="$(qualification_final_reply "$QUALIFICATION_TRANSCRIPT" 2>/dev/null)"; then
-  duration=$(($(qualification_now_epoch) - START)); qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" 'malformed transcript' "$session" "$openclaw_exit" "$QUALIFICATION_TRAJECTORY" "$QUALIFICATION_TRANSCRIPT" "$duration"; exit 0
+  duration=$(($(qualification_now_epoch) - START)); qualification_progress_event 1 "$SCENARIO_ID" completed; qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" 'malformed transcript' "$session" "$openclaw_exit" "$QUALIFICATION_TRAJECTORY" "$QUALIFICATION_TRANSCRIPT" "$duration"; exit 0
 fi
 
 if (cd "$PROJECT" && ./test.sh >"$LOGS/test-output.txt" 2>&1); then test_result=PASS; else test_result=FAIL; fi
@@ -124,4 +125,5 @@ warnings_json="$(cat "$warnings_file" | qualification_json_string_array)"; failu
 metrics="$(jq -n --arg toolCalls "$tools" --arg finalStatus "$final_status" --arg testResult "$test_result" --arg calculatorValid "$calculator_valid" --arg scopeValid "$scope_valid" --arg changedFiles "$changed_files" --arg diffPath "$LOGS/diff.patch" --arg testOutput "$LOGS/test-output.txt" --arg reply "$reply" --arg profileId "${CLAWBOX_QUALIFY_PROFILE_ID:-full}" --arg profileName "${CLAWBOX_QUALIFY_PROFILE_NAME:-Full}" '{profile:{id:$profileId,name:$profileName},toolCalls:($toolCalls|tonumber),expectedMin:null,expectedMax:null,toolCallsReliable:true,agentFinalStatus:$finalStatus,testResult:$testResult,calculatorValid:($calculatorValid=="true"),scopeValid:($scopeValid=="true"),changedFiles:$changedFiles,diffPath:$diffPath,testOutputPath:$testOutput,finalReply:$reply}')"
 score=0; [ "$scenario_status" = PASS ] && score=100; [ "$scenario_status" = WARNING ] && score=90
 assertions="$(qualification_assertions_json agent_completion "$([ "$status_ok" = true ] && echo PASS || echo FAIL)" "trajectory finalStatus=$final_status" instruction_following final_test "$([ "$test_result" = PASS ] && echo PASS || echo FAIL)" "final test result=$test_result" code_state_correctness intended_fix "$([ "$calculator_valid" = true ] && echo PASS || echo FAIL)" 'calculator contains the intended addition operation' code_state_correctness change_scope "$([ "$scope_valid" = true ] && echo PASS || echo FAIL)" "changed files: ${changed_files:-none}" instruction_following grounding "$([ "$test_result" = PASS ] && echo PASS || echo FAIL)" 'success claim is checked against objective test output' grounding)"
+qualification_progress_event 1 "$SCENARIO_ID" completed
 qualification_emit_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$scenario_status" "$score" "$duration" "$ARTIFACT_DIR" "$assertions" "$warnings_json" "$failures_json" "$session" "$openclaw_exit" "$QUALIFICATION_TRAJECTORY" "$QUALIFICATION_TRANSCRIPT" "$metrics"

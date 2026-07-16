@@ -398,6 +398,84 @@ qualify_scenario_description() {
   esac
 }
 
+qualify_count_words() {
+  local count=0 word
+  for word in $*; do
+    count=$((count + 1))
+  done
+  printf '%s\n' "$count"
+}
+
+qualify_profile_reliability_iterations() {
+  case "$1" in
+    fast) printf '3\n' ;;
+    full) printf '10\n' ;;
+    *) printf '0\n' ;;
+  esac
+}
+
+qualify_profile_workflow_cases() {
+  case "$1" in
+    fast) printf 'exact-output grounded-read absence-check\n' ;;
+    full) printf 'exact-output grounded-read absence-check two-step transform\n' ;;
+    *) printf '\n' ;;
+  esac
+}
+
+qualify_progress_total_units() {
+  local profile="$1" scenario="$2" reliability=0 workflows=0 code=0 cases=''
+  case "$scenario" in
+    ''|01-tool-reliability) reliability="$(qualify_profile_reliability_iterations "$profile")" ;;
+  esac
+  case "$scenario" in
+    ''|02-tool-workflows)
+      cases="$(qualify_profile_workflow_cases "$profile")"
+      workflows="$(qualify_count_words "$cases")"
+      ;;
+  esac
+  case "$scenario" in
+    ''|03-code-repair) code=1 ;;
+  esac
+  printf '%s\n' $((reliability + workflows + code))
+}
+
+qualify_sanitize_progress_field() {
+  printf '%s' "$1" | tr '\t\r\n' '   ' | sed 's/[^[:print:]]//g' | cut -c 1-80
+}
+
+qualify_parse_progress_stream() {
+  local label="$1" expected_total="$2" state_file="$3" diagnostic_file="$4"
+  local line='' prefix='' completed='' total='' scenario='' unit='' extra='' current='' last_completed=0
+  printf '0\t%s\t\n' "$expected_total" >"$state_file"
+  status_progress_begin "$label" "$expected_total"
+  while IFS= read -r line; do
+    prefix=''; completed=''; total=''; scenario=''; unit=''; extra=''
+    IFS="$(printf '\t')" read -r prefix completed total scenario unit extra <<EOF_PROGRESS_LINE
+$line
+EOF_PROGRESS_LINE
+    if [ "$prefix" = 'CLAWBOX_PROGRESS' ] && [ -z "$extra" ]; then
+      case "$completed:$total" in
+        *[!0-9:]*|:*|*:|*::*) printf '%s\n' "$line" >>"$diagnostic_file"; continue ;;
+      esac
+      [ "$total" -eq "$expected_total" ] 2>/dev/null || { printf '%s\n' "$line" >>"$diagnostic_file"; continue; }
+      [ "$completed" -ge "$last_completed" ] 2>/dev/null || { printf '%s\n' "$line" >>"$diagnostic_file"; continue; }
+      [ "$completed" -le "$total" ] 2>/dev/null || { printf '%s\n' "$line" >>"$diagnostic_file"; continue; }
+      last_completed="$completed"
+      scenario="$(qualify_sanitize_progress_field "$scenario")"
+      unit="$(qualify_sanitize_progress_field "$unit")"
+      if [ -n "$unit" ]; then
+        current="$scenario — $unit"
+      else
+        current="$scenario"
+      fi
+      printf '%s\t%s\t%s\n' "$completed" "$total" "$current" >"$state_file"
+      status_progress_update "$label" "$completed" "$total" "$current" 'Qualification progress'
+    else
+      printf '%s\n' "$line" >>"$diagnostic_file"
+    fi
+  done
+}
+
 qualify_render_report() {
   local json_file="$1"
 
@@ -564,6 +642,55 @@ qualify_run_remote_operation() {
   return "$status"
 }
 
+qualify_run_remote_progress_operation() {
+  local label="$1" remote_command="$2" output_file="$3" stderr_file="$4" remote_env="$5"
+  local progress_total=0 fifo='' state_file='' parser_pid='' runner_pid='' status=0 overall=''
+  local completed=0 total=0 current='' level='progress' marker='✓'
+
+  progress_total="$(qualify_progress_total_units "$QUALIFY_PROFILE" "$QUALIFY_SCENARIO")"
+  [ "$progress_total" -gt 0 ] 2>/dev/null || progress_total=1
+  fifo="$(mktemp -u "${TMPDIR:-/tmp}/clawbox-qualify-progress.XXXXXX")" || return 2
+  state_file="$(mktemp)" || return 2
+  mkfifo "$fifo" || return 2
+  : > "$stderr_file"
+
+  qualify_parse_progress_stream "$label" "$progress_total" "$state_file" "$stderr_file" <"$fifo" &
+  parser_pid=$!
+
+  set +e
+  qualify_run_remote_runner "$remote_command" "$output_file" "$fifo" "$remote_env" &
+  runner_pid=$!
+  set -e
+  QUALIFY_ACTIVE_OPERATION_PID="$runner_pid"
+  QUALIFY_ACTIVE_OPERATION_MESSAGE="$label..."
+
+  set +e
+  wait "$runner_pid"
+  status=$?
+  wait "$parser_pid"
+  set -e
+  QUALIFY_ACTIVE_OPERATION_PID=''
+  QUALIFY_ACTIVE_OPERATION_MESSAGE=''
+  rm -f "$fifo"
+
+  if [ -f "$state_file" ]; then
+    IFS="$(printf '\t')" read -r completed total current <"$state_file" || true
+  fi
+  rm -f "$state_file"
+  [ -n "$completed" ] || completed=0
+  [ -n "$total" ] || total="$progress_total"
+
+  overall="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("overallStatus") or ""))' "$output_file" 2>/dev/null || true)"
+  case "$status:$overall" in
+    0:WARNING) level='progress'; marker='!' ;;
+    0:*) level='progress'; marker='✓' ;;
+    1:*) level='progress'; marker='!' ;;
+    *) level='error'; marker='✗' ;;
+  esac
+  status_progress_end "$label" "$completed" "$total" "$marker" "$level" ''
+  return "$status"
+}
+
 main() {
   local model_ref='' model_configured='' model_running='' model_display=''
   local remote_command='' remote_status=0 remote_env='' remote_output='' remote_stderr=''
@@ -631,7 +758,7 @@ Resolve the model inconsistency before running qualification."
   remote_env="CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_ALIAS=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_CONFIGURED=$(qualify_shell_quote "$model_configured") CLAWBOX_QUALIFY_MODEL_RUNNING=$(qualify_shell_quote "$model_running") CLAWBOX_QUALIFY_MODEL_WARNING='' CLAWBOX_QUALIFY_PROFILE_ID=$(qualify_shell_quote "$QUALIFY_PROFILE") CLAWBOX_QUALIFY_PROFILE_NAME=$(qualify_shell_quote "$(qualify_profile_name "$QUALIFY_PROFILE")") CLAWBOX_QUALIFY_SUITE_VERSION=$(qualify_shell_quote "$QUALIFY_SUITE_VERSION") CLAWBOX_QUALIFY_SUITE_CHECKSUM=$(qualify_shell_quote "$suite_checksum") CLAWBOX_QUALIFY_CLAWBOX_COMMIT=$(qualify_shell_quote "$clawbox_commit") CLAWBOX_QUALIFY_CLAWBOX_DIRTY=$(qualify_shell_quote "$clawbox_dirty")"
   run_label="Running $(qualify_scenario_description "$QUALIFY_SCENARIO" "$QUALIFY_PROFILE")"
   qualify_begin_execution_group
-  if qualify_run_remote_operation "$run_label" "$remote_command" "$remote_output" "$remote_stderr" "$remote_env"; then
+  if qualify_run_remote_progress_operation "$run_label" "$remote_command" "$remote_output" "$remote_stderr" "$remote_env"; then
     remote_status=0
   else
     remote_status=$?
