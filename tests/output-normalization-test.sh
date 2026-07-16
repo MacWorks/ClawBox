@@ -1779,6 +1779,28 @@ test_status_progress_helper_is_opt_in_and_line_oriented_without_tty() {
   assert_contains 'progress helper does not alter later compact status spacing' "$output" $'Running fast model qualification... [████████████████] 7/7 ✓\nChecking VM SSH access...\nChecking VM SSH access... ✓'
 }
 
+test_status_progress_finalizes_tty_line_cleanly() {
+  local output
+
+  output="$({
+    load_setup_functions
+
+    _status_can_spin() {
+      return 0
+    }
+
+    status_progress_begin 'Running fast model qualification' 7
+    status_progress_update 'Running fast model qualification' 7 7 '03-code-repair — completed with a deliberately long final unit label' 'Qualification progress'
+    CLAWBOX_STATUS_ACTIVE=false
+    status_progress_end 'Running fast model qualification' 7 7 '!' 'progress'
+    section 'Model Qualification Report'
+  } 2>&1)"
+
+  assert_not_contains 'progress finalization does not concatenate prior event and final marker' "$output" 'completed with a deliberately long final unit labelRunning fast model qualification'
+  assert_contains 'progress finalization renders final marker line' "$output" 'Running fast model qualification... [████████████████] 7/7 !'
+  assert_contains 'progress finalization leaves one separator before report' "$output" $'Running fast model qualification... [████████████████] 7/7 !\n\n-----------------------------------------'
+}
+
 test_status_helper_renders_trailing_spinner_frames() {
   local output
 
@@ -2970,6 +2992,7 @@ run_test test_manual_ssh_setup_uses_section_heading
 run_test test_status_helper_suppresses_duplicate_noninteractive_wait_lines
 run_test test_status_helper_compact_mode_suppresses_interline_blank_spacing
 run_test test_status_progress_helper_is_opt_in_and_line_oriented_without_tty
+run_test test_status_progress_finalizes_tty_line_cleanly
 run_test test_status_helper_renders_trailing_spinner_frames
 run_test test_status_helper_uses_fast_spinner_cadence
 run_test test_status_helper_applies_semantic_result_styling

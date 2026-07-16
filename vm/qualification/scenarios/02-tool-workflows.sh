@@ -28,6 +28,7 @@ rm -f "$ROOT/missing.txt" "$ROOT/input.txt" "$ROOT/output.txt" "$ROOT/numbers.tx
 warnings_file="$ARTIFACT_DIR/warnings.txt"; failures_file="$ARTIFACT_DIR/failures.txt"; cases_jsonl="$ARTIFACT_DIR/cases.jsonl"
 : > "$warnings_file"; : > "$failures_file"; : > "$cases_jsonl"
 scenario_status=PASS; scenario_error=''; pass_cases=0; efficient_cases=0; total_cases=0; tool_sum=0
+agent_complete_cases=0; required_tool_cases=0; reply_correct_cases=0; filesystem_correct_cases=0; grounded_cases=0
 
 workflow_case_enabled() {
   local wanted="$1" selected=''
@@ -60,7 +61,7 @@ fi
 run_case() {
   local name="$1" prompt="$2" expected_min="$3" expected_max="$4" expected_reply="$5" expected_file="${6:-}" expected_content="${7:-}"
   total_cases=$((total_cases + 1))
-  local case_dir="$ARTIFACT_DIR/$name" session prompt_file agent_output openclaw_exit final_status tools reply file_ok=true reply_ok=false status_ok=false case_status=PASS case_warnings='[]'
+  local case_dir="$ARTIFACT_DIR/$name" session prompt_file agent_output openclaw_exit final_status tools reply file_ok=true reply_ok=false status_ok=false required_tool_ok=false efficient_ok=false grounded_ok=false case_status=PASS case_warnings='[]' case_failure=''
   mkdir -p "$case_dir"
   session="$(qualification_unique_session_id "qualify-workflow-$name")"
   prompt_file="$case_dir/prompt.txt"; agent_output="$case_dir/agent-output.json"
@@ -73,16 +74,39 @@ run_case() {
   [ "$final_status" = success ] && status_ok=true
   [ "$reply" = "$expected_reply" ] && reply_ok=true
   if [ -n "$expected_file" ]; then [ -f "$expected_file" ] && [ "$(cat "$expected_file")" = "$expected_content" ] || file_ok=false; fi
-  if [ "$status_ok" != true ] || [ "$reply_ok" != true ] || [ "$file_ok" != true ]; then
-    case_status=FAIL; scenario_status=FAIL; printf '%s\n' "$name failed critical assertions" >> "$failures_file"
-  elif [ "$tools" -lt "$expected_min" ] || [ "$tools" -gt "$expected_max" ]; then
+  [ "$tools" -ge "$expected_min" ] 2>/dev/null && required_tool_ok=true
+  [ "$tools" -ge "$expected_min" ] 2>/dev/null && [ "$tools" -le "$expected_max" ] 2>/dev/null && efficient_ok=true
+  [ "$required_tool_ok" = true ] && [ "$reply_ok" = true ] && [ "$file_ok" = true ] && grounded_ok=true
+  [ "$status_ok" = true ] && agent_complete_cases=$((agent_complete_cases + 1))
+  [ "$required_tool_ok" = true ] && required_tool_cases=$((required_tool_cases + 1))
+  [ "$reply_ok" = true ] && reply_correct_cases=$((reply_correct_cases + 1))
+  [ "$file_ok" = true ] && filesystem_correct_cases=$((filesystem_correct_cases + 1))
+  [ "$grounded_ok" = true ] && grounded_cases=$((grounded_cases + 1))
+  if [ "$status_ok" != true ] || [ "$required_tool_ok" != true ] || [ "$reply_ok" != true ] || [ "$file_ok" != true ] || [ "$grounded_ok" != true ]; then
+    case_status=FAIL
+    scenario_status=FAIL
+    case_failure="$(jq -n -r --arg name "$name" --arg finalStatus "$final_status" --arg requiredTool "$required_tool_ok" --arg replyOk "$reply_ok" --arg fileOk "$file_ok" --arg grounded "$grounded_ok" --arg expectedReply "$expected_reply" --arg actualReply "$reply" '
+      def clean:
+        tostring
+        | explode | map(if . < 32 or . == 127 then 32 else . end) | implode
+        | if length > 120 then .[0:117] + "..." else . end;
+      [
+        (if $finalStatus != "success" then "agentStatus=\($finalStatus)" else empty end),
+        (if $requiredTool != "true" then "required tool use below expected minimum" else empty end),
+        (if $replyOk != "true" then "reply mismatch; expected \"" + ($expectedReply|clean) + "\", received \"" + ($actualReply|clean) + "\"" else empty end),
+        (if $fileOk != "true" then "filesystem state incorrect" else empty end),
+        (if $grounded != "true" then "response was not grounded in required tool evidence" else empty end)
+      ] | "\($name): " + join("; ")
+    ')"
+    printf '%s\n' "$case_failure" >> "$failures_file"
+  elif [ "$efficient_ok" != true ]; then
     case_status=WARNING; [ "$scenario_status" = PASS ] && scenario_status=WARNING; printf '%s\n' "$name completed correctly but used $tools tool calls; expected efficient range $expected_min-$expected_max" >> "$warnings_file"; case_warnings="$(printf '%s\n' "expected efficient range $expected_min-$expected_max, observed $tools" | qualification_json_string_array)"
   else
     efficient_cases=$((efficient_cases + 1))
   fi
   [ "$case_status" != FAIL ] && pass_cases=$((pass_cases + 1))
   tool_sum=$((tool_sum + tools))
-  jq -n --arg name "$name" --arg sessionId "$session" --arg agentStatus "$final_status" --arg toolCalls "$tools" --arg expectedMin "$expected_min" --arg expectedMax "$expected_max" --arg replyCorrect "$reply_ok" --arg fileCorrect "$file_ok" --arg status "$case_status" --arg trajectory "$QUALIFICATION_TRAJECTORY" --arg transcript "$QUALIFICATION_TRANSCRIPT" --argjson warnings "$case_warnings" '{case:$name,sessionId:$sessionId,agentStatus:$agentStatus,toolCalls:($toolCalls|tonumber),expectedEfficientRange:{min:($expectedMin|tonumber),max:($expectedMax|tonumber)},replyCorrect:($replyCorrect=="true"),filesystemCorrect:($fileCorrect=="true"),status:$status,warnings:$warnings,artifacts:{trajectory:$trajectory,transcript:$transcript}}' >> "$cases_jsonl"
+  jq -n --arg name "$name" --arg sessionId "$session" --arg agentStatus "$final_status" --arg toolCalls "$tools" --arg expectedMin "$expected_min" --arg expectedMax "$expected_max" --arg requiredTool "$required_tool_ok" --arg efficient "$efficient_ok" --arg replyCorrect "$reply_ok" --arg fileCorrect "$file_ok" --arg grounded "$grounded_ok" --arg expectedReply "$expected_reply" --arg actualReply "$reply" --arg status "$case_status" --arg trajectory "$QUALIFICATION_TRAJECTORY" --arg transcript "$QUALIFICATION_TRANSCRIPT" --argjson warnings "$case_warnings" '{case:$name,sessionId:$sessionId,agentStatus:$agentStatus,toolCalls:($toolCalls|tonumber),expectedEfficientRange:{min:($expectedMin|tonumber),max:($expectedMax|tonumber)},requiredToolInvoked:($requiredTool=="true"),toolCountEfficient:($efficient=="true"),replyCorrect:($replyCorrect=="true"),reply:{expected:$expectedReply,actual:$actualReply,correct:($replyCorrect=="true")},filesystemCorrect:($fileCorrect=="true"),groundingCorrect:($grounded=="true"),status:$status,warnings:$warnings,artifacts:{trajectory:$trajectory,transcript:$transcript}}' >> "$cases_jsonl"
   qualification_progress_event "$total_cases" "$SCENARIO_ID" "$name"
 }
 
@@ -130,8 +154,16 @@ fi
 duration=$(($(qualification_now_epoch) - START))
 warnings_json="$(cat "$warnings_file" | qualification_json_string_array)"; failures_json="$(cat "$failures_file" | qualification_json_string_array)"; cases_json="$(jq -s '.' "$cases_jsonl")"
 avg_tool_calls="$(jq -n --arg sum "$tool_sum" --arg total "$total_cases" 'if ($total|tonumber) == 0 then 0 else (($sum|tonumber) / ($total|tonumber)) end')"
-metrics="$(jq -n --arg total "$total_cases" --arg pass "$pass_cases" --arg efficient "$efficient_cases" --arg profileId "${CLAWBOX_QUALIFY_PROFILE_ID:-full}" --arg profileName "${CLAWBOX_QUALIFY_PROFILE_NAME:-Full}" --arg selectedCases "$WORKFLOW_CASES" --argjson avg "$avg_tool_calls" --argjson cases "$cases_json" '{profile:{id:$profileId,name:$profileName},selectedCases:($selectedCases | split(" ") | map(select(. != ""))),totalCases:($total|tonumber),passingCases:($pass|tonumber),efficientCases:($efficient|tonumber),averageToolCalls:$avg,toolCallsReliable:true,toolCalls:$avg,cases:$cases}')"
+metrics="$(jq -n --arg total "$total_cases" --arg pass "$pass_cases" --arg efficient "$efficient_cases" --arg agentComplete "$agent_complete_cases" --arg requiredTool "$required_tool_cases" --arg replyCorrect "$reply_correct_cases" --arg filesystemCorrect "$filesystem_correct_cases" --arg grounded "$grounded_cases" --arg profileId "${CLAWBOX_QUALIFY_PROFILE_ID:-full}" --arg profileName "${CLAWBOX_QUALIFY_PROFILE_NAME:-Full}" --arg selectedCases "$WORKFLOW_CASES" --argjson avg "$avg_tool_calls" --argjson cases "$cases_json" '{profile:{id:$profileId,name:$profileName},selectedCases:($selectedCases | split(" ") | map(select(. != ""))),totalCases:($total|tonumber),passingCases:($pass|tonumber),agentCompletionCases:($agentComplete|tonumber),requiredToolCases:($requiredTool|tonumber),replyCorrectCases:($replyCorrect|tonumber),filesystemCorrectCases:($filesystemCorrect|tonumber),groundedCases:($grounded|tonumber),efficientCases:($efficient|tonumber),averageToolCalls:$avg,toolCallsReliable:true,toolCalls:$avg,cases:$cases}')"
 if [ "$scenario_status" = ERROR ]; then assertions="$(qualification_assertions_json evidence ERROR "${scenario_error:-evidence error}" workflow_correctness)"; qualification_emit_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" ERROR unrated "$duration" "$ARTIFACT_DIR" "$assertions" "$warnings_json" "$failures_json" '' '' '' '' "$metrics"; exit 0; fi
-score="$(jq -n --arg pass "$pass_cases" --arg efficient "$efficient_cases" --arg total "$total_cases" '(((($pass|tonumber) / ($total|tonumber)) * 90) + ((($efficient|tonumber) / ($total|tonumber)) * 10)) | round')"
-assertions="$(qualification_assertions_json workflow_cases "$([ "$pass_cases" -eq "$total_cases" ] && echo PASS || echo FAIL)" "$pass_cases/$total_cases workflow cases completed correctly" workflow_correctness grounding "$([ "$pass_cases" -eq "$total_cases" ] && echo PASS || echo FAIL)" 'reply and filesystem evidence were checked against expected values' grounding efficiency "$([ "$efficient_cases" -eq "$total_cases" ] && echo PASS || echo WARNING)" "$efficient_cases/$total_cases cases used efficient tool-call ranges" efficiency)"
+score="$(jq -n --arg total "$total_cases" --arg agentComplete "$agent_complete_cases" --arg requiredTool "$required_tool_cases" --arg replyCorrect "$reply_correct_cases" --arg filesystemCorrect "$filesystem_correct_cases" --arg grounded "$grounded_cases" --arg efficient "$efficient_cases" '
+  def ratio($n): (($n|tonumber) / ($total|tonumber));
+  ((ratio($agentComplete) * 15)
+   + (ratio($requiredTool) * 20)
+   + (ratio($replyCorrect) * 20)
+   + (ratio($filesystemCorrect) * 20)
+   + (ratio($grounded) * 20)
+   + (ratio($efficient) * 5)) | round
+')"
+assertions="$(qualification_assertions_json agent_completion "$([ "$agent_complete_cases" -eq "$total_cases" ] && echo PASS || echo FAIL)" "$agent_complete_cases/$total_cases workflow cases completed successfully" workflow_correctness required_tool_invocation "$([ "$required_tool_cases" -eq "$total_cases" ] && echo PASS || echo FAIL)" "$required_tool_cases/$total_cases workflow cases met required tool-use minimums" tool_correctness reply_correctness "$([ "$reply_correct_cases" -eq "$total_cases" ] && echo PASS || echo FAIL)" "$reply_correct_cases/$total_cases workflow cases returned the exact expected reply" instruction_following filesystem_state "$([ "$filesystem_correct_cases" -eq "$total_cases" ] && echo PASS || echo FAIL)" "$filesystem_correct_cases/$total_cases workflow cases produced the expected filesystem state" code_state_correctness grounding "$([ "$grounded_cases" -eq "$total_cases" ] && echo PASS || echo FAIL)" "$grounded_cases/$total_cases workflow cases were grounded in required tool evidence" grounding efficiency "$([ "$efficient_cases" -eq "$total_cases" ] && echo PASS || echo WARNING)" "$efficient_cases/$total_cases cases used efficient tool-call ranges" efficiency)"
 qualification_emit_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$scenario_status" "$score" "$duration" "$ARTIFACT_DIR" "$assertions" "$warnings_json" "$failures_json" '' '' '' '' "$metrics"

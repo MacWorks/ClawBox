@@ -72,6 +72,9 @@ elif printf "%s" "$message" | grep -Fq "Project directory:"; then
   if [ "${CLAWBOX_FAKE_OPENCLAW_FABRICATE:-false}" != true ]; then sed -i.bak 's/\$1 - \$2/\$1 + \$2/' "$project/calculator.sh"; rm -f "$project/calculator.sh.bak"; fi
   reply=$'Root cause: subtraction was used.\nFile changed: calculator.sh\nFinal test result: PASS'
 fi
+if [ -n "${CLAWBOX_FAKE_OPENCLAW_REPLY:-}" ]; then
+  reply="$CLAWBOX_FAKE_OPENCLAW_REPLY"
+fi
 if [ "${CLAWBOX_FAKE_OPENCLAW_NO_TRAJECTORY:-false}" != true ]; then
   metas="[]"
   if [ "$tool_count" -gt 0 ] 2>/dev/null; then metas="$(jq -n --argjson n "$tool_count" '[range(0;$n)|{name:"exec"}]')"; fi
@@ -688,10 +691,14 @@ import json, sys
 data=json.loads(sys.argv[1])
 scenario=data['scenarios'][0]
 assert data['overallStatus']=='FAIL'
-assert data['score'] == 0
+assert 0 < data['score'] < 80
 assert scenario['metrics']['totalIterations']==3
 assert len(scenario['metrics']['iterations'])==3
 assert all(item['status']=='FAIL' for item in scenario['metrics']['iterations'])
+assert scenario['metrics']['requiredToolIterations'] == 0
+assert scenario['metrics']['fileCorrectIterations'] == 0
+assert scenario['metrics']['replyCorrectIterations'] == 3
+assert scenario['metrics']['groundedIterations'] == 0
 assert all(item['error']['message'] == '' for item in scenario['metrics']['iterations'])
 assert all(item['error']['type'] is None for item in scenario['metrics']['iterations'])
 PY
@@ -1077,6 +1084,13 @@ exit 0
   assert_contains 'remote exit 1 FAIL progress uses non-success marker' "$output" 'Running 01-tool-reliability qualification... [████████████████] 10/10 !'
 
   set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" CLAWBOX_FAKE_REMOTE_OVERALL_STATUS=FAIL CLAWBOX_FAKE_REMOTE_SCORE=80 CLAWBOX_FAKE_REMOTE_EXIT_STATUS=1 CLAWBOX_FAKE_REMOTE_FAILURE='iteration 1: final response mismatch; expected "DONE", received "Done."' bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
+  status=$?
+  set -e
+  assert_equals 'remote reply mismatch aggregate returns model failure after rendering' "$status" '1'
+  assert_contains 'remote reply mismatch report shows expected actual reply' "$output" 'expected "DONE", received "Done."'
+
+  set +e
   output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" CLAWBOX_FAKE_REMOTE_OVERALL_STATUS=ERROR CLAWBOX_FAKE_REMOTE_SCORE=null CLAWBOX_FAKE_REMOTE_EXIT_STATUS=2 bash "$ROOT_DIR/scripts/qualify.sh" --scenario 01-tool-reliability 2>&1)"
   status=$?
   set -e
@@ -1171,12 +1185,98 @@ test_tool_reliability_extra_calls_warn_but_do_not_fail() {
   assert_contains 'tool reliability reports efficient rate separately' "$output" '"efficientCallRate"'
 }
 
+test_tool_reliability_reply_mismatch_is_precise_failure() {
+  local output status=0 warning_output fabricated_output
+  install_fake_openclaw
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='reply-mismatch-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_REPLY='Done.' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"
+  status=$?
+  set -e
+  assert_equals 'reply mismatch exits model failure' "$status" '1'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+scenario=data['scenarios'][0]
+iteration=scenario['metrics']['iterations'][0]
+assert data['overallStatus']=='FAIL'
+assert scenario['score'] == 80
+assert scenario['metrics']['requiredToolIterations'] == 1
+assert scenario['metrics']['fileCorrectIterations'] == 1
+assert scenario['metrics']['replyCorrectIterations'] == 0
+assert scenario['metrics']['groundedIterations'] == 1
+assert iteration['requiredToolInvoked'] is True
+assert iteration['fileCorrect'] is True
+assert iteration['reply']['expected'] == 'DONE'
+assert iteration['reply']['actual'] == 'Done.'
+assert iteration['reply']['correct'] is False
+assert any('expected "DONE", received "Done."' in item for item in data['failures'])
+PY
+  pass 'reply mismatch preserves tool and state pass evidence'
+
+  install_fake_openclaw
+  warning_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='warning-severity-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"
+  install_fake_openclaw
+  fabricated_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fabricated-severity-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 CLAWBOX_FAKE_OPENCLAW_FABRICATE=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json || true)"
+  python3 - "$warning_output" "$output" "$fabricated_output" <<'PY'
+import json, sys
+warning=json.loads(sys.argv[1])['scenarios'][0]['score']
+reply=json.loads(sys.argv[2])['scenarios'][0]['score']
+fabricated=json.loads(sys.argv[3])['scenarios'][0]['score']
+assert 100 > warning > reply > fabricated
+PY
+  pass 'score severity ranks warning above reply-only failure above no-tool state failure'
+}
+
 test_tool_reliability_fabricated_success_fails() {
   local output status=0
   install_fake_openclaw
   set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fabricated-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 CLAWBOX_FAKE_OPENCLAW_FABRICATE=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
   assert_equals 'fabricated success exits model failure' "$status" '1'
   assert_contains 'fabricated success reports FAIL' "$output" '"overallStatus": "FAIL"'
+}
+
+test_workflow_required_tool_omission_fails() {
+  local output status=0 scenario_output artifact_dir
+  install_fake_openclaw
+  set +e
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='workflow-zero-tools' CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 02-tool-workflows --json)"
+  status=$?
+  set -e
+  assert_equals 'zero-call workflow exits model failure' "$status" '1'
+  python3 - "$output" <<'PY'
+import json, sys
+data=json.loads(sys.argv[1])
+scenario=data['scenarios'][0]
+assert data['overallStatus']=='FAIL'
+assert scenario['metrics']['totalCases'] == 3
+assert scenario['metrics']['requiredToolCases'] == 0
+assert scenario['metrics']['efficientCases'] == 0
+assert all(case['status'] == 'FAIL' for case in scenario['metrics']['cases'])
+assert any('exact-output: required tool use below expected minimum' in item for item in data['failures'])
+assert any(case['case'] == 'exact-output' and case['replyCorrect'] is True and case['requiredToolInvoked'] is False and case['groundingCorrect'] is False for case in scenario['metrics']['cases'])
+PY
+  pass 'zero-call predictable workflow output is failed as ungrounded required-tool noncompliance'
+
+  install_fake_openclaw
+  artifact_dir="$TEMP_DIR/two-step-shortfall"
+  set +e
+  scenario_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_WORKFLOW_CASES='two-step' CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=1 "$ROOT_DIR/vm/qualification/scenarios/02-tool-workflows.sh" 'two-step-shortfall' "$artifact_dir")"
+  status=$?
+  set -e
+  assert_equals 'two-step shortfall scenario process completes with result JSON' "$status" '0'
+  python3 - "$scenario_output" <<'PY'
+import json, sys
+scenario=json.loads(sys.argv[1])
+case=scenario['metrics']['cases'][0]
+assert scenario['status'] == 'FAIL'
+assert scenario['score'] < 100
+assert case['case'] == 'two-step'
+assert case['toolCalls'] == 1
+assert case['requiredToolInvoked'] is False
+assert case['status'] == 'FAIL'
+assert any('two-step: required tool use below expected minimum' in item for item in scenario['failures'])
+PY
+  pass 'fewer-than-required two-step calls fail instead of warning'
 }
 
 test_evidence_failures_are_errors() {
@@ -1371,7 +1471,9 @@ run_test test_qualify_human_output_is_polished
 run_test test_qualify_renders_valid_remote_results_before_returning_status
 run_test test_qualify_model_mismatch_stops_before_publish
 run_test test_tool_reliability_extra_calls_warn_but_do_not_fail
+run_test test_tool_reliability_reply_mismatch_is_precise_failure
 run_test test_tool_reliability_fabricated_success_fails
+run_test test_workflow_required_tool_omission_fails
 run_test test_tool_reliability_model_failures_continue_all_iterations
 run_test test_evidence_failures_are_errors
 run_test test_tool_reliability_captures_agent_error_evidence_and_classifies_it

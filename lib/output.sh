@@ -755,6 +755,8 @@ status_progress_end() {
     final_message="$REPLY"
     REPLY="$preserved_reply"
     _status_render_final_line "$final_message"
+  elif _status_can_spin; then
+    _status_render_final_line "$message"
   else
     printf '%s\n' "$message" >&2
     _set_output_state "normal"

@@ -33,6 +33,11 @@ RULES='Tool-use rules:
 
 correct=0
 efficient=0
+agent_complete=0
+required_tool=0
+file_correct=0
+reply_correct=0
+grounded=0
 tool_sum=0
 warnings_file="$ARTIFACT_DIR/warnings.txt"
 failures_file="$ARTIFACT_DIR/failures.txt"
@@ -62,8 +67,12 @@ iteration_failure_is_infrastructure() {
 }
 
 iteration_failure_summary() {
-  local iteration="$1" final_status="$2" tools="$3" file_ok="$4" reply_ok="$5" error_json="$6"
-  jq -r --arg iteration "$iteration" --arg finalStatus "$final_status" --arg tools "$tools" --arg fileOk "$file_ok" --arg replyOk "$reply_ok" '
+  local iteration="$1" final_status="$2" tools="$3" file_ok="$4" reply_ok="$5" required_tool_ok="$6" grounded_ok="$7" expected_reply="$8" actual_reply="$9" error_json="${10}"
+  jq -r --arg iteration "$iteration" --arg finalStatus "$final_status" --arg tools "$tools" --arg fileOk "$file_ok" --arg replyOk "$reply_ok" --arg requiredToolOk "$required_tool_ok" --arg groundedOk "$grounded_ok" --arg expectedReply "$expected_reply" --arg actualReply "$actual_reply" '
+    def clean:
+      tostring
+      | explode | map(if . < 32 or . == 127 then 32 else . end) | implode
+      | if length > 120 then .[0:117] + "..." else . end;
     . as $error
     | ($error.message // "") as $message
     | ($error.type // "agent_error") as $type
@@ -72,7 +81,13 @@ iteration_failure_summary() {
       elif $message != "" then
         "iteration \($iteration): \($message)"
       else
-        "iteration \($iteration) failed critical assertions: agentStatus=\($finalStatus), toolCalls=\($tools), fileCorrect=\($fileOk), replyCorrect=\($replyOk), errorType=\($type)"
+        [
+          (if $finalStatus != "success" then "agentStatus=\($finalStatus)" else empty end),
+          (if $requiredToolOk != "true" then "required tool was not used" else empty end),
+          (if $fileOk != "true" then "file state incorrect" else empty end),
+          (if $replyOk != "true" then "final response mismatch; expected \"" + ($expectedReply|clean) + "\", received \"" + ($actualReply|clean) + "\"" else empty end),
+          (if $groundedOk != "true" then "success response was not grounded in required tool evidence" else empty end)
+        ] | "iteration \($iteration): " + (join("; "))
       end
   ' <<<"$error_json"
 }
@@ -126,13 +141,22 @@ EOF_PROMPT
   fi
   error_json="$(cat "$error_json_file")"
 
+  expected_reply='DONE'
   file_ok=false; [ -f "$file" ] && [ "$(cat "$file")" = "PASS_$n" ] && file_ok=true
-  reply_ok=false; [ "$reply" = DONE ] && reply_ok=true
+  reply_ok=false; [ "$reply" = "$expected_reply" ] && reply_ok=true
   status_ok=false; [ "$final_status" = success ] && status_ok=true
+  required_tool_ok=false; [ "$tools" -ge 1 ] 2>/dev/null && required_tool_ok=true
+  efficient_ok=false; [ "$tools" = 1 ] && efficient_ok=true
+  grounded_ok=false; [ "$required_tool_ok" = true ] && [ "$file_ok" = true ] && grounded_ok=true
   iter_status=PASS
   iter_warnings='[]'
-  if [ "$status_ok" != true ] || [ "$file_ok" != true ] || [ "$reply_ok" != true ]; then
-    failure_summary="$(iteration_failure_summary "$n" "$final_status" "$tools" "$file_ok" "$reply_ok" "$error_json")"
+  if [ "$status_ok" = true ]; then agent_complete=$((agent_complete + 1)); fi
+  if [ "$required_tool_ok" = true ]; then required_tool=$((required_tool + 1)); fi
+  if [ "$file_ok" = true ]; then file_correct=$((file_correct + 1)); fi
+  if [ "$reply_ok" = true ]; then reply_correct=$((reply_correct + 1)); fi
+  if [ "$grounded_ok" = true ]; then grounded=$((grounded + 1)); fi
+  if [ "$status_ok" != true ] || [ "$required_tool_ok" != true ] || [ "$file_ok" != true ] || [ "$reply_ok" != true ] || [ "$grounded_ok" != true ]; then
+    failure_summary="$(iteration_failure_summary "$n" "$final_status" "$tools" "$file_ok" "$reply_ok" "$required_tool_ok" "$grounded_ok" "$expected_reply" "$reply" "$error_json")"
     if [ "$final_status" = error ] && [ "$tools" = 0 ] && iteration_failure_is_infrastructure "$error_json"; then
       iter_status=ERROR
       scenario_status=ERROR
@@ -143,17 +167,17 @@ EOF_PROMPT
       scenario_status=FAIL
       printf '%s\n' "$failure_summary" >> "$failures_file"
     fi
-  elif [ "$tools" != 1 ]; then
+  elif [ "$efficient_ok" != true ]; then
     iter_status=WARNING
     [ "$scenario_status" = PASS ] && scenario_status=WARNING
     printf '%s\n' "iteration $n completed correctly but used $tools tool calls; efficient target is 1" >> "$warnings_file"
     iter_warnings="$(printf '%s\n' "expected 1 efficient tool call, observed $tools" | qualification_json_string_array)"
   fi
   case "$iter_status" in PASS|WARNING) correct=$((correct + 1)) ;; esac
-  [ "$tools" = 1 ] && efficient=$((efficient + 1))
+  [ "$efficient_ok" = true ] && efficient=$((efficient + 1))
   tool_sum=$((tool_sum + tools))
   iteration_json="$iter_dir/iteration.json"
-  if ! jq -n --arg iteration "$n" --arg sessionId "$session" --arg agentStatus "$final_status" --arg toolCalls "$tools" --arg openclawExitStatus "$openclaw_exit" --arg fileCorrect "$file_ok" --arg replyCorrect "$reply_ok" --arg status "$iter_status" --arg trajectory "$QUALIFICATION_TRAJECTORY" --arg transcript "$QUALIFICATION_TRANSCRIPT" --arg agentOutput "$agent_output" --slurpfile warnings <(printf '%s\n' "$iter_warnings") --slurpfile error "$error_json_file" '{iteration:($iteration|tonumber),sessionId:$sessionId,agentStatus:$agentStatus,openclawExitStatus:($openclawExitStatus|tonumber),toolCalls:($toolCalls|tonumber),expectedEfficientRange:{min:1,max:1},fileCorrect:($fileCorrect=="true"),replyCorrect:($replyCorrect=="true"),status:$status,error:($error[0] // {type:"agent_error",message:"missing error details",timeout:false}),warnings:($warnings[0] // []),artifacts:{trajectory:$trajectory,transcript:$transcript,agentOutput:$agentOutput}}' >"$iteration_json" 2>"$iter_dir/iteration-build.stderr" ||
+  if ! jq -n --arg iteration "$n" --arg sessionId "$session" --arg agentStatus "$final_status" --arg toolCalls "$tools" --arg openclawExitStatus "$openclaw_exit" --arg fileCorrect "$file_ok" --arg replyCorrect "$reply_ok" --arg requiredTool "$required_tool_ok" --arg efficient "$efficient_ok" --arg grounded "$grounded_ok" --arg expectedReply "$expected_reply" --arg actualReply "$reply" --arg status "$iter_status" --arg trajectory "$QUALIFICATION_TRAJECTORY" --arg transcript "$QUALIFICATION_TRANSCRIPT" --arg agentOutput "$agent_output" --slurpfile warnings <(printf '%s\n' "$iter_warnings") --slurpfile error "$error_json_file" '{iteration:($iteration|tonumber),sessionId:$sessionId,agentStatus:$agentStatus,openclawExitStatus:($openclawExitStatus|tonumber),toolCalls:($toolCalls|tonumber),expectedEfficientRange:{min:1,max:1},requiredToolInvoked:($requiredTool=="true"),toolCountEfficient:($efficient=="true"),fileCorrect:($fileCorrect=="true"),replyCorrect:($replyCorrect=="true"),reply:{expected:$expectedReply,actual:$actualReply,correct:($replyCorrect=="true")},groundingCorrect:($grounded=="true"),status:$status,error:($error[0] // {type:"agent_error",message:"missing error details",timeout:false}),warnings:($warnings[0] // []),artifacts:{trajectory:$trajectory,transcript:$transcript,agentOutput:$agentOutput}}' >"$iteration_json" 2>"$iter_dir/iteration-build.stderr" ||
      ! jq -e 'type == "object"' "$iteration_json" >/dev/null 2>&1; then
     printf '01-tool-reliability result construction failed while building iteration %s JSON\n' "$n" >&2
     qualification_progress_event "$n" "$SCENARIO_ID" "iteration $n"
@@ -177,7 +201,7 @@ if ! jq -s '.' "$iterations_jsonl" >"$iterations_array_json" 2>"$result_build_st
   exit 0
 fi
 avg_tool_calls="$(jq -n --arg sum "$tool_sum" --arg total "$TOTAL" 'if ($total|tonumber) == 0 then 0 else (($sum|tonumber) / ($total|tonumber)) end')"
-if ! metrics="$(jq -n --arg total "$TOTAL" --arg correct "$correct" --arg efficient "$efficient" --arg profileId "${CLAWBOX_QUALIFY_PROFILE_ID:-full}" --arg profileName "${CLAWBOX_QUALIFY_PROFILE_NAME:-Full}" --argjson avg "$avg_tool_calls" --slurpfile iterations "$iterations_array_json" '{profile:{id:$profileId,name:$profileName},totalIterations:($total|tonumber),correctIterations:($correct|tonumber),efficientIterations:($efficient|tonumber),correctnessRate:(($correct|tonumber) / ($total|tonumber)),efficientCallRate:(($efficient|tonumber) / ($total|tonumber)),averageToolCalls:$avg,toolCallsReliable:true,toolCalls:$avg,expectedMin:1,expectedMax:1,iterations:($iterations[0] // [])}' 2>>"$result_build_stderr")"; then
+if ! metrics="$(jq -n --arg total "$TOTAL" --arg correct "$correct" --arg efficient "$efficient" --arg agentComplete "$agent_complete" --arg requiredTool "$required_tool" --arg fileCorrect "$file_correct" --arg replyCorrect "$reply_correct" --arg grounded "$grounded" --arg profileId "${CLAWBOX_QUALIFY_PROFILE_ID:-full}" --arg profileName "${CLAWBOX_QUALIFY_PROFILE_NAME:-Full}" --argjson avg "$avg_tool_calls" --slurpfile iterations "$iterations_array_json" '{profile:{id:$profileId,name:$profileName},totalIterations:($total|tonumber),correctIterations:($correct|tonumber),agentCompletionIterations:($agentComplete|tonumber),requiredToolIterations:($requiredTool|tonumber),fileCorrectIterations:($fileCorrect|tonumber),replyCorrectIterations:($replyCorrect|tonumber),groundedIterations:($grounded|tonumber),efficientIterations:($efficient|tonumber),correctnessRate:(($correct|tonumber) / ($total|tonumber)),efficientCallRate:(($efficient|tonumber) / ($total|tonumber)),averageToolCalls:$avg,toolCallsReliable:true,toolCalls:$avg,expectedMin:1,expectedMax:1,iterations:($iterations[0] // [])}' 2>>"$result_build_stderr")"; then
   printf '01-tool-reliability result construction failed while building metrics\n' >&2
   cp "$iterations_array_json" "$result_build_inputs/iterations-array.json" 2>/dev/null || true
   qualification_error_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$ARTIFACT_DIR" "result construction failed while building metrics" '' '' '' '' "$duration"
@@ -190,6 +214,14 @@ if [ "$scenario_status" = ERROR ]; then
   exit 0
 fi
 
-score="$(jq -n --arg correct "$correct" --arg efficient "$efficient" --arg total "$TOTAL" '(((($correct|tonumber) / ($total|tonumber)) * 85) + ((($efficient|tonumber) / ($total|tonumber)) * 15)) | round')"
-assertions="$(qualification_assertions_json task_completion "$([ "$correct" -eq "$TOTAL" ] && echo PASS || echo FAIL)" "$correct/$TOTAL iterations completed with correct state and reply" tool_correctness efficiency "$([ "$efficient" -eq "$TOTAL" ] && echo PASS || echo WARNING)" "$efficient/$TOTAL iterations used the efficient one-call target" efficiency grounding "$([ "$correct" -eq "$TOTAL" ] && echo PASS || echo FAIL)" 'file state and final reply were objectively checked' grounding)"
+score="$(jq -n --arg total "$TOTAL" --arg agentComplete "$agent_complete" --arg requiredTool "$required_tool" --arg fileCorrect "$file_correct" --arg replyCorrect "$reply_correct" --arg grounded "$grounded" --arg efficient "$efficient" '
+  def ratio($n): (($n|tonumber) / ($total|tonumber));
+  ((ratio($agentComplete) * 15)
+   + (ratio($requiredTool) * 20)
+   + (ratio($fileCorrect) * 25)
+   + (ratio($replyCorrect) * 20)
+   + (ratio($grounded) * 15)
+   + (ratio($efficient) * 5)) | round
+')"
+assertions="$(qualification_assertions_json agent_completion "$([ "$agent_complete" -eq "$TOTAL" ] && echo PASS || echo FAIL)" "$agent_complete/$TOTAL iterations completed successfully" tool_correctness required_tool_invocation "$([ "$required_tool" -eq "$TOTAL" ] && echo PASS || echo FAIL)" "$required_tool/$TOTAL iterations used the required tool" tool_correctness filesystem_state "$([ "$file_correct" -eq "$TOTAL" ] && echo PASS || echo FAIL)" "$file_correct/$TOTAL iterations produced the exact file state" code_state_correctness final_response "$([ "$reply_correct" -eq "$TOTAL" ] && echo PASS || echo FAIL)" "$reply_correct/$TOTAL iterations replied with exact DONE" instruction_following grounding "$([ "$grounded" -eq "$TOTAL" ] && echo PASS || echo FAIL)" "$grounded/$TOTAL iterations were grounded in tool and filesystem evidence" grounding efficiency "$([ "$efficient" -eq "$TOTAL" ] && echo PASS || echo WARNING)" "$efficient/$TOTAL iterations used the efficient one-call target" efficiency)"
 qualification_emit_result "$RUN_ID" "$SCENARIO_ID" "$SCENARIO_NAME" "$scenario_status" "$score" "$duration" "$ARTIFACT_DIR" "$assertions" "$warnings_json" "$failures_json" '' '' '' '' "$metrics"

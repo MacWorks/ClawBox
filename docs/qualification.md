@@ -109,6 +109,20 @@ Extra tool calls are not automatically failures. They should be warnings when
 the final answer and objective state are correct and no prohibited action
 occurred. They become failures when they violate explicit instructions,
 modify forbidden state, bypass required evidence, or cause the task to fail.
+When a prompt explicitly requires tool use, omitting that required tool use is
+a failure, even if the final text happens to match a predictable answer.
+Additional verification calls are normally warnings when the required state,
+grounding, and final answer remain correct.
+
+Tool-reliability and workflow cases score related evidence independently:
+agent completion, required tool invocation, tool-count efficiency,
+filesystem/state correctness, final-response compliance, and grounding. Exact
+output requirements remain exact. For example, replying `Done.` when the prompt
+requires `DONE` fails final-response compliance and instruction following, but
+does not erase evidence that the model used the tool correctly or produced the
+right filesystem state. Human reports summarize expected versus actual
+responses for these exact-response failures; full values remain in JSON and
+artifacts.
 
 The production scenarios invoke OpenClaw with the demonstrated prototype
 contract:
@@ -152,6 +166,10 @@ The aggregate JSON schema starts at version `1`. A numeric score is emitted only
 when enough rated evidence exists. Unsupported categories remain unrated rather
 than being invented from missing evidence. Critical failures remain visible and
 can determine the overall result even when other categories are healthy.
+Scores are intentionally auditable: severe objective failures such as missing
+required tool use or incorrect filesystem state are weighted more heavily than
+response-format-only failures, and efficiency is low-weight so extra calls do
+not dominate correctness.
 
 Initial categories are:
 

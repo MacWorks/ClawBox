@@ -537,10 +537,22 @@ for index, scenario in enumerate(scenarios):
     if scenario_duration:
         line('Duration', scenario_duration)
     metrics = scenario.get('metrics') or {}
+    if 'requiredToolIterations' in metrics and 'totalIterations' in metrics:
+        line('Correct tool executions', f"{metrics['requiredToolIterations']}/{metrics['totalIterations']}")
+    if 'fileCorrectIterations' in metrics and 'totalIterations' in metrics:
+        line('Correct file states', f"{metrics['fileCorrectIterations']}/{metrics['totalIterations']}")
+    if 'replyCorrectIterations' in metrics and 'totalIterations' in metrics:
+        line('Exact final responses', f"{metrics['replyCorrectIterations']}/{metrics['totalIterations']}")
     if 'correctIterations' in metrics and 'totalIterations' in metrics:
         line('Correct iterations', f"{metrics['correctIterations']}/{metrics['totalIterations']}")
     if 'efficientIterations' in metrics and 'totalIterations' in metrics:
         line('Efficient iterations', f"{metrics['efficientIterations']}/{metrics['totalIterations']}")
+    if 'requiredToolCases' in metrics and 'totalCases' in metrics:
+        line('Required tool cases', f"{metrics['requiredToolCases']}/{metrics['totalCases']}")
+    if 'replyCorrectCases' in metrics and 'totalCases' in metrics:
+        line('Exact workflow replies', f"{metrics['replyCorrectCases']}/{metrics['totalCases']}")
+    if 'groundedCases' in metrics and 'totalCases' in metrics:
+        line('Grounded workflow cases', f"{metrics['groundedCases']}/{metrics['totalCases']}")
     if 'passingCases' in metrics and 'totalCases' in metrics:
         line('Passing workflow cases', f"{metrics['passingCases']}/{metrics['totalCases']}")
     if 'efficientCases' in metrics and 'totalCases' in metrics:
