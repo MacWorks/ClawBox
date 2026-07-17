@@ -7,10 +7,16 @@ TEMP_DIR="$(mktemp -d)"
 trap cleanup_temp_dir EXIT
 
 test_runtime_artifacts_are_distinct() {
+  local fake_bin="$TEMP_DIR/bin/llama-server"
+  local embed_model="$TEMP_DIR/models/embed.gguf"
   local output
+  mkdir -p "$(dirname "$fake_bin")" "$(dirname "$embed_model")"
+  : > "$fake_bin"
+  : > "$embed_model"
+  chmod +x "$fake_bin"
   output="$({
     BASE_DIR="$ROOT_DIR" HOME="$TEMP_DIR/home" CLAWBOX_LLAMA_USER_UID=501
-    LLAMA_BIN='/tmp/llama-server' EMBEDDINGS_MODEL_PATH='/tmp/embed.gguf' EMBEDDINGS_LLAMA_HOST='0.0.0.0' EMBEDDINGS_LLAMA_PORT=11435 EMBEDDINGS_LLAMA_CTX=8192 EMBEDDINGS_LLAMA_EXTRA_ARGS='--embedding -ngl 99'
+    LLAMA_BIN="$fake_bin" EMBEDDINGS_MODEL_PATH="$embed_model" EMBEDDINGS_LLAMA_HOST='0.0.0.0' EMBEDDINGS_LLAMA_PORT=11435 EMBEDDINGS_LLAMA_CTX=8192 EMBEDDINGS_LLAMA_EXTRA_ARGS='--embedding -ngl 99'
     . "$ROOT_DIR/lib/llama.sh"
     printf 'LABEL=%s\n' "$(embeddings_llama_label)"
     printf 'PLIST=%s\nPRIMARY=%s\n' "$(embeddings_llama_user_plist_dest)" "$(llama_user_plist_dest)"
@@ -22,7 +28,7 @@ test_runtime_artifacts_are_distinct() {
   } 2>&1)"
   assert_contains 'embeddings uses distinct launchd label' "$output" 'LABEL=com.clawbox.llama.embeddings'
   assert_not_contains 'embeddings plist differs from primary' "$output" 'PLIST=/tmp'
-  assert_contains 'embeddings runtime env stores model path' "$output" 'EMBEDDINGS_MODEL_PATH="/tmp/embed.gguf"'
+  assert_contains 'embeddings runtime env stores model path' "$output" "EMBEDDINGS_MODEL_PATH=\"$embed_model\""
   assert_contains 'embeddings runtime env stores port' "$output" 'EMBEDDINGS_LLAMA_PORT="11435"'
   assert_contains 'embeddings runtime env stores context and extra args' "$output" 'EMBEDDINGS_LLAMA_EXTRA_ARGS="--embedding -ngl 99"'
   if grep -Eq '^MODEL_PATH=' "$TEMP_DIR/embed.env"; then fail 'embeddings runtime env does not overwrite primary model key'; else pass 'embeddings runtime env does not overwrite primary model key'; fi
@@ -30,6 +36,8 @@ test_runtime_artifacts_are_distinct() {
 
 test_wrapper_arguments_are_profile_specific() {
   local fake_bin='/bin/echo'
+  local primary_model="$TEMP_DIR/models/primary.gguf"
+  local embed_model="$TEMP_DIR/models/embed.gguf"
   local primary_env="$TEMP_DIR/primary.env"
   local primary_empty_env="$TEMP_DIR/primary-empty.env"
   local primary_absent_env="$TEMP_DIR/primary-absent.env"
@@ -38,14 +46,15 @@ test_wrapper_arguments_are_profile_specific() {
   local embed_absent_env="$TEMP_DIR/embed-absent.env"
   local primary_output='' primary_empty_output='' primary_absent_output=''
   local embed_output='' embed_empty_output='' embed_absent_output=''
-  printf 'LLAMA_BIN="%s"\nMODEL_PATH="/tmp/primary.gguf"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS="-ngl 99"\n' "$fake_bin" > "$primary_env"
-  printf 'LLAMA_BIN="%s"\nMODEL_PATH="/tmp/primary.gguf"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS=""\n' "$fake_bin" > "$primary_empty_env"
-  printf 'LLAMA_BIN="%s"\nMODEL_PATH="/tmp/primary.gguf"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\n' "$fake_bin" > "$primary_absent_env"
-  printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="/tmp/embed.gguf"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\nEMBEDDINGS_LLAMA_EXTRA_ARGS="--embedding -fa on"\n' "$fake_bin" > "$embed_env"
-  printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="/tmp/embed.gguf"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\nEMBEDDINGS_LLAMA_EXTRA_ARGS=""\n' "$fake_bin" > "$embed_empty_env"
-  printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="/tmp/embed.gguf"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\n' "$fake_bin" > "$embed_absent_env"
-  : > /tmp/primary.gguf
-  : > /tmp/embed.gguf
+  mkdir -p "$(dirname "$primary_model")" "$(dirname "$embed_model")"
+  : > "$primary_model"
+  : > "$embed_model"
+  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS="-ngl 99"\n' "$fake_bin" "$primary_model" > "$primary_env"
+  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS=""\n' "$fake_bin" "$primary_model" > "$primary_empty_env"
+  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\n' "$fake_bin" "$primary_model" > "$primary_absent_env"
+  printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\nEMBEDDINGS_LLAMA_EXTRA_ARGS="--embedding -fa on"\n' "$fake_bin" "$embed_model" > "$embed_env"
+  printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\nEMBEDDINGS_LLAMA_EXTRA_ARGS=""\n' "$fake_bin" "$embed_model" > "$embed_empty_env"
+  printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\n' "$fake_bin" "$embed_model" > "$embed_absent_env"
   lsof() { return 1; }; export -f lsof
   primary_output="$(CLAWBOX_ENV_FILE="$primary_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   primary_empty_output="$(CLAWBOX_ENV_FILE="$primary_empty_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
@@ -53,30 +62,38 @@ test_wrapper_arguments_are_profile_specific() {
   embed_output="$(CLAWBOX_ENV_FILE="$embed_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   embed_empty_output="$(CLAWBOX_ENV_FILE="$embed_empty_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   embed_absent_output="$(CLAWBOX_ENV_FILE="$embed_absent_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
-  assert_contains 'primary wrapper appends primary args after required args' "$primary_output" '-m /tmp/primary.gguf --host 0.0.0.0 --port 11434 --ctx-size 16384 -ngl 99'
+  assert_contains 'primary wrapper appends primary args after required args' "$primary_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 -ngl 99"
   assert_not_contains 'primary wrapper excludes embeddings arg by default' "$primary_output" '--embedding'
-  assert_contains 'primary wrapper accepts empty LLAMA_EXTRA_ARGS' "$primary_empty_output" '-m /tmp/primary.gguf --host 0.0.0.0 --port 11434 --ctx-size 16384'
+  assert_contains 'primary wrapper accepts empty LLAMA_EXTRA_ARGS' "$primary_empty_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384"
   assert_not_contains 'primary wrapper empty LLAMA_EXTRA_ARGS appends nothing' "$primary_empty_output" '-ngl'
-  assert_contains 'primary wrapper accepts absent LLAMA_EXTRA_ARGS under set -u' "$primary_absent_output" '-m /tmp/primary.gguf --host 0.0.0.0 --port 11434 --ctx-size 16384'
+  assert_contains 'primary wrapper accepts absent LLAMA_EXTRA_ARGS under set -u' "$primary_absent_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384"
   assert_not_contains 'primary wrapper absent LLAMA_EXTRA_ARGS appends nothing' "$primary_absent_output" '-ngl'
-  assert_contains 'embeddings wrapper uses embeddings model and args' "$embed_output" '-m /tmp/embed.gguf --host 0.0.0.0 --port 11435 --ctx-size 8192 --embedding -fa on'
-  assert_contains 'embeddings wrapper accepts empty EMBEDDINGS_LLAMA_EXTRA_ARGS' "$embed_empty_output" '-m /tmp/embed.gguf --host 0.0.0.0 --port 11435 --ctx-size 8192'
+  assert_contains 'embeddings wrapper uses embeddings model and args' "$embed_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --embedding -fa on"
+  assert_contains 'embeddings wrapper accepts empty EMBEDDINGS_LLAMA_EXTRA_ARGS' "$embed_empty_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192"
   assert_not_contains 'embeddings wrapper empty extra args appends nothing' "$embed_empty_output" '--embedding'
-  assert_contains 'embeddings wrapper accepts absent EMBEDDINGS_LLAMA_EXTRA_ARGS under set -u' "$embed_absent_output" '-m /tmp/embed.gguf --host 0.0.0.0 --port 11435 --ctx-size 8192'
+  assert_contains 'embeddings wrapper accepts absent EMBEDDINGS_LLAMA_EXTRA_ARGS under set -u' "$embed_absent_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192"
   assert_not_contains 'embeddings wrapper absent extra args appends nothing' "$embed_absent_output" '--embedding'
 }
 
 test_runtime_env_writes_empty_extra_args_for_fresh_users() {
+  local fake_bin="$TEMP_DIR/bin/llama-server"
+  local primary_model="$TEMP_DIR/models/primary.gguf"
+  local embed_model="$TEMP_DIR/models/embed.gguf"
   local primary_env="$TEMP_DIR/runtime-primary.env" embeddings_env="$TEMP_DIR/runtime-embeddings.env" output
+  mkdir -p "$(dirname "$fake_bin")" "$(dirname "$primary_model")" "$(dirname "$embed_model")"
+  : > "$fake_bin"
+  : > "$primary_model"
+  : > "$embed_model"
+  chmod +x "$fake_bin"
   output="$({
     BASE_DIR="$ROOT_DIR" HOME="$TEMP_DIR/home"
-    LLAMA_BIN='/tmp/llama-server'
-    MODEL_PATH='/tmp/primary.gguf'
+    LLAMA_BIN="$fake_bin"
+    MODEL_PATH="$primary_model"
     LLAMA_HOST='0.0.0.0'
     LLAMA_PORT='11436'
     LLAMA_CTX='16384'
     unset LLAMA_EXTRA_ARGS
-    EMBEDDINGS_MODEL_PATH='/tmp/embed.gguf'
+    EMBEDDINGS_MODEL_PATH="$embed_model"
     EMBEDDINGS_LLAMA_HOST='0.0.0.0'
     EMBEDDINGS_LLAMA_PORT='11435'
     EMBEDDINGS_LLAMA_CTX='8192'
@@ -101,13 +118,17 @@ test_disabled_status_and_model_preservation_contract() {
 }
 
 test_port_selection_contract() {
+  local embed_model="$TEMP_DIR/models/embed.gguf"
   local output
+  mkdir -p "$(dirname "$embed_model")"
+  : > "$embed_model"
   output="$({
     export TEMP_DIR ROOT_DIR
+    export TEST_EMBED_MODEL="$embed_model"
     . "$ROOT_DIR/tests/helpers/setup-harness.sh"
     load_setup_functions
     HOST_IP=127.0.0.1 LLAMA_PORT=11434 EMBEDDINGS_ENABLED=false
-    prompt_yes_no() { REPLY=true; }; select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH=/tmp/embed.gguf; }
+    prompt_yes_no() { REPLY=true; }; select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH="$TEST_EMBED_MODEL"; }
     configured_or_default() { REPLY="$3"; }; prompt_with_default() { REPLY="$2"; }
     llama_port_in_use() { [ "$1" = 11435 ]; }; llama_suggest_available_port() { REPLY=11436; }
     write_env_from_template() { printf 'PORT=%s URL=%s\n' "$EMBEDDINGS_LLAMA_PORT" "$EMBEDDINGS_LLAMA_BASE_URL"; }; source_env_file(){ :; }; detect_existing_llama_install_mode(){ REPLY=user; }; setup_embeddings_llama_service_for_mode(){ :; }
@@ -117,9 +138,13 @@ test_port_selection_contract() {
 }
 
 test_setup_rerun_preserves_existing_embeddings_service() {
+  local embed_model="$TEMP_DIR/models/existing-embed.gguf"
   local output
+  mkdir -p "$(dirname "$embed_model")"
+  : > "$embed_model"
   output="$({
     export TEMP_DIR ROOT_DIR
+    export TEST_EMBED_MODEL="$embed_model"
     . "$ROOT_DIR/tests/helpers/setup-harness.sh"
     load_setup_functions
     install_prompt_stubs
@@ -128,7 +153,7 @@ test_setup_rerun_preserves_existing_embeddings_service() {
     LLAMA_BIN=/opt/homebrew/bin/llama-server
     LLAMA_PORT=11434
     EMBEDDINGS_ENABLED=true
-    EMBEDDINGS_MODEL_PATH=/models/embed.gguf
+    EMBEDDINGS_MODEL_PATH="$TEST_EMBED_MODEL"
     EMBEDDINGS_LLAMA_PORT=11435
     EMBEDDINGS_LLAMA_BASE_URL=http://127.0.0.1:11435/v1
     embeddings_llama_service_loaded() { [ "$1" = user ]; }
@@ -141,7 +166,7 @@ test_setup_rerun_preserves_existing_embeddings_service() {
   } 2>&1)"
   assert_contains 'existing embeddings rerun detects configured endpoint' "$output" 'embeddings llama-server detected at http://127.0.0.1:11435/v1'
   assert_contains 'existing embeddings rerun offers reuse path' "$output" 'Use the existing running embeddings llama-server on port 11435 (recommended)'
-  assert_contains 'existing embeddings rerun preserves enabled config on reuse' "$output" 'FINAL:true:/models/embed.gguf:11435:http://127.0.0.1:11435/v1'
+  assert_contains 'existing embeddings rerun preserves enabled config on reuse' "$output" "FINAL:true:$embed_model:11435:http://127.0.0.1:11435/v1"
   assert_not_contains 'existing embeddings rerun does not show fresh configure prompt' "$output" 'Configure a separate host llama-server for embeddings?'
   assert_not_contains 'existing embeddings rerun does not claim embeddings are unconfigured' "$output" 'Embeddings server is not configured.'
   assert_not_contains 'existing embeddings reuse does not restart service' "$output" 'RESTART_UNEXPECTED'
@@ -149,9 +174,13 @@ test_setup_rerun_preserves_existing_embeddings_service() {
 }
 
 test_setup_rerun_stopped_embeddings_offers_repair_not_fresh_enable() {
+  local embed_model="$TEMP_DIR/models/stopped-embed.gguf"
   local output
+  mkdir -p "$(dirname "$embed_model")"
+  : > "$embed_model"
   output="$({
     export TEMP_DIR ROOT_DIR
+    export TEST_EMBED_MODEL="$embed_model"
     . "$ROOT_DIR/tests/helpers/setup-harness.sh"
     load_setup_functions
     install_prompt_stubs
@@ -160,7 +189,7 @@ test_setup_rerun_stopped_embeddings_offers_repair_not_fresh_enable() {
     LLAMA_BIN=/opt/homebrew/bin/llama-server
     LLAMA_PORT=11434
     EMBEDDINGS_ENABLED=true
-    EMBEDDINGS_MODEL_PATH=/models/embed.gguf
+    EMBEDDINGS_MODEL_PATH="$TEST_EMBED_MODEL"
     EMBEDDINGS_LLAMA_PORT=11435
     EMBEDDINGS_LLAMA_BASE_URL=http://127.0.0.1:11435/v1
     embeddings_llama_service_loaded() { return 1; }
