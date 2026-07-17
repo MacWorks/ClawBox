@@ -1,3 +1,46 @@
+model_qualification_summary_for_menu() {
+  local model_path="$1"
+  local data_dir="${CLAWBOX_QUALIFY_DATA_DIR:-${BASE_DIR:-.}/data/qualification}"
+  [ -d "$data_dir/runs" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 - "$data_dir/runs" "$model_path" <<'PY' 2>/dev/null || true
+import json, os, sys
+runs_dir, model_path = sys.argv[1], sys.argv[2]
+target_base = os.path.basename(model_path).lower()
+records = []
+for name in os.listdir(runs_dir):
+    if not name.endswith(".json"):
+        continue
+    try:
+        with open(os.path.join(runs_dir, name), encoding="utf-8") as fh:
+            record = json.load(fh)
+    except Exception:
+        continue
+    model = record.get("model") or {}
+    values = [model.get("path"), model.get("configured"), model.get("running"), model.get("basename")]
+    if any((v or "").lower() == model_path.lower() or os.path.basename(v or "").lower() == target_base for v in values):
+        records.append(record)
+records.sort(key=lambda r: (r.get("completedAt") or r.get("startedAt") or "", r.get("runId") or ""), reverse=True)
+for record in records:
+    profile = record.get("profile") or {}
+    if profile.get("id") == "full":
+        score = "Unrated" if record.get("score") is None else f"{record.get('score')}/100"
+        dur = record.get("durationSeconds")
+        try:
+            dur = int(float(dur))
+            if dur < 60:
+                duration = f"{dur}s"
+            else:
+                minutes, seconds = divmod(dur, 60)
+                duration = f"{minutes}m {seconds:02d}s"
+        except Exception:
+            duration = "unknown"
+        completed = (record.get("completedAt") or "")[:10]
+        print(f"     Full: {record.get('overallStatus')} {score} · {duration} · qualified {completed}")
+        break
+PY
+}
+
 setup_configure_model_selection() {
   local model_path_value=''
   local models_dir_default=''
@@ -122,6 +165,7 @@ EOF
     model_number=1
     for model_name in "${model_files[@]}"; do
       outf '  %s) %s' "$model_number" "$model_name"
+      model_qualification_summary_for_menu "$models_dir_value/$model_name"
       model_number=$((model_number + 1))
     done
 

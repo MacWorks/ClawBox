@@ -19,6 +19,7 @@ bash tests/model-command-test.sh
 bash tests/embeddings-test.sh
 bash tests/openclaw-command-test.sh
 bash tests/qualify-command-test.sh
+bash tests/qualification-history-test.sh
 bash tests/vm-provision-test.sh
 bash tests/repo-hygiene-test.sh
 bash tests/setup-startup-smoke-test.sh

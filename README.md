@@ -183,6 +183,10 @@ configured host model behind the OpenClaw alias, use:
 ./clawbox qualify --profile fast
 ./clawbox qualify --profile full
 ./clawbox qualify --profile fast --scenario 01-tool-reliability
+./clawbox qualify history
+./clawbox qualify compare
+./clawbox qualify report --latest
+./clawbox qualify badge --latest
 ```
 
 Without `--profile`, qualification uses the Full profile. The report identifies
@@ -190,8 +194,11 @@ the selected profile and coverage so Fast results are not confused with Full
 results. It also shows both the actual configured/running GGUF model and the
 stable OpenClaw alias such as `clawbox/local`. Qualification artifacts are stored under
 `~/.openclaw/workspace/.clawbox/qualification/runs/` inside the VM. The command
-does not switch models, replace OpenClaw config, rerun onboarding, or install
-inference software in the VM. See `docs/qualification.md`.
+also maintains a compact host-side history index under `data/qualification/`
+for history display, comparisons, Markdown reports, badges, and model-menu
+qualification summaries. That directory is runtime data and is ignored by Git.
+The command does not switch models, replace OpenClaw config, rerun onboarding,
+or install inference software in the VM. See `docs/qualification.md`.
 
 ### Optional embeddings server
 

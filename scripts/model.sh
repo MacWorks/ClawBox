@@ -19,6 +19,7 @@ source "$BASE_DIR/lib/llama.sh"
 source "$BASE_DIR/lib/ssh.sh"
 source "$BASE_DIR/lib/runtime.sh"
 source "$BASE_DIR/lib/deploy.sh"
+source "$BASE_DIR/lib/qualify/history.sh"
 
 RUNTIME_DIR="$BASE_DIR/vm/runtime"
 CONFIG_PATH="$RUNTIME_DIR/openclaw.json"
@@ -107,6 +108,40 @@ primary_model_matches_running_model() {
 run_qualification_suite_after_model_switch() {
   local profile="${1:-full}"
   "$BASE_DIR/clawbox" qualify --profile "$profile"
+}
+
+model_metadata_command() {
+  local model="${1:-}" json=false args=()
+  [ -n "$model" ] || { error 'Usage: ./clawbox model metadata <model> [--set-display-name <name>] [--add-role <role>] [--set-note <note>] [--preferred] [--json]'; return 1; }
+  shift || true
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json)
+        json=true
+        shift
+        ;;
+      --set-display-name|--add-role|--set-note)
+        [ "$#" -ge 2 ] || { error "Missing value for $1."; return 1; }
+        args+=("$1" "$2")
+        shift 2
+        ;;
+      --preferred)
+        args+=("$1")
+        shift
+        ;;
+      -h|--help)
+        out 'Usage: ./clawbox model metadata <model> [--set-display-name <name>] [--add-role <role>] [--set-note <note>] [--preferred] [--json]'
+        return 0
+        ;;
+      *)
+        error "Unknown metadata option: $1"
+        return 1
+        ;;
+    esac
+  done
+  qualify_history_require_python || return 2
+  qualify_history_init || return 1
+  qualify_history_python metadata "$(qualify_history_models_file)" "$model" "$json" "${args[@]}"
 }
 
 offer_qualification_after_primary_model_switch() {
@@ -384,6 +419,11 @@ switch_primary_model() {
 
 main() {
   local target="${1:-}"
+  if [ "$target" = metadata ]; then
+    shift || true
+    model_metadata_command "$@"
+    return $?
+  fi
   [ -f "$ENV_FILE" ] || { error 'Missing .env. Run ./clawbox setup first.'; return 1; }
   source_env_file || return $?
   case "$target" in

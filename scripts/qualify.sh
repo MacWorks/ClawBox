@@ -8,6 +8,7 @@ source "$BASE_DIR/lib/output.sh"
 source "$BASE_DIR/lib/log.sh"
 source "$BASE_DIR/lib/ssh.sh"
 source "$BASE_DIR/lib/qualify/qualify.sh"
+source "$BASE_DIR/lib/qualify/history.sh"
 
 QUALIFY_JSON=false
 QUALIFY_PROFILE='full'
@@ -32,6 +33,12 @@ usage() {
   cat <<'EOF'
 Usage: ./clawbox qualify [--profile fast|full] [--scenario <scenario-id>] [--json]
 
+Additional commands:
+  ./clawbox qualify history [options]
+  ./clawbox qualify compare [options]
+  ./clawbox qualify report [options]
+  ./clawbox qualify badge [options]
+
 Run the ClawBox model qualification suite inside the VM against the currently
 configured OpenClaw model.
 
@@ -46,8 +53,21 @@ Examples:
   ./clawbox qualify --profile fast
   ./clawbox qualify --profile full
   ./clawbox qualify --profile fast --scenario 01-tool-reliability
+  ./clawbox qualify history --latest
+  ./clawbox qualify compare --profile full
+  ./clawbox qualify report --latest --format markdown
+  ./clawbox qualify badge --latest --format markdown
 EOF
 }
+
+case "${1:-}" in
+  history|compare|report|badge)
+    subcommand="$1"
+    shift
+    qualify_history_dispatch "$subcommand" "$@"
+    exit $?
+    ;;
+esac
 
 qualify_profile_name() {
   case "$1" in
@@ -707,6 +727,7 @@ main() {
   local model_ref='' model_configured='' model_running='' model_display=''
   local remote_command='' remote_status=0 remote_env='' remote_output='' remote_stderr=''
   local run_label='' suite_checksum='' clawbox_commit='' clawbox_dirty='null'
+  local index_warning_file='' index_status=0
 
   validate_profile_id "$QUALIFY_PROFILE"
   validate_scenario_id "$QUALIFY_SCENARIO"
@@ -781,6 +802,13 @@ Resolve the model inconsistency before running qualification."
     qualify_fail 2 'VM qualification runner did not produce valid aggregate JSON.'
   fi
 
+  index_warning_file="$(mktemp)" || qualify_fail 2 'Unable to create qualification index warning file.'
+  if qualify_history_index_aggregate "$remote_output" '' "$index_warning_file"; then
+    index_status=0
+  else
+    index_status=$?
+  fi
+
   case "$remote_status" in
     0) run_level='success' ;;
     1) run_level='warning' ;;
@@ -789,10 +817,29 @@ Resolve the model inconsistency before running qualification."
   esac
 
   if [ "$QUALIFY_JSON" = true ]; then
-    cat "$remote_output"
+    if [ "$index_status" -eq 0 ]; then
+      cat "$remote_output"
+    else
+      python3 - "$remote_output" "$index_status" <<'PY'
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+warnings = data.setdefault("warnings", [])
+warnings.append("qualification completed, but the host history index could not be updated")
+data["historyIndex"] = {"updated": False, "status": int(sys.argv[2])}
+print(json.dumps(data, separators=(",", ":")))
+PY
+    fi
   else
     qualify_render_report "$remote_output"
+    if [ "$index_status" -ne 0 ]; then
+      warn 'Warning: qualification completed, but the host history index could not be updated.'
+      if [ -s "$index_warning_file" ]; then
+        cat "$index_warning_file" >&2
+      fi
+    fi
   fi
+  rm -f "$index_warning_file"
 
   case "$remote_status" in
     0|1|2) return "$remote_status" ;;

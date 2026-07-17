@@ -29,6 +29,10 @@ structured results, aggregate reporting, and automatic VM publication.
 ./clawbox qualify --profile fast --scenario 01-tool-reliability
 ./clawbox qualify --scenario 01-tool-reliability
 ./clawbox qualify --json
+./clawbox qualify history
+./clawbox qualify compare
+./clawbox qualify report --latest
+./clawbox qualify badge --latest
 ./clawbox qualify --help
 ```
 
@@ -242,6 +246,140 @@ The suite is limited to ClawBox-managed hidden workspace paths. It does not
 replace `~/.openclaw/openclaw.json`, rerun onboarding, switch models, or install
 host inference software inside the VM.
 
+## Host-side history index
+
+VM run directories remain the authoritative detailed evidence. ClawBox also
+maintains a compact host-side summary index for fast history display,
+model-to-model comparison, model-menu annotations, report export, and badges:
+
+```text
+data/qualification/
+├── runs/
+│   └── <run-id>.json
+└── models.json
+```
+
+`data/qualification/` is runtime data and is ignored by Git except for a
+`.gitkeep` placeholder. Each run summary is written atomically as a separate
+JSON file, which reduces the chance that an interrupted write can corrupt the
+whole history. `models.json` stores automatically maintained model summaries
+and optional user metadata. ClawBox uses a lightweight lock directory while
+updating these files. If indexing fails after a qualification run, the
+qualification result is still returned normally and ClawBox prints a warning.
+
+Run summaries are normalized from aggregate JSON. They include run ID, model
+identity, profile, result, score, coverage, warnings, failures, duration,
+artifact directory, suite checksum, and available ClawBox Git provenance.
+Absolute paths may appear in JSON summaries so that artifacts can be traced, but
+human output generally shows model basenames or display names.
+
+### History
+
+```bash
+./clawbox qualify history
+./clawbox qualify history --json
+./clawbox qualify history --model Ternary-Bonsai-27B-Q2_g64.gguf
+./clawbox qualify history --profile full --limit 5
+./clawbox qualify history --latest
+./clawbox qualify history --refresh
+```
+
+History is sorted newest first. Viewing a historical `FAIL` exits `0` because
+the history command succeeded; the model result is historical data, not the
+command's own failure.
+
+`--refresh` backfills the host index from retained VM aggregate files under the
+qualification `runs/` directory. It imports valid completed runs, deduplicates
+by `runId`, skips malformed or incomplete runs with warnings, and never deletes
+VM artifacts.
+
+### Comparison
+
+```bash
+./clawbox qualify compare
+./clawbox qualify compare --models model-a.gguf,model-b.gguf
+./clawbox qualify compare --run <run-id> --run <run-id>
+./clawbox qualify compare --profile fast
+./clawbox qualify compare --json
+```
+
+By default, comparison uses the most recent completed Full run for each model.
+Model/profile comparisons use like-for-like profiles. Explicit `--run` values
+may compare any selected runs. The report displays only metrics present in the
+indexed records and does not declare an absolute winner.
+
+### Model metadata
+
+Optional user metadata is maintained with:
+
+```bash
+./clawbox model metadata <model>
+./clawbox model metadata <model> --set-display-name "Ternary Bonsai 27B"
+./clawbox model metadata <model> --add-role coding
+./clawbox model metadata <model> --set-note "Preferred for interactive use"
+./clawbox model metadata <model> --preferred
+./clawbox model metadata <model> --json
+```
+
+Automatic metadata includes basename, canonical path when known, last qualified
+run, latest Fast and Full results, latest score and duration, recent ClawBox
+commit, suite checksum, and indexed run count. User-maintained display names,
+roles, notes, and preferred flags are preserved when automatic summaries are
+rebuilt.
+
+When qualification data exists, `./clawbox model primary` annotates available
+GGUF files with a compact latest Full result. Missing or corrupt metadata never
+blocks model switching.
+
+### Markdown report export
+
+```bash
+./clawbox qualify report --latest
+./clawbox qualify report --run <run-id>
+./clawbox qualify report --latest --format markdown
+./clawbox qualify report --run <run-id> --output /tmp/report.md
+```
+
+Markdown is the initial export format. Without `--output`, the report is printed
+to stdout. With `--output`, ClawBox writes atomically and refuses to overwrite
+an existing file unless `--force` is supplied. Markdown output escapes table
+characters and omits full transcripts or large raw diffs by default.
+
+### Badges
+
+```bash
+./clawbox qualify badge --latest
+./clawbox qualify badge --model <model>
+./clawbox qualify badge --run <run-id>
+./clawbox qualify badge --format text
+./clawbox qualify badge --format markdown
+./clawbox qualify badge --format json
+```
+
+Text badges use neutral wording such as `CLAWBOX QUALIFICATION · Full · PASS ·
+100/100 · model.gguf`; `QUALIFIED` is not used to imply that a failing model
+passed. Markdown badges emit a shields.io-compatible URL string without network
+access. JSON badges include the selected run ID, model, profile, status, score,
+label, message, color, and Markdown string.
+
+Status colors are deterministic:
+
+- `PASS`: `brightgreen`
+- `WARNING`: `yellow`
+- `FAIL`: `red`
+- `ERROR` or unrated: `lightgrey`
+
+### Performance metrics
+
+The initial host index records duration and model file size when the model path
+is known and readable. More detailed runtime metrics are represented as
+unavailable with a limitation note unless they are present in aggregate data.
+ClawBox does not use invasive privileged tools, does not promise GPU/VRAM
+metrics on macOS, and never fails correctness qualification because performance
+metadata is missing.
+
+Historical comparisons tolerate older runs without metrics.
+
 The production payload intentionally excludes:
 
 - `prototype/`
@@ -264,9 +402,12 @@ exit status `2` with an infrastructure `ERROR`.
 
 ## Exit status
 
-- `0`: qualification completed with no `FAIL` or `ERROR` result
-- `1`: one or more model qualification failures
-- `2`: qualification infrastructure or configuration error
+- `./clawbox qualify`: `0` when qualification completed with no `FAIL` or
+  `ERROR`, `1` for model qualification failures, and `2` for qualification
+  infrastructure or configuration errors.
+- Read-only history, compare, report, badge, and metadata commands: `0` when
+  the command operation succeeds, `1` for invalid user requests or unavailable
+  requested records, and `2` for infrastructure or index corruption errors.
 
 Warnings alone do not produce exit status `1`.
 
@@ -318,5 +459,7 @@ that account a valid qualification environment.
 - Transcript parsing depends on OpenClaw JSONL assistant message records.
 - The first aggregate score is intentionally simple and auditable; unsupported
   evidence should remain unrated rather than inferred.
+- Host-side performance metrics are intentionally conservative in the initial
+  history index.
 - The production scenarios have not been live-validated until `./clawbox
   qualify` is run from the real ClawBox runtime account.

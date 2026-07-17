@@ -26,11 +26,16 @@ Examples:
   ./clawbox status
   ./clawbox model
   ./clawbox model primary
+  ./clawbox model metadata /path/to/model.gguf --set-display-name "Display Name"
   ./clawbox model embedding
   ./clawbox model embeddings
   ./clawbox qualify
   ./clawbox qualify --profile fast
   ./clawbox qualify --profile full
+  ./clawbox qualify history
+  ./clawbox qualify compare
+  ./clawbox qualify report --latest
+  ./clawbox qualify badge --latest
   ./clawbox openclaw reset
 EOF
 }
