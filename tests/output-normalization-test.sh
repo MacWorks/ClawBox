@@ -2723,6 +2723,8 @@ test_optional_embeddings_setup_is_host_only() {
     load_setup_functions
     EMBEDDINGS_ENABLED=''
     prompt_yes_no() { REPLY='false'; }
+    prompt_with_suffix() { printf 'UNEXPECTED_EXISTING_EMBEDDINGS_MENU:%s %s\n' "$1" "$2"; return 1; }
+    embeddings_service_configured() { return 1; }
     write_env_from_template() { printf 'ENV_WRITTEN:%s\n' "$EMBEDDINGS_ENABLED"; }
     source_env_file() { return 0; }
     setup_embeddings_llama_service_for_mode() { printf 'UNEXPECTED_EMBEDDINGS_SERVICE\n'; }
@@ -2738,6 +2740,8 @@ test_optional_embeddings_setup_is_host_only() {
     LLAMA_PORT='11434'
     EMBEDDINGS_ENABLED=false
     prompt_yes_no() { REPLY='true'; }
+    prompt_with_suffix() { printf 'UNEXPECTED_EXISTING_EMBEDDINGS_MENU:%s %s\n' "$1" "$2"; return 1; }
+    embeddings_service_configured() { return 1; }
     select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH='/tmp/embeddings.gguf'; }
     configured_or_default() { REPLY="$3"; }
     prompt_with_default() { REPLY="$2"; }
