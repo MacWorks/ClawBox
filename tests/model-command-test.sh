@@ -119,6 +119,7 @@ test_vm_openclaw_restart_requires_runtime_verification() {
     ssh() { return 0; }
     sleep() { :; }
     openclaw_runtime_has_launchd_gateway() { return 1; }
+    openclaw_runtime_has_manual_process() { return 1; }
     offer_vm_openclaw_gateway_restart
   } 2>&1)"
   assert_contains 'unverified VM restart warns clearly' "$unhealthy_output" 'did not become healthy after restart'
@@ -699,9 +700,11 @@ test_embeddings_model_subcommand_can_enable_disabled_embeddings() {
       LLAMA_PORT=11434
       source_env_file() { :; }
       prompt_yes_no() { REPLY=true; }
+      prompt_with_suffix() { printf 'UNEXPECTED_EXISTING_EMBEDDINGS_MENU:%s %s\n' "$1" "$2"; return 1; }
       select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH='/models/embeddings.gguf'; }
       configured_or_default() { REPLY="$3"; }
       prompt_with_default() { REPLY="$2"; }
+      embeddings_llama_service_loaded() { return 1; }
       llama_port_in_use() { return 1; }
       write_env_from_template() { printf 'WRITE_ENABLED:%s:%s:%s\n' "$EMBEDDINGS_ENABLED" "$MODEL_PATH" "$EMBEDDINGS_MODEL_PATH"; }
       detect_existing_llama_install_mode() { REPLY=user; }
