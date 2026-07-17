@@ -119,22 +119,76 @@ test_disabled_status_and_model_preservation_contract() {
 
 test_port_selection_contract() {
   local embed_model="$TEMP_DIR/models/embed.gguf"
+  local port_calls="$TEMP_DIR/port-calls.txt"
   local output
   mkdir -p "$(dirname "$embed_model")"
   : > "$embed_model"
   output="$({
     export TEMP_DIR ROOT_DIR
-    export TEST_EMBED_MODEL="$embed_model"
+    export TEST_EMBED_MODEL="$embed_model" TEST_PORT_CALLS="$port_calls"
     . "$ROOT_DIR/tests/helpers/setup-harness.sh"
     load_setup_functions
-    HOST_IP=127.0.0.1 LLAMA_PORT=11434 EMBEDDINGS_ENABLED=false
+    HOST_IP=127.0.0.1
+    LLAMA_PORT=11434
+    EMBEDDINGS_ENABLED=false
+    unset EMBEDDINGS_MODEL_PATH
+    unset EMBEDDINGS_LLAMA_HOST
+    unset EMBEDDINGS_LLAMA_PORT
+    unset EMBEDDINGS_LLAMA_BASE_URL
+    unset EMBEDDINGS_LLAMA_CTX
+    unset EMBEDDINGS_LLAMA_EXTRA_ARGS
+    embeddings_service_configured() { return 1; }
+    setup_existing_embeddings_service_phase() { printf 'UNEXPECTED_EXISTING_EMBEDDINGS_MENU\n'; return 64; }
     prompt_yes_no() { REPLY=true; }; select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH="$TEST_EMBED_MODEL"; }
     configured_or_default() { REPLY="$3"; }; prompt_with_default() { REPLY="$2"; }
-    llama_port_in_use() { [ "$1" = 11435 ]; }; llama_suggest_available_port() { REPLY=11436; }
-    write_env_from_template() { printf 'PORT=%s URL=%s\n' "$EMBEDDINGS_LLAMA_PORT" "$EMBEDDINGS_LLAMA_BASE_URL"; }; source_env_file(){ :; }; detect_existing_llama_install_mode(){ REPLY=user; }; setup_embeddings_llama_service_for_mode(){ :; }
-    setup_embeddings_service_phase
+    llama_port_in_use() {
+      local port="${1:-}"
+      printf '%s\n' "$port" >> "$TEST_PORT_CALLS"
+      if [ "$port" = 11435 ]; then
+        return 0
+      fi
+      if [ "$port" = 11436 ]; then
+        return 1
+      fi
+      printf 'UNEXPECTED_PORT_CHECK:%s\n' "$port"
+      return 2
+    }
+    llama_suggest_available_port() {
+      local current_port="${2:-}"
+      printf 'SUGGEST_FROM:%s\n' "$current_port" >> "$TEST_PORT_CALLS"
+      [ "$current_port" = 11435 ] || { printf 'UNEXPECTED_SUGGEST_FROM:%s\n' "$current_port"; return 2; }
+      REPLY=11436
+    }
+    lsof() { printf 'UNEXPECTED_LSOF\n'; return 2; }
+    nc() { printf 'UNEXPECTED_NC\n'; return 2; }
+    curl() { printf 'UNEXPECTED_CURL\n'; return 2; }
+    write_env_from_template() {
+      printf 'PORT=%s URL=%s\n' "$EMBEDDINGS_LLAMA_PORT" "$EMBEDDINGS_LLAMA_BASE_URL"
+      printf 'MODEL=%s\n' "$EMBEDDINGS_MODEL_PATH"
+    }
+    source_env_file(){ :; }; detect_existing_llama_install_mode(){ REPLY=user; }; setup_embeddings_llama_service_for_mode(){ :; }
+    status=0
+    setup_embeddings_service_phase || status=$?
+    printf 'SETUP_STATUS=%s\n' "$status"
+    printf 'EXPECTED_PORT=11436\n'
+    printf 'ACTUAL_PORT=%s\n' "${EMBEDDINGS_LLAMA_PORT:-}"
+    printf 'EXPECTED_URL=http://127.0.0.1:11436/v1\n'
+    printf 'ACTUAL_URL=%s\n' "${EMBEDDINGS_LLAMA_BASE_URL:-}"
+    printf 'SELECTED_MODEL=%s\n' "${EMBEDDINGS_MODEL_PATH:-}"
+    printf 'PORT_CALLS=%s\n' "$(tr '\n' ',' < "$TEST_PORT_CALLS" 2>/dev/null || true)"
+    printf 'FIXTURE_ENV_FILE=%s\n' "${ENV_FILE:-}"
+    return "$status"
   } 2>&1)"
-  assert_contains 'busy embeddings default port selects alternate port and URL' "$output" 'PORT=11436 URL=http://127.0.0.1:11436/v1'
+  if [[ "$output" == *'PORT=11436 URL=http://127.0.0.1:11436/v1'* ]]; then
+    pass 'busy embeddings default port selects alternate port and URL'
+  else
+    fail "busy embeddings default port selects alternate port and URL; diagnostics: $(printf '%s' "$output" | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g')"
+  fi
+  assert_contains 'busy embeddings default port reports default as occupied' "$output" 'PORT_CALLS=11435,SUGGEST_FROM:11435,11436,'
+  assert_not_contains 'busy embeddings fixture does not enter existing service menu' "$output" 'UNEXPECTED_EXISTING_EMBEDDINGS_MENU'
+  assert_not_contains 'busy embeddings fixture does not call lsof' "$output" 'UNEXPECTED_LSOF'
+  assert_not_contains 'busy embeddings fixture does not call nc' "$output" 'UNEXPECTED_NC'
+  assert_not_contains 'busy embeddings fixture does not call curl' "$output" 'UNEXPECTED_CURL'
 }
 
 test_setup_rerun_preserves_existing_embeddings_service() {
