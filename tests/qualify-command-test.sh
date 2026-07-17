@@ -5,7 +5,26 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT_DIR/tests/helpers/setup-harness.sh"
 TEMP_DIR="$(mktemp -d)"
 export CLAWBOX_QUALIFY_RUNS_DIR="$TEMP_DIR/qualification-runs"
+export CLAWBOX_QUALIFY_DATA_DIR="$TEMP_DIR/host-qualification-history"
 trap cleanup_temp_dir EXIT
+
+repo_qualification_data_snapshot() {
+  local data_dir="$ROOT_DIR/data/qualification"
+
+  if [ ! -d "$data_dir" ]; then
+    printf 'missing\n'
+    return 0
+  fi
+
+  (
+    cd "$ROOT_DIR"
+    find data/qualification -type f -print | sort | while IFS= read -r file; do
+      cksum "$file"
+    done
+  )
+}
+
+REPO_QUALIFICATION_DATA_SNAPSHOT="$(repo_qualification_data_snapshot)"
 
 install_fake_openclaw() {
   setup_mock_bin_dir
@@ -1452,6 +1471,27 @@ test_qualify_sources_avoid_openclaw_config_replacement() {
   assert_not_contains 'qualify command does not switch models' "$source_text" 'MODEL_PATH='
 }
 
+test_qualify_host_history_fixtures_are_isolated() {
+  local resolved_history_dir current_snapshot
+
+  resolved_history_dir="$({ BASE_DIR="$ROOT_DIR"; source "$ROOT_DIR/lib/output.sh"; source "$ROOT_DIR/lib/qualify/history.sh"; qualify_history_data_dir; } 2>&1)"
+  case "$resolved_history_dir" in
+    "$TEMP_DIR"/*) pass 'qualify host history data dir resolves inside test temp root' ;;
+    *) fail "qualify host history data dir resolves inside test temp root; got $resolved_history_dir" ;;
+  esac
+
+  if [ -f "$CLAWBOX_QUALIFY_DATA_DIR/runs/human-run.json" ] &&
+     [ -f "$CLAWBOX_QUALIFY_DATA_DIR/runs/render-run.json" ] &&
+     [ -f "$CLAWBOX_QUALIFY_DATA_DIR/models.json" ]; then
+    pass 'qualify host history fixtures are written under the temp data root'
+  else
+    fail 'qualify host history fixtures are written under the temp data root'
+  fi
+
+  current_snapshot="$(repo_qualification_data_snapshot)"
+  assert_equals 'repository qualification history tree is unchanged by qualify command tests' "$current_snapshot" "$REPO_QUALIFICATION_DATA_SNAPSHOT"
+}
+
 run_test test_root_help_lists_qualify
 run_test test_qualification_entrypoint_modes
 run_test test_qualify_help_does_not_execute_remote_commands
@@ -1484,6 +1524,7 @@ run_test test_qualify_suite_manifest_drives_self_healing
 run_test test_setup_payload_publication_includes_qualification_suite
 run_test test_payload_excludes_prototypes_and_tests
 run_test test_qualify_sources_avoid_openclaw_config_replacement
+run_test test_qualify_host_history_fixtures_are_isolated
 
 if [ "$FAILURES" -eq 0 ]; then printf 'PASS: qualify command test suite succeeded\n'; exit 0; fi
 printf 'FAIL: qualify command test suite failed with %s issues\n' "$FAILURES"; exit 1
