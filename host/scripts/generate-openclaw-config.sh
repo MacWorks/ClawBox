@@ -104,7 +104,10 @@ config = {
             "maxTokens": 2048,
             "compat": {
                 "supportsDeveloperRole": False,
-                "unsupportedToolSchemaKeywords": ["pattern"],
+                "unsupportedToolSchemaKeywords": [
+                    "pattern",
+                    "additionalProperties",
+                ],
             },
             "api": "openai-completions",
         }],

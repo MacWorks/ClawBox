@@ -114,8 +114,15 @@ test_generate_openclaw_config_writes_expected_config() {
   json_query "$fixture_root" 'models.providers.clawbox.models.0.compat.supportsDeveloperRole'
   assert_equals 'generator keeps developer-role compatibility disabled for local llama.cpp model' "$REPLY" 'false'
 
-  json_query "$fixture_root" 'models.providers.clawbox.models.0.compat.unsupportedToolSchemaKeywords.0'
-  assert_equals 'generator marks JSON Schema pattern keyword unsupported for local llama.cpp model' "$REPLY" 'pattern'
+  REPLY="$(python3 - "$fixture_root/vm/runtime/openclaw.json" <<'PY'
+import json, sys
+with open(sys.argv[1], 'r', encoding='utf-8') as handle:
+    data = json.load(handle)
+keywords = data["models"]["providers"]["clawbox"]["models"][0]["compat"]["unsupportedToolSchemaKeywords"]
+print("pattern" in keywords and "additionalProperties" in keywords)
+PY
+)"
+  assert_equals 'generator marks required JSON Schema keywords unsupported for local llama.cpp model' "$REPLY" 'True'
 }
 
 test_generate_openclaw_config_defaults_invalid_gateway_mode_to_local() {
@@ -215,10 +222,10 @@ import json, sys
 with open(sys.argv[1], 'r', encoding='utf-8') as handle:
     data = json.load(handle)
 keywords = data["models"]["providers"]["clawbox"]["models"][0]["compat"]["unsupportedToolSchemaKeywords"]
-print(keywords.count("pattern"))
+print(keywords.count("pattern"), keywords.count("additionalProperties"))
 PY
 )"
-  assert_equals 'generator rerun does not duplicate unsupported pattern keyword' "$REPLY" '1'
+  assert_equals 'generator rerun does not duplicate unsupported schema keywords' "$REPLY" '1 1'
 }
 
 test_generate_openclaw_config_includes_embeddings_memory_search_when_enabled() {

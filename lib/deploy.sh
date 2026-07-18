@@ -223,7 +223,10 @@ print(json.dumps([{"id": sys.argv[1], "name": sys.argv[1], "contextWindow": cont
                   "maxTokens": 2048,
                   "compat": {
                       "supportsDeveloperRole": False,
-                      "unsupportedToolSchemaKeywords": ["pattern"],
+                      "unsupportedToolSchemaKeywords": [
+                          "pattern",
+                          "additionalProperties",
+                      ],
                   },
                   "api": "openai-completions"}], separators=(",", ":")))
 PY

@@ -902,17 +902,21 @@ test_deploy_module() {
   local extra_models=''
   local legacy_only_models=''
   local missing_pattern_model=''
+  local missing_additional_properties_model=''
   local preserved_keyword_model=''
+  local pattern_only_merged_models=''
+  local additional_properties_only_merged_models=''
   local merged_models=''
   local conflicting_model=''
 
   OPENCLAW_DEFAULT_MODEL=local
   LLAMA_CTX=32768
   desired_models="$(openclaw_config_model_array)"
-  reordered_models='[{"cost":{"input":0,"output":0},"compat":{"unsupportedToolSchemaKeywords":["pattern"],"supportsDeveloperRole":false},"maxTokens":2048,"contextWindow":32768,"api":"openai-completions","name":"local","id":"local"}]'
-  extra_models='[{"id":"legacy","name":"legacy","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format","pattern"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
-  legacy_only_models='[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
-  missing_pattern_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}}]'
+  reordered_models='[{"cost":{"input":0,"output":0},"compat":{"unsupportedToolSchemaKeywords":["additionalProperties","pattern"],"supportsDeveloperRole":false},"maxTokens":2048,"contextWindow":32768,"api":"openai-completions","name":"local","id":"local"}]'
+  extra_models='[{"id":"legacy","name":"legacy","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format","additionalProperties","pattern"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
+  legacy_only_models='[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
+  missing_pattern_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["additionalProperties"]}}]'
+  missing_additional_properties_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern"]}}]'
   preserved_keyword_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format"],"futureCompat":true},"reasoning":false}]'
 
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$reordered_models" "$desired_models"; then
@@ -939,6 +943,40 @@ test_deploy_module() {
     pass "OpenClaw provider model comparison detects missing unsupported pattern keyword"
   fi
 
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$missing_additional_properties_model" "$desired_models"; then
+    fail "OpenClaw provider model comparison should detect missing unsupported additionalProperties keyword"
+  else
+    pass "OpenClaw provider model comparison detects missing unsupported additionalProperties keyword"
+  fi
+
+  pattern_only_merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$missing_additional_properties_model" "$desired_models")"
+  if python3 - "$pattern_only_merged_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+keywords = models[0]["compat"]["unsupportedToolSchemaKeywords"]
+assert keywords.count("pattern") == 1
+assert keywords.count("additionalProperties") == 1
+PY
+  then
+    pass "OpenClaw provider model update upgrades pattern-only compatibility keywords"
+  else
+    fail "OpenClaw provider model update should upgrade pattern-only compatibility keywords"
+  fi
+
+  additional_properties_only_merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$missing_pattern_model" "$desired_models")"
+  if python3 - "$additional_properties_only_merged_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+keywords = models[0]["compat"]["unsupportedToolSchemaKeywords"]
+assert keywords.count("pattern") == 1
+assert keywords.count("additionalProperties") == 1
+PY
+  then
+    pass "OpenClaw provider model update upgrades additionalProperties-only compatibility keywords"
+  else
+    fail "OpenClaw provider model update should upgrade additionalProperties-only compatibility keywords"
+  fi
+
   merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$preserved_keyword_model" "$desired_models")"
   if python3 - "$merged_models" <<'PY'
 import json, sys
@@ -948,6 +986,7 @@ keywords = compat["unsupportedToolSchemaKeywords"]
 assert compat["supportsDeveloperRole"] is False
 assert compat["futureCompat"] is True
 assert keywords.count("pattern") == 1
+assert keywords.count("additionalProperties") == 1
 assert "format" in keywords
 PY
   then
@@ -956,28 +995,28 @@ PY
     fail "OpenClaw provider model update should preserve existing compatibility keywords"
   fi
 
-  conflicting_model='[{"id":"local","name":"legacy-local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern"]}}]'
+  conflicting_model='[{"id":"local","name":"legacy-local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
     fail "OpenClaw provider model comparison should detect conflicting local model identity"
   else
     pass "OpenClaw provider model comparison detects conflicting local model identity"
   fi
 
-  conflicting_model='[{"id":"local","name":"local","api":"openai-chat","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern"]}}]'
+  conflicting_model='[{"id":"local","name":"local","api":"openai-chat","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
     fail "OpenClaw provider model comparison should detect conflicting API"
   else
     pass "OpenClaw provider model comparison detects conflicting API"
   fi
 
-  conflicting_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":4096,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern"]}}]'
+  conflicting_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":4096,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
     fail "OpenClaw provider model comparison should detect conflicting context window"
   else
     pass "OpenClaw provider model comparison detects conflicting context window"
   fi
 
-  conflicting_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":true,"unsupportedToolSchemaKeywords":["pattern"]}}]'
+  conflicting_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":true,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
     fail "OpenClaw provider model comparison should detect conflicting developer-role support"
   else

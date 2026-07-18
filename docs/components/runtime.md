@@ -51,11 +51,14 @@ The managed primary keys are:
 The generated `clawbox/local` model entry includes OpenClaw compatibility
 metadata for the local llama.cpp backend. ClawBox sets
 `compat.supportsDeveloperRole` to `false` and marks the JSON Schema `pattern`
-keyword as unsupported through
-`compat.unsupportedToolSchemaKeywords=["pattern"]`. OpenClaw uses that metadata
-to remove unsupported schema keywords before tool schemas are sent to
-llama.cpp. This avoids parser-generation failures with current coding/full tool
-profiles without disabling those tools.
+and `additionalProperties` keywords as unsupported through
+`compat.unsupportedToolSchemaKeywords=["pattern","additionalProperties"]`.
+OpenClaw uses that metadata to remove unsupported schema keywords before tool
+schemas are sent to llama.cpp. `pattern` avoids schema-conversion rejection such
+as `Pattern must start with '^' and end with '$'`; `additionalProperties`
+avoids invalid grammar generation for arbitrary nested object keys, such as the
+grammar produced for OpenClaw's `update_plan` tool. These compatibility settings
+do not disable the coding/full tools themselves.
 
 When embeddings are enabled, the managed memory-search keys are:
 
