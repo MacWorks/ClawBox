@@ -37,13 +37,14 @@ That comparison deliberately ignores:
 Those exclusions matter because OpenClaw mutates runtime-managed fields after startup. Without normalization, the same effective config would look different on every run.
 
 Normal setup never replaces an existing VM config. It reads and updates only
-ClawBox-managed provider, primary-model, and optional embeddings memory-search
-keys through `openclaw config get` and `openclaw config set`. All other
-OpenClaw settings remain user/OpenClaw-owned.
+ClawBox-managed provider, primary-model, local tool-deny, and optional
+embeddings memory-search keys through `openclaw config get` and
+`openclaw config set`. All other OpenClaw settings remain user/OpenClaw-owned.
 
 The managed primary keys are:
 
 - `agents.defaults.model.primary`
+- `tools.deny`
 - `models.providers.<provider>.baseUrl`
 - `models.providers.<provider>.api`
 - `models.providers.<provider>.models`
@@ -59,6 +60,15 @@ as `Pattern must start with '^' and end with '$'`; `additionalProperties`
 avoids invalid grammar generation for arbitrary nested object keys, such as the
 grammar produced for OpenClaw's `update_plan` tool. These compatibility settings
 do not disable the coding/full tools themselves.
+
+For the managed local llama.cpp backend, ClawBox also keeps `cron` in
+`tools.deny`. OpenClaw 2026.7.1-2's cron schema can still produce invalid
+llama.cpp grammar for nested dynamic object keys even after the unsupported
+schema keywords above are removed. The deny list is merged with existing
+user-denied tools, so ClawBox adds `cron` once and does not remove unrelated
+entries. The remaining coding tools stay enabled; this is a managed-local
+compatibility policy and may be removable after upstream OpenClaw or llama.cpp
+schema compatibility improves.
 
 When embeddings are enabled, the managed memory-search keys are:
 

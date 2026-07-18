@@ -829,6 +829,7 @@ test_deploy_module() {
   local last_scp_target=''
   local remote_exists=true
   local managed_primary='clawbox/local'
+  local managed_tools_deny='["cron"]'
   local managed_base_url='http://127.0.0.1:11434/v1'
   local set_log=''
   local prompt_answer='n'
@@ -907,6 +908,10 @@ test_deploy_module() {
   local pattern_only_merged_models=''
   local additional_properties_only_merged_models=''
   local merged_models=''
+  local cron_deny='["cron"]'
+  local existing_deny='["shell","cron","memory"]'
+  local missing_cron_deny='["shell","memory"]'
+  local merged_deny=''
   local conflicting_model=''
 
   OPENCLAW_DEFAULT_MODEL=local
@@ -995,6 +1000,32 @@ PY
     fail "OpenClaw provider model update should preserve existing compatibility keywords"
   fi
 
+  if openclaw_config_value_matches_for_key 'tools.deny' "$existing_deny" "$cron_deny"; then
+    pass "OpenClaw tools deny comparison accepts existing cron deny with user entries"
+  else
+    fail "OpenClaw tools deny comparison should accept existing cron deny with user entries"
+  fi
+
+  if openclaw_config_value_matches_for_key 'tools.deny' "$missing_cron_deny" "$cron_deny"; then
+    fail "OpenClaw tools deny comparison should detect missing cron deny"
+  else
+    pass "OpenClaw tools deny comparison detects missing cron deny"
+  fi
+
+  merged_deny="$(openclaw_config_value_for_remote_set 'tools.deny' "$missing_cron_deny" "$cron_deny")"
+  if python3 - "$merged_deny" <<'PY'
+import json, sys
+denied = json.loads(sys.argv[1])
+assert denied.count("cron") == 1
+assert "shell" in denied
+assert "memory" in denied
+PY
+  then
+    pass "OpenClaw tools deny update preserves user entries while adding cron once"
+  else
+    fail "OpenClaw tools deny update should preserve user entries while adding cron once"
+  fi
+
   conflicting_model='[{"id":"local","name":"legacy-local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
     fail "OpenClaw provider model comparison should detect conflicting local model identity"
@@ -1036,6 +1067,15 @@ PY
   fi
 
   last_ssh_exec=''
+  openclaw_config_remote_set 'tools.deny' "$cron_deny"
+  if [[ "$last_ssh_exec" != *'--merge'* ]] \
+    && [[ "$last_ssh_exec" == *'tools.deny'* ]]; then
+    pass "OpenClaw tools deny updates avoid object merge mode"
+  else
+    fail "OpenClaw tools deny updates should avoid object merge mode"
+  fi
+
+  last_ssh_exec=''
   openclaw_config_remote_set 'models.providers.clawbox.models' "$desired_models"
   if [[ "$last_ssh_exec" == *'--merge'* ]] \
     && [[ "$last_ssh_exec" == *'models.providers.clawbox.models'* ]]; then
@@ -1046,12 +1086,14 @@ PY
 
   openclaw_config_desired_entries_for_scope() {
     printf 'agents.defaults.model.primary\tclawbox/local\n'
+    printf 'tools.deny\t["cron"]\n'
     printf 'models.providers.clawbox.baseUrl\thttp://127.0.0.1:11434/v1\n'
   }
 
   openclaw_config_remote_get() {
     case "$1" in
       agents.defaults.model.primary) printf '%s\n' "$managed_primary" ;;
+      tools.deny) printf '%s\n' "$managed_tools_deny" ;;
       models.providers.clawbox.baseUrl) printf '%s\n' "$managed_base_url" ;;
       *) return 1 ;;
     esac
@@ -1061,6 +1103,7 @@ PY
     set_log="${set_log}$1=$2\n"
     case "$1" in
       agents.defaults.model.primary) managed_primary="$2" ;;
+      tools.deny) managed_tools_deny="$2" ;;
       models.providers.clawbox.baseUrl) managed_base_url="$2" ;;
     esac
   }
@@ -1086,12 +1129,14 @@ PY
 
   openclaw_config_desired_entries_for_scope() {
     printf 'models.providers.clawbox.models\t%s\n' "$desired_models"
+    printf 'tools.deny\t["cron"]\n'
     printf 'agents.defaults.memorySearch.remote.apiKey\tollama-local\n'
   }
 
   openclaw_config_remote_get() {
     case "$1" in
       models.providers.clawbox.models) printf '%s\n' "$extra_models" ;;
+      tools.deny) printf '%s\n' '["shell","cron"]' ;;
       agents.defaults.memorySearch.remote.apiKey) printf '%s\n' '__OPENCLAW_REDACTED__' ;;
       *) return 1 ;;
     esac
@@ -1106,12 +1151,14 @@ PY
 
   openclaw_config_desired_entries_for_scope() {
     printf 'agents.defaults.model.primary\tclawbox/local\n'
+    printf 'tools.deny\t["cron"]\n'
     printf 'models.providers.clawbox.baseUrl\thttp://127.0.0.1:11434/v1\n'
   }
 
   openclaw_config_remote_get() {
     case "$1" in
       agents.defaults.model.primary) printf '%s\n' "$managed_primary" ;;
+      tools.deny) printf '%s\n' '["cron"]' ;;
       models.providers.clawbox.baseUrl) printf '%s\n' "$managed_base_url" ;;
       *) return 1 ;;
     esac

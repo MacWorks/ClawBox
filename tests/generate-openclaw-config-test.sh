@@ -111,6 +111,9 @@ test_generate_openclaw_config_writes_expected_config() {
   json_query "$fixture_root" 'models.providers.clawbox.models.0.api'
   assert_equals 'generator includes completions API compatibility on the local model' "$REPLY" 'openai-completions'
 
+  json_query "$fixture_root" 'tools.deny.0'
+  assert_equals 'generator denies incompatible cron tool for local llama.cpp model' "$REPLY" 'cron'
+
   json_query "$fixture_root" 'models.providers.clawbox.models.0.compat.supportsDeveloperRole'
   assert_equals 'generator keeps developer-role compatibility disabled for local llama.cpp model' "$REPLY" 'false'
 
@@ -222,10 +225,11 @@ import json, sys
 with open(sys.argv[1], 'r', encoding='utf-8') as handle:
     data = json.load(handle)
 keywords = data["models"]["providers"]["clawbox"]["models"][0]["compat"]["unsupportedToolSchemaKeywords"]
-print(keywords.count("pattern"), keywords.count("additionalProperties"))
+denied = data["tools"]["deny"]
+print(keywords.count("pattern"), keywords.count("additionalProperties"), denied.count("cron"))
 PY
 )"
-  assert_equals 'generator rerun does not duplicate unsupported schema keywords' "$REPLY" '1 1'
+  assert_equals 'generator rerun does not duplicate unsupported schema keywords or cron deny' "$REPLY" '1 1 1'
 }
 
 test_generate_openclaw_config_includes_embeddings_memory_search_when_enabled() {

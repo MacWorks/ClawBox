@@ -746,11 +746,13 @@ test_model_targeted_sync_scopes_are_narrow() {
     openclaw_config_desired_entries_for_scope memorySearch
   })"
   assert_contains 'primary targeted sync includes default model primary key' "$primary_entries" 'agents.defaults.model.primary'
+  assert_contains 'primary targeted sync includes managed cron deny key' "$primary_entries" $'tools.deny\t["cron"]'
   assert_contains 'primary targeted sync includes provider models' "$primary_entries" 'models.providers.clawbox.models'
   assert_not_contains 'primary targeted sync excludes memorySearch keys' "$primary_entries" 'memorySearch'
   assert_contains 'embeddings targeted sync includes memorySearch model basename' "$memory_entries" $'agents.defaults.memorySearch.model\tembed.gguf'
   assert_contains 'embeddings targeted sync uses ollama-local memory API marker' "$memory_entries" $'agents.defaults.memorySearch.remote.apiKey\tollama-local'
   assert_not_contains 'embeddings targeted sync excludes primary model key' "$memory_entries" 'agents.defaults.model.primary'
+  assert_not_contains 'embeddings targeted sync excludes managed cron deny key' "$memory_entries" 'tools.deny'
   assert_not_contains 'embeddings targeted sync excludes primary provider keys' "$memory_entries" 'models.providers.clawbox'
 }
 

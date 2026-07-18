@@ -20,6 +20,24 @@ openclaw_config_remote_set() {
   esac
 }
 
+openclaw_config_json_array_contains_all() {
+  local current="$1" desired="$2"
+  python3 - "$current" "$desired" <<'PY' >/dev/null 2>&1
+import json, sys
+
+try:
+    current = json.loads(sys.argv[1])
+    desired = json.loads(sys.argv[2])
+except Exception:
+    raise SystemExit(1)
+
+if not isinstance(current, list) or not isinstance(desired, list):
+    raise SystemExit(1)
+
+raise SystemExit(0 if all(item in current for item in desired) else 1)
+PY
+}
+
 openclaw_config_value_matches() {
   local current="$1" desired="$2"
   [ "$current" = "$desired" ] && return 0
@@ -125,6 +143,9 @@ openclaw_config_value_matches_for_key() {
         return 0
       fi
       ;;
+    tools.deny)
+      openclaw_config_json_array_contains_all "$current" "$desired" && return 0
+      ;;
     models.providers.*.models)
       openclaw_config_model_array_matches "$current" "$desired" && return 0
       ;;
@@ -137,6 +158,35 @@ openclaw_config_value_for_remote_set() {
   local key="$1" current="$2" desired="$3"
 
   case "$key" in
+    tools.deny)
+      python3 - "$current" "$desired" <<'PY'
+import json, sys
+
+try:
+    current = json.loads(sys.argv[1])
+except Exception:
+    current = []
+
+try:
+    desired = json.loads(sys.argv[2])
+except Exception:
+    print(sys.argv[2])
+    raise SystemExit(0)
+
+if not isinstance(current, list):
+    current = []
+if not isinstance(desired, list):
+    print(json.dumps(desired, separators=(",", ":")))
+    raise SystemExit(0)
+
+merged = []
+for item in current + desired:
+    if isinstance(item, str) and item not in merged:
+        merged.append(item)
+
+print(json.dumps(merged, separators=(",", ":")))
+PY
+      ;;
     models.providers.*.models)
       python3 - "$current" "$desired" <<'PY'
 import json, sys
@@ -239,6 +289,7 @@ openclaw_config_desired_entries_for_scope() {
   if [ "$scope" = all ] || [ "$scope" = primary ]; then
     models="$(openclaw_config_model_array)" || return 1
     printf '%s\t%s\n' 'agents.defaults.model.primary' "$provider/${OPENCLAW_DEFAULT_MODEL:-local}"
+    printf '%s\t%s\n' 'tools.deny' '["cron"]'
     printf '%s\t%s\n' "models.providers.$provider.baseUrl" "${LLAMA_BASE_URL:-}"
     printf '%s\t%s\n' "models.providers.$provider.api" 'openai-completions'
     printf '%s\t%s\n' "models.providers.$provider.models" "$models"

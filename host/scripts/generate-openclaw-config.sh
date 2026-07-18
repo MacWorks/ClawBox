@@ -94,6 +94,7 @@ model = os.environ["OPENCLAW_DEFAULT_MODEL"]
 config = {
     "gateway": {"mode": os.environ["OPENCLAW_GATEWAY_MODE_VALUE"]},
     "agents": {"defaults": {"model": {"primary": f"{provider}/{model}"}}},
+    "tools": {"deny": ["cron"]},
     "models": {"providers": {provider: {
         "baseUrl": os.environ["LLAMA_BASE_URL"],
         "api": "openai-completions",
