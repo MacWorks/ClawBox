@@ -52,7 +52,13 @@ required_name = required.get("name")
 required_api = required.get("api")
 required_context = required.get("contextWindow")
 required_max_tokens = required.get("maxTokens")
-required_developer_role = required.get("compat", {}).get("supportsDeveloperRole")
+required_compat = required.get("compat", {})
+if not isinstance(required_compat, dict):
+    required_compat = {}
+required_developer_role = required_compat.get("supportsDeveloperRole")
+required_unsupported = required_compat.get("unsupportedToolSchemaKeywords", [])
+if not isinstance(required_unsupported, list):
+    required_unsupported = []
 
 def managed_fields_match(model, require_local_identity):
     if not isinstance(model, dict):
@@ -74,11 +80,16 @@ def managed_fields_match(model, require_local_identity):
     ):
         return False
 
+    unsupported = compat.get("unsupportedToolSchemaKeywords", [])
+    if not isinstance(unsupported, list):
+        unsupported = []
+
     return (
         model.get("api") == required_api
         and context_matches
         and max_tokens_matches
         and compat.get("supportsDeveloperRole") == required_developer_role
+        and all(keyword in unsupported for keyword in required_unsupported)
     )
 
 local_entries = [
@@ -122,6 +133,85 @@ openclaw_config_value_matches_for_key() {
   openclaw_config_value_matches "$current" "$desired"
 }
 
+openclaw_config_value_for_remote_set() {
+  local key="$1" current="$2" desired="$3"
+
+  case "$key" in
+    models.providers.*.models)
+      python3 - "$current" "$desired" <<'PY'
+import json, sys
+
+try:
+    current = json.loads(sys.argv[1])
+except Exception:
+    current = []
+
+try:
+    desired = json.loads(sys.argv[2])
+except Exception:
+    print(sys.argv[2])
+    raise SystemExit(0)
+
+if not isinstance(current, list) or not isinstance(desired, list):
+    print(json.dumps(desired, separators=(",", ":")))
+    raise SystemExit(0)
+
+current_by_id = {
+    model.get("id"): model
+    for model in current
+    if isinstance(model, dict) and model.get("id") is not None
+}
+
+merged = []
+for required in desired:
+    if not isinstance(required, dict):
+        merged.append(required)
+        continue
+
+    model_id = required.get("id")
+    existing = current_by_id.get(model_id, {})
+    if not isinstance(existing, dict):
+        existing = {}
+
+    output = dict(existing)
+    output.update(required)
+
+    compat = existing.get("compat", {})
+    if not isinstance(compat, dict):
+        compat = {}
+    required_compat = required.get("compat", {})
+    if not isinstance(required_compat, dict):
+        required_compat = {}
+
+    merged_compat = dict(compat)
+    merged_compat.update(required_compat)
+
+    existing_keywords = compat.get("unsupportedToolSchemaKeywords", [])
+    required_keywords = required_compat.get("unsupportedToolSchemaKeywords", [])
+    if not isinstance(existing_keywords, list):
+        existing_keywords = []
+    if not isinstance(required_keywords, list):
+        required_keywords = []
+
+    keywords = []
+    for keyword in existing_keywords + required_keywords:
+        if isinstance(keyword, str) and keyword not in keywords:
+            keywords.append(keyword)
+    if keywords:
+        merged_compat["unsupportedToolSchemaKeywords"] = keywords
+
+    output["compat"] = merged_compat
+    merged.append(output)
+
+print(json.dumps(merged, separators=(",", ":")))
+PY
+      ;;
+    *)
+      printf '%s\n' "$desired"
+      ;;
+  esac
+}
+
 openclaw_config_model_array() {
   python3 - "${OPENCLAW_DEFAULT_MODEL:-local}" "${LLAMA_CTX:-16384}" <<'PY'
 import json, sys
@@ -130,7 +220,11 @@ try:
 except ValueError:
     context = 16384
 print(json.dumps([{"id": sys.argv[1], "name": sys.argv[1], "contextWindow": context,
-                  "maxTokens": 2048, "compat": {"supportsDeveloperRole": False},
+                  "maxTokens": 2048,
+                  "compat": {
+                      "supportsDeveloperRole": False,
+                      "unsupportedToolSchemaKeywords": ["pattern"],
+                  },
                   "api": "openai-completions"}], separators=(",", ":")))
 PY
 }
@@ -198,6 +292,7 @@ EOF
     [ -n "$key" ] || continue
     current="$(openclaw_config_remote_get "$key" 2>/dev/null || true)"
     openclaw_config_value_matches_for_key "$key" "$current" "$desired" && continue
+    desired="$(openclaw_config_value_for_remote_set "$key" "$current" "$desired")" || return 1
     if ! openclaw_config_remote_set "$key" "$desired"; then
       error "OpenClaw config update failed for $key."
       out 'OpenClaw config was not replaced.'

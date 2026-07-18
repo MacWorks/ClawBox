@@ -110,6 +110,12 @@ test_generate_openclaw_config_writes_expected_config() {
 
   json_query "$fixture_root" 'models.providers.clawbox.models.0.api'
   assert_equals 'generator includes completions API compatibility on the local model' "$REPLY" 'openai-completions'
+
+  json_query "$fixture_root" 'models.providers.clawbox.models.0.compat.supportsDeveloperRole'
+  assert_equals 'generator keeps developer-role compatibility disabled for local llama.cpp model' "$REPLY" 'false'
+
+  json_query "$fixture_root" 'models.providers.clawbox.models.0.compat.unsupportedToolSchemaKeywords.0'
+  assert_equals 'generator marks JSON Schema pattern keyword unsupported for local llama.cpp model' "$REPLY" 'pattern'
 }
 
 test_generate_openclaw_config_defaults_invalid_gateway_mode_to_local() {
@@ -201,6 +207,18 @@ test_generate_openclaw_config_supports_stable_local_alias() {
   run_generator "$fixture_root"
   json_query "$fixture_root" 'agents.defaults.model.primary'
   assert_equals 'generator advertises the stable default model alias' "$REPLY" 'clawbox/local'
+
+  run_generator "$fixture_root"
+  assert_equals 'generator rerun remains idempotent' "$GENERATOR_LAST_STATUS" '0'
+  REPLY="$(python3 - "$fixture_root/vm/runtime/openclaw.json" <<'PY'
+import json, sys
+with open(sys.argv[1], 'r', encoding='utf-8') as handle:
+    data = json.load(handle)
+keywords = data["models"]["providers"]["clawbox"]["models"][0]["compat"]["unsupportedToolSchemaKeywords"]
+print(keywords.count("pattern"))
+PY
+)"
+  assert_equals 'generator rerun does not duplicate unsupported pattern keyword' "$REPLY" '1'
 }
 
 test_generate_openclaw_config_includes_embeddings_memory_search_when_enabled() {

@@ -102,7 +102,10 @@ config = {
             "name": model,
             "contextWindow": int(os.environ["LLAMA_CONTEXT_WINDOW_VALUE"]),
             "maxTokens": 2048,
-            "compat": {"supportsDeveloperRole": False},
+            "compat": {
+                "supportsDeveloperRole": False,
+                "unsupportedToolSchemaKeywords": ["pattern"],
+            },
             "api": "openai-completions",
         }],
     }}},

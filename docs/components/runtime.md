@@ -48,6 +48,15 @@ The managed primary keys are:
 - `models.providers.<provider>.api`
 - `models.providers.<provider>.models`
 
+The generated `clawbox/local` model entry includes OpenClaw compatibility
+metadata for the local llama.cpp backend. ClawBox sets
+`compat.supportsDeveloperRole` to `false` and marks the JSON Schema `pattern`
+keyword as unsupported through
+`compat.unsupportedToolSchemaKeywords=["pattern"]`. OpenClaw uses that metadata
+to remove unsupported schema keywords before tool schemas are sent to
+llama.cpp. This avoids parser-generation failures with current coding/full tool
+profiles without disabling those tools.
+
 When embeddings are enabled, the managed memory-search keys are:
 
 - `agents.defaults.memorySearch.enabled`
