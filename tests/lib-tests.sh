@@ -908,21 +908,65 @@ test_deploy_module() {
   local pattern_only_merged_models=''
   local additional_properties_only_merged_models=''
   local merged_models=''
+  local max_tokens_merged_models=''
+  local wrong_max_tokens_model=''
   local cron_deny='["cron"]'
   local existing_deny='["shell","cron","memory"]'
   local missing_cron_deny='["shell","memory"]'
   local merged_deny=''
   local conflicting_model=''
+  local custom_models=''
 
   OPENCLAW_DEFAULT_MODEL=local
   LLAMA_CTX=32768
+  unset OPENCLAW_MAX_TOKENS
   desired_models="$(openclaw_config_model_array)"
-  reordered_models='[{"cost":{"input":0,"output":0},"compat":{"unsupportedToolSchemaKeywords":["additionalProperties","pattern"],"supportsDeveloperRole":false},"maxTokens":2048,"contextWindow":32768,"api":"openai-completions","name":"local","id":"local"}]'
-  extra_models='[{"id":"legacy","name":"legacy","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false}},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format","additionalProperties","pattern"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
-  legacy_only_models='[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
-  missing_pattern_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["additionalProperties"]}}]'
-  missing_additional_properties_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern"]}}]'
-  preserved_keyword_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format"],"futureCompat":true},"reasoning":false}]'
+  reordered_models='[{"cost":{"input":0,"output":0},"compat":{"unsupportedToolSchemaKeywords":["additionalProperties","pattern"],"supportsDeveloperRole":false},"maxTokens":8192,"contextWindow":32768,"api":"openai-completions","name":"local","id":"local"}]'
+  extra_models='[{"id":"legacy","name":"legacy","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false}},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format","additionalProperties","pattern"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
+  legacy_only_models='[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
+  missing_pattern_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["additionalProperties"]}}]'
+  missing_additional_properties_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern"]}}]'
+  preserved_keyword_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format"],"futureCompat":true},"reasoning":false}]'
+  wrong_max_tokens_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false}]'
+
+  if python3 - "$desired_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+assert models[0]["maxTokens"] == 8192
+assert models[0]["contextWindow"] == 32768
+assert models[0]["compat"]["supportsDeveloperRole"] is False
+assert models[0]["compat"]["unsupportedToolSchemaKeywords"].count("pattern") == 1
+assert models[0]["compat"]["unsupportedToolSchemaKeywords"].count("additionalProperties") == 1
+PY
+  then
+    pass "OpenClaw provider model generation defaults maxTokens and compatibility metadata"
+  else
+    fail "OpenClaw provider model generation should default maxTokens and compatibility metadata"
+  fi
+
+  OPENCLAW_MAX_TOKENS=12288
+  custom_models="$(openclaw_config_model_array)"
+  unset OPENCLAW_MAX_TOKENS
+  if python3 - "$custom_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+assert models[0]["maxTokens"] == 12288
+PY
+  then
+    pass "OpenClaw provider model generation accepts custom maxTokens"
+  else
+    fail "OpenClaw provider model generation should accept custom maxTokens"
+  fi
+
+  OPENCLAW_MAX_TOKENS=0
+  if openclaw_config_model_array >/dev/null 2>"$TEMP_DIR/openclaw-max-tokens.err"; then
+    fail "OpenClaw provider model generation should reject invalid maxTokens"
+  elif grep -Fq 'Invalid OPENCLAW_MAX_TOKENS value: 0' "$TEMP_DIR/openclaw-max-tokens.err"; then
+    pass "OpenClaw provider model generation rejects invalid maxTokens clearly"
+  else
+    fail "OpenClaw provider model generation should explain invalid maxTokens"
+  fi
+  unset OPENCLAW_MAX_TOKENS
 
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$reordered_models" "$desired_models"; then
     pass "OpenClaw provider model comparison ignores field order"
@@ -952,6 +996,12 @@ test_deploy_module() {
     fail "OpenClaw provider model comparison should detect missing unsupported additionalProperties keyword"
   else
     pass "OpenClaw provider model comparison detects missing unsupported additionalProperties keyword"
+  fi
+
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$wrong_max_tokens_model" "$desired_models"; then
+    fail "OpenClaw provider model comparison should detect stale maxTokens"
+  else
+    pass "OpenClaw provider model comparison detects stale maxTokens"
   fi
 
   pattern_only_merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$missing_additional_properties_model" "$desired_models")"
@@ -1000,6 +1050,22 @@ PY
     fail "OpenClaw provider model update should preserve existing compatibility keywords"
   fi
 
+  max_tokens_merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$wrong_max_tokens_model" "$desired_models")"
+  if python3 - "$max_tokens_merged_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+assert models[0]["maxTokens"] == 8192
+assert models[0]["compat"]["unsupportedToolSchemaKeywords"].count("pattern") == 1
+assert models[0]["compat"]["unsupportedToolSchemaKeywords"].count("additionalProperties") == 1
+assert models[0]["compat"]["supportsDeveloperRole"] is False
+assert models[0]["reasoning"] is False
+PY
+  then
+    pass "OpenClaw provider model update refreshes maxTokens while preserving metadata"
+  else
+    fail "OpenClaw provider model update should refresh maxTokens while preserving metadata"
+  fi
+
   if openclaw_config_value_matches_for_key 'tools.deny' "$existing_deny" "$cron_deny"; then
     pass "OpenClaw tools deny comparison accepts existing cron deny with user entries"
   else
@@ -1026,28 +1092,28 @@ PY
     fail "OpenClaw tools deny update should preserve user entries while adding cron once"
   fi
 
-  conflicting_model='[{"id":"local","name":"legacy-local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
+  conflicting_model='[{"id":"local","name":"legacy-local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
     fail "OpenClaw provider model comparison should detect conflicting local model identity"
   else
     pass "OpenClaw provider model comparison detects conflicting local model identity"
   fi
 
-  conflicting_model='[{"id":"local","name":"local","api":"openai-chat","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
+  conflicting_model='[{"id":"local","name":"local","api":"openai-chat","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
     fail "OpenClaw provider model comparison should detect conflicting API"
   else
     pass "OpenClaw provider model comparison detects conflicting API"
   fi
 
-  conflicting_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":4096,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
+  conflicting_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":4096,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
     fail "OpenClaw provider model comparison should detect conflicting context window"
   else
     pass "OpenClaw provider model comparison detects conflicting context window"
   fi
 
-  conflicting_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":true,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
+  conflicting_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":true,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]}}]'
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$conflicting_model" "$desired_models"; then
     fail "OpenClaw provider model comparison should detect conflicting developer-role support"
   else

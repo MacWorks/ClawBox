@@ -76,6 +76,7 @@ write_env_from_template() {
   replace_template_value "$temp_file" "LLAMA_EXTRA_ARGS" "${LLAMA_EXTRA_ARGS:-}"
   replace_template_value "$temp_file" "LLAMA_BASE_URL" "${LLAMA_BASE_URL:-}"
   replace_template_value "$temp_file" "LLAMA_EXTERNAL" "${LLAMA_EXTERNAL:-}"
+  replace_template_value "$temp_file" "OPENCLAW_MAX_TOKENS" "${OPENCLAW_MAX_TOKENS:-}"
   replace_template_value "$temp_file" "EMBEDDINGS_ENABLED" "${EMBEDDINGS_ENABLED:-}"
   replace_template_value "$temp_file" "EMBEDDINGS_MODEL_PATH" "${EMBEDDINGS_MODEL_PATH:-}"
   replace_template_value "$temp_file" "EMBEDDINGS_LLAMA_HOST" "${EMBEDDINGS_LLAMA_HOST:-}"

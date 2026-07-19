@@ -98,6 +98,7 @@ Important values:
 - `LLAMA_BIN`: absolute path to the host `llama-server` binary
 - `MODEL_PATH`: absolute path to the model file used by `llama-server`
 - `LLAMA_HOST`, `LLAMA_PORT`, `LLAMA_CTX`, `LLAMA_BASE_URL`: host inference settings, with a default port of `11434` for new setups
+- `OPENCLAW_MAX_TOKENS`: output-token budget advertised for the managed OpenClaw local model; defaults to `8192` and is separate from `LLAMA_CTX`
 - `LLAMA_EXTERNAL`: whether setup explicitly accepted an externally managed `llama-server` instance for the configured endpoint
 - `LLAMA_EXTERNAL` remains `false` when setup reuses an existing current-user ClawBox-managed instance on the configured port
 - `FIREWALL_SHARED_SUBNET`: shared-network hint used by VM SSH recovery and VM IP discovery; the legacy variable name remains for compatibility

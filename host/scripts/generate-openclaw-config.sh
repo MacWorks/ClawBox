@@ -54,6 +54,7 @@ require_value "OPENCLAW_DEFAULT_MODEL"
 
 OPENCLAW_GATEWAY_MODE_VALUE="${OPENCLAW_GATEWAY_MODE:-local}"
 LLAMA_CONTEXT_WINDOW_VALUE="$LLAMA_CTX"
+OPENCLAW_MAX_TOKENS_VALUE="${OPENCLAW_MAX_TOKENS:-8192}"
 
 case "$OPENCLAW_GATEWAY_MODE_VALUE" in
   local|remote)
@@ -80,9 +81,22 @@ case "$LLAMA_CONTEXT_WINDOW_VALUE" in
     ;;
 esac
 
+case "$OPENCLAW_MAX_TOKENS_VALUE" in
+  ''|*[!0-9]*)
+    echo "Invalid OPENCLAW_MAX_TOKENS value in .env: ${OPENCLAW_MAX_TOKENS:-}"
+    exit 1
+    ;;
+  *)
+    if [ "$OPENCLAW_MAX_TOKENS_VALUE" -lt 1 ]; then
+      echo "Invalid OPENCLAW_MAX_TOKENS value in .env: $OPENCLAW_MAX_TOKENS_VALUE"
+      exit 1
+    fi
+    ;;
+esac
+
 mkdir -p "$RUNTIME_DIR"
 
-export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE
+export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE OPENCLAW_MAX_TOKENS_VALUE
 
 python3 - "$CONFIG_PATH" <<'PY'
 import json
@@ -102,7 +116,7 @@ config = {
             "id": model,
             "name": model,
             "contextWindow": int(os.environ["LLAMA_CONTEXT_WINDOW_VALUE"]),
-            "maxTokens": 2048,
+            "maxTokens": int(os.environ["OPENCLAW_MAX_TOKENS_VALUE"]),
             "compat": {
                 "supportsDeveloperRole": False,
                 "unsupportedToolSchemaKeywords": [

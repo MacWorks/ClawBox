@@ -34,6 +34,7 @@ write_fixture_env() {
   local embeddings_enabled="${7:-false}"
   local embeddings_model_path="${8:-}"
   local embeddings_base_url="${9:-}"
+  local openclaw_max_tokens="${10:-8192}"
 
   cat > "$fixture_root/.env" <<EOF
 LLAMA_BASE_URL="$llama_base_url"
@@ -41,6 +42,7 @@ LLAMA_CTX="$llama_ctx"
 OPENCLAW_PROVIDER_NAME="$provider_name"
 OPENCLAW_DEFAULT_MODEL="$default_model"
 OPENCLAW_GATEWAY_MODE="$gateway_mode"
+OPENCLAW_MAX_TOKENS="$openclaw_max_tokens"
 EMBEDDINGS_ENABLED="$embeddings_enabled"
 EMBEDDINGS_MODEL_PATH="$embeddings_model_path"
 EMBEDDINGS_LLAMA_BASE_URL="$embeddings_base_url"
@@ -105,6 +107,9 @@ test_generate_openclaw_config_writes_expected_config() {
   json_query "$fixture_root" 'models.providers.clawbox.models.0.contextWindow'
   assert_equals 'generator preserves a valid configured context window' "$REPLY" '20000'
 
+  json_query "$fixture_root" 'models.providers.clawbox.models.0.maxTokens'
+  assert_equals 'generator writes the default managed OpenClaw maxTokens' "$REPLY" '8192'
+
   json_query "$fixture_root" 'models.providers.clawbox.api'
   assert_equals 'generator uses the OpenAI completions provider API' "$REPLY" 'openai-completions'
 
@@ -126,6 +131,64 @@ print("pattern" in keywords and "additionalProperties" in keywords)
 PY
 )"
   assert_equals 'generator marks required JSON Schema keywords unsupported for local llama.cpp model' "$REPLY" 'True'
+}
+
+test_generate_openclaw_config_supports_custom_max_tokens() {
+  local fixture_root
+
+  setup_generator_fixture
+  fixture_root="$REPLY"
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '20000' 'clawbox' 'sample-model' 'local' \
+    'false' '' '' '12288'
+
+  run_generator "$fixture_root"
+
+  assert_equals 'generator succeeds with a custom OPENCLAW_MAX_TOKENS value' "$GENERATOR_LAST_STATUS" '0'
+  json_query "$fixture_root" 'models.providers.clawbox.models.0.maxTokens'
+  assert_equals 'generator writes configured OpenClaw maxTokens numerically' "$REPLY" '12288'
+}
+
+test_generate_openclaw_config_defaults_missing_max_tokens() {
+  local fixture_root
+
+  setup_generator_fixture
+  fixture_root="$REPLY"
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '20000' 'clawbox' 'sample-model' 'local'
+  python3 - "$fixture_root/.env" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    lines = [line for line in handle if not line.startswith("OPENCLAW_MAX_TOKENS=")]
+with open(path, "w", encoding="utf-8") as handle:
+    handle.writelines(lines)
+PY
+
+  run_generator "$fixture_root"
+
+  assert_equals 'generator remains backward compatible when OPENCLAW_MAX_TOKENS is missing' "$GENERATOR_LAST_STATUS" '0'
+  json_query "$fixture_root" 'models.providers.clawbox.models.0.maxTokens'
+  assert_equals 'generator defaults missing OpenClaw maxTokens to 8192' "$REPLY" '8192'
+}
+
+test_generate_openclaw_config_rejects_invalid_max_tokens() {
+  local fixture_root
+
+  setup_generator_fixture
+  fixture_root="$REPLY"
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '20000' 'clawbox' 'sample-model' 'local' \
+    'false' '' '' 'wide'
+
+  run_generator "$fixture_root"
+
+  assert_equals 'generator rejects non-numeric OPENCLAW_MAX_TOKENS' "$GENERATOR_LAST_STATUS" '1'
+  assert_contains 'generator reports invalid OPENCLAW_MAX_TOKENS' "$GENERATOR_LAST_OUTPUT" 'Invalid OPENCLAW_MAX_TOKENS value in .env: wide'
+
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '20000' 'clawbox' 'sample-model' 'local' \
+    'false' '' '' '0'
+  run_generator "$fixture_root"
+
+  assert_equals 'generator rejects zero OPENCLAW_MAX_TOKENS' "$GENERATOR_LAST_STATUS" '1'
+  assert_contains 'generator reports non-positive OPENCLAW_MAX_TOKENS' "$GENERATOR_LAST_OUTPUT" 'Invalid OPENCLAW_MAX_TOKENS value in .env: 0'
 }
 
 test_generate_openclaw_config_defaults_invalid_gateway_mode_to_local() {
@@ -259,6 +322,9 @@ test_generate_openclaw_config_includes_embeddings_memory_search_when_enabled() {
 printf 'Running generate-openclaw-config tests\n'
 
 run_test test_generate_openclaw_config_writes_expected_config
+run_test test_generate_openclaw_config_supports_custom_max_tokens
+run_test test_generate_openclaw_config_defaults_missing_max_tokens
+run_test test_generate_openclaw_config_rejects_invalid_max_tokens
 run_test test_generate_openclaw_config_defaults_invalid_gateway_mode_to_local
 run_test test_generate_openclaw_config_enforces_minimum_context_window
 run_test test_generate_openclaw_config_rejects_non_numeric_context_window

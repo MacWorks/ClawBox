@@ -221,6 +221,8 @@ ensure_env_bootstrap() {
   LLAMA_PORT="$llama_port_value"
   LLAMA_CTX="$llama_ctx_value"
   LLAMA_BASE_URL="$llama_base_url_value"
+  configured_or_default 'OPENCLAW_MAX_TOKENS' "${OPENCLAW_MAX_TOKENS:-}" '8192'
+  OPENCLAW_MAX_TOKENS="$REPLY"
   write_env_from_template
   source_env_file || return $?
 
@@ -252,6 +254,7 @@ ensure_env_bootstrap() {
   LLAMA_PORT="$llama_port_value"
   LLAMA_CTX="$llama_ctx_value"
   LLAMA_BASE_URL="$llama_base_url_value"
+  OPENCLAW_MAX_TOKENS="${OPENCLAW_MAX_TOKENS:-8192}"
   FIREWALL_SHARED_SUBNET="$firewall_shared_subnet_value"
   OPENCLAW_PROVIDER_NAME="$openclaw_provider_name_value"
   OPENCLAW_DEFAULT_MODEL="$openclaw_default_model_value"
@@ -275,6 +278,7 @@ ensure_env_bootstrap() {
   print_summary_value "LLAMA_PORT" "${LLAMA_PORT:-}"
   print_summary_value "LLAMA_CTX" "${LLAMA_CTX:-}"
   print_summary_value "LLAMA_BASE_URL" "${LLAMA_BASE_URL:-}"
+  print_summary_value "OPENCLAW_MAX_TOKENS" "${OPENCLAW_MAX_TOKENS:-}"
   print_summary_value "MODEL_PATH" "${MODEL_PATH:-}"
   print_summary_value "OPENCLAW_PROVIDER_NAME" "${OPENCLAW_PROVIDER_NAME:-}"
   print_summary_value "OPENCLAW_DEFAULT_MODEL" "${OPENCLAW_DEFAULT_MODEL:-}"

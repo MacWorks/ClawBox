@@ -49,6 +49,15 @@ The managed primary keys are:
 - `models.providers.<provider>.api`
 - `models.providers.<provider>.models`
 
+The generated `clawbox/local` model entry sets `maxTokens` from
+`OPENCLAW_MAX_TOKENS`, which defaults to `8192`. This is the output-token
+budget OpenClaw advertises for the managed local model; it is distinct from the
+llama.cpp context window, which remains controlled by `LLAMA_CTX` and maps to
+OpenClaw `contextWindow`. Raising `OPENCLAW_MAX_TOKENS` helps long coding-agent
+responses avoid ending with `stopReason=length`, but it does not by itself
+recover interrupted or non-replay-safe tool turns such as an incomplete
+`stopReason=toolUse` turn.
+
 The generated `clawbox/local` model entry includes OpenClaw compatibility
 metadata for the local llama.cpp backend. ClawBox sets
 `compat.supportsDeveloperRole` to `false` and marks the JSON Schema `pattern`
