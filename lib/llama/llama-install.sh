@@ -172,6 +172,7 @@ install_llama_cpp_automatically() {
   local choice_source
   local choice_abort
   local single_option_mode=false
+  local fallback_choice=''
 
   llama_announce_homebrew_detection_once
   llama_homebrew_state
@@ -346,6 +347,56 @@ install_llama_cpp_automatically() {
         return 0
       fi
 
+      if [ "$can_build_source" = true ]; then
+        err_blank_line
+        case "${LLAMA_HOMEBREW_FAILURE_KIND:-unknown}" in
+          active-process)
+            err 'Homebrew installation could not proceed because another brew process is active.'
+            ;;
+          brew-unavailable)
+            err 'Homebrew installation could not proceed because the brew executable is unavailable.'
+            ;;
+          post-install-missing-binary)
+            err 'Homebrew installation finished, but llama-server was still unavailable.'
+            ;;
+          *)
+            err 'Homebrew installation could not complete.'
+            ;;
+        esac
+        err_blank_line
+        err 'ClawBox can instead clone and build llama.cpp locally for this account.'
+        err 'This downloads a large source repository and may take several minutes.'
+        err_blank_line
+
+        if [ -t 0 ]; then
+          fallback_choice="$(llama_read_choice 'Build locally now? [Y/n]:')"
+          case "$fallback_choice" in
+            ''|y|Y|yes|Yes|YES)
+              llama_capture_status install_llama_cpp_from_source
+              status=$LLAMA_LAST_STATUS
+              if [ "$status" -eq 0 ]; then
+                candidate_path="$REPLY"
+                REPLY="$candidate_path"
+                return 0
+              fi
+              ;;
+            *)
+              err 'Local source build was declined.'
+              return "$LLAMA_EXIT_GRACEFUL"
+              ;;
+          esac
+        else
+          err 'No interactive terminal is available; proceeding with local source build fallback.'
+          llama_capture_status install_llama_cpp_from_source
+          status=$LLAMA_LAST_STATUS
+          if [ "$status" -eq 0 ]; then
+            candidate_path="$REPLY"
+            REPLY="$candidate_path"
+            return 0
+          fi
+        fi
+      fi
+
       homebrew_disabled=true
       continue
     fi
@@ -466,6 +517,7 @@ llama_summarize_homebrew_failure() {
   local affected_paths=''
   local current_user=''
 
+  LLAMA_HOMEBREW_FAILURE_KIND='unknown'
   current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
   resolve_homebrew_llama_bin >/dev/null 2>&1 || true
   existing_binary="$REPLY"
@@ -473,36 +525,42 @@ llama_summarize_homebrew_failure() {
   affected_paths="$REPLY"
 
   if grep -qiE 'command not found|No such file or directory' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='brew-unavailable'
     error 'Homebrew installation failed because the brew executable is not available.'
     err 'Re-run setup after restoring Homebrew or choosing a different install method.'
     return 0
   fi
 
   if grep -qiE 'another active Homebrew process|brew update.*already running|lock|Resource temporarily unavailable' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='active-process'
     error 'Homebrew installation is blocked by another active Homebrew process.'
-    err 'Wait for the other brew command to finish, then retry setup.'
+    err 'Wait for the other brew command to finish, or choose a different install method.'
     return 0
   fi
 
   if grep -qiE 'Command Line Tools|xcode-select --install|No developer tools were found' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='xcode-tools'
     error 'Homebrew installation failed because Xcode Command Line Tools are missing.'
     err 'Run: xcode-select --install'
     return 0
   fi
 
   if grep -qiE 'Failed to download|Could not resolve host|timed out|SSL|network|Connection reset' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='network'
     error 'Homebrew installation failed due to a network or download error.'
     err 'Check connectivity, then retry setup.'
     return 0
   fi
 
   if grep -qiE 'No available formula|No formulae found|formula .* unavailable' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='formula'
     error 'Homebrew installation failed because the llama.cpp formula is unavailable.'
     err 'Run brew update or install llama.cpp manually, then retry setup.'
     return 0
   fi
 
   if grep -qiE 'Permission denied|Operation not permitted|not writable|Cannot write|permission.*denied|Failed during: .*chmod|Failed during: .*mkdir' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='permissions'
     error 'Homebrew installation failed due to permissions issues.'
 
     if [ -n "$existing_binary" ]; then
@@ -1068,7 +1126,8 @@ install_llama_cpp_with_homebrew() {
     return 0
   fi
 
-  llama_fail "Failed to locate llama-server binary after build"
+  LLAMA_HOMEBREW_FAILURE_KIND='post-install-missing-binary'
+  llama_fail "Failed to locate llama-server binary after Homebrew install"
   return 1
 }
 

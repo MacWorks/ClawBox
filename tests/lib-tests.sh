@@ -2680,12 +2680,6 @@ test_llama_automatic_install_rejects_unusable_homebrew() {
     fail "llama automatic install should report unusable Homebrew clearly"
   fi
 
-  if grep -Fq 'Proceeding with local source build.' "$stderr_file"; then
-    pass "llama automatic install falls back to source build after disabling Homebrew"
-  else
-    fail "llama automatic install should fall back to source build after disabling Homebrew"
-  fi
-
   if ! grep -Fq 'Homebrew cannot be used in this environment.' "$stderr_file"; then
     pass "llama automatic install does not repeat stale Homebrew failure text in later menus"
   else
@@ -3082,6 +3076,77 @@ test_llama_homebrew_install_reports_actual_failure_reason() {
     pass "llama Homebrew install surfaces the actual brew failure reason"
   else
     fail "llama Homebrew install should surface the actual brew failure reason"
+  fi
+}
+
+test_llama_homebrew_active_process_fallback_is_explicit() {
+  local stderr_file="$TEMP_DIR/llama-homebrew-active-process.stderr"
+  local source_bin="$TEMP_DIR/source-fallback/bin/llama-server"
+  local installed_path=''
+
+  mkdir -p "$(dirname "$source_bin")"
+  printf '#!/bin/bash\nexit 0\n' > "$source_bin"
+  chmod +x "$source_bin"
+
+  command() {
+    if [ "${1:-}" = '-v' ] && [ "${2:-}" = 'git' ]; then
+      printf '%s\n' '/usr/bin/git'
+      return 0
+    fi
+
+    if [ "${1:-}" = '-v' ] && [ "${2:-}" = 'cmake' ]; then
+      printf '%s\n' '/usr/bin/cmake'
+      return 0
+    fi
+
+    builtin command "$@"
+  }
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/llama.sh"
+
+  llama_homebrew_state() {
+    REPLY='usable'
+  }
+
+  install_llama_cpp_with_homebrew() {
+    LLAMA_HOMEBREW_FAILURE_KIND='active-process'
+    error 'Homebrew installation is blocked by another active Homebrew process.'
+    err 'Wait for the other brew command to finish, or choose a different install method.'
+    return 1
+  }
+
+  install_llama_cpp_from_source() {
+    REPLY="$source_bin"
+    return 0
+  }
+
+  queue_llama_choices '1'
+  llama_read_choice() {
+    next_llama_choice
+  }
+
+  run_llama_capture "$stderr_file" install_llama_cpp_automatically
+  installed_path="$REPLY"
+
+  if [ "$LLAMA_LAST_STATUS" -eq 0 ] && [ "$installed_path" = "$source_bin" ]; then
+    pass "llama active Homebrew process can fall back to source build"
+  else
+    fail "llama active Homebrew process should fall back to source build"
+  fi
+
+  if grep -Fq 'another brew process is active' "$stderr_file" \
+    && grep -Fq 'ClawBox can instead clone and build llama.cpp locally for this account.' "$stderr_file" \
+    && grep -Fq 'This downloads a large source repository and may take several minutes.' "$stderr_file"; then
+    pass "llama active Homebrew process fallback is explicit"
+  else
+    fail "llama active Homebrew process fallback should be explicit"
+  fi
+
+  if ! grep -Fq 'Wait for the other brew command to finish, then retry setup.' "$stderr_file"; then
+    pass "llama active Homebrew process fallback avoids contradictory retry wording"
+  else
+    fail "llama active Homebrew process fallback should avoid contradictory retry wording"
   fi
 }
 
@@ -4569,6 +4634,7 @@ run_test test_llama_automatic_install_hides_source_without_build_tools
 run_test test_llama_source_install_failure_path
 run_test test_llama_automatic_install_uses_discovered_homebrew_outside_path
 run_test test_llama_homebrew_install_reports_actual_failure_reason
+run_test test_llama_homebrew_active_process_fallback_is_explicit
 run_test test_llama_homebrew_install_classifies_shared_install_permissions
 run_test test_llama_homebrew_state_caches_discovery_results
 run_test test_llama_health_decision_module
