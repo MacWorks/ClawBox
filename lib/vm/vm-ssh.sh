@@ -589,9 +589,12 @@ discover_vm_ip_candidates() {
   local candidate_target=''
   local candidate_state=''
   local discovered_count=0
+  local vm_user="${VM_USER:-}"
 
   REPLY=''
   VM_IP_DISCOVERY_CANDIDATES=''
+
+  [ -n "$vm_user" ] || return 1
 
   derive_vm_shared_subnet
   subnet_value="$REPLY"
@@ -605,7 +608,7 @@ discover_vm_ip_candidates() {
         continue
       fi
 
-      candidate_target="${VM_USER}@${candidate_ip}"
+      candidate_target="${vm_user}@${candidate_ip}"
       probe_ssh_target_endpoint "$candidate_target"
       candidate_state="$REPLY"
 
@@ -644,7 +647,7 @@ EOF
       continue
     fi
 
-    candidate_target="${VM_USER}@${candidate_ip}"
+    candidate_target="${vm_user}@${candidate_ip}"
     probe_ssh_target_endpoint "$candidate_target"
     candidate_state="$REPLY"
 
@@ -672,7 +675,7 @@ EOF
       continue
     fi
 
-    candidate_target="${VM_USER}@${candidate_ip}"
+    candidate_target="${vm_user}@${candidate_ip}"
     probe_ssh_target_endpoint "$candidate_target"
     candidate_state="$REPLY"
 
@@ -705,7 +708,7 @@ EOF
         continue
       fi
 
-      candidate_target="${VM_USER}@${candidate_ip}"
+      candidate_target="${vm_user}@${candidate_ip}"
       probe_ssh_target_endpoint "$candidate_target"
       candidate_state="$REPLY"
 

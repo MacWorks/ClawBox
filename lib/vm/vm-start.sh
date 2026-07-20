@@ -39,6 +39,24 @@ utm_output_indicates_automation_denial() {
   printf '%s\n' "$output" | grep -Eq '(^|[^0-9])-1743([^0-9]|$)'
 }
 
+utm_start_output_indicates_failure() {
+  local output="$1"
+
+  printf '%s\n' "$output" | grep -Eqi '(^|[[:space:]])Error:|Virtual machine not found|No registered UTM virtual machine|Not authorized to send Apple events|command timed out'
+}
+
+utm_normalize_command_status() {
+  local command_status="$1"
+  local output="${2:-}"
+
+  if [ "$command_status" -eq 0 ] && utm_start_output_indicates_failure "$output"; then
+    printf '%s\n' '1'
+    return 0
+  fi
+
+  printf '%s\n' "$command_status"
+}
+
 utm_concise_output_summary() {
   local output="$1"
 
@@ -62,17 +80,17 @@ reset_utm_start_attempt_result() {
 
 record_utm_start_attempt_result() {
   local method="$1"
-  local status="$2"
+  local command_status="$2"
   local output="${3:-}"
 
   if [ -n "${UTM_START_ATTEMPT_METHODS:-}" ]; then
-    UTM_START_ATTEMPT_METHODS="${UTM_START_ATTEMPT_METHODS}, $method(status=$status)"
+    UTM_START_ATTEMPT_METHODS="${UTM_START_ATTEMPT_METHODS}, $method(status=$command_status)"
   else
-    UTM_START_ATTEMPT_METHODS="$method(status=$status)"
+    UTM_START_ATTEMPT_METHODS="$method(status=$command_status)"
   fi
 
   UTM_START_LAST_METHOD="$method"
-  UTM_START_LAST_STATUS="$status"
+  UTM_START_LAST_STATUS="$command_status"
   UTM_START_LAST_OUTPUT="$(utm_concise_output_summary "$output")"
   UTM_START_VM_NAME="${VM_MACHINE_NAME:-}"
   UTM_START_VM_PATH="${VM_UTM_PATH:-}"
@@ -106,6 +124,8 @@ print_utm_automation_guidance() {
   warn 'Automatic VM start is blocked by macOS Automation permissions.'
   out 'ClawBox cannot bypass this macOS security control.'
   out 'Open System Settings > Privacy & Security > Automation.'
+  out 'The relevant Automation entry may not appear until macOS registers an Apple-event request.'
+  out 'Open UTM normally, then run the AppleScript verification command below from the same terminal app.'
   out 'Allow Terminal, iTerm, VS Code, osascript, or utmctl, if listed, to control UTM.'
   out 'Fully quit and reopen the terminal app after changing this permission.'
   out 'If automation still fails, log out of macOS and log back in.'
@@ -129,7 +149,8 @@ print_utmctl_identity_diagnostics() {
 
   out "Requested UTM VM identity: $requested_identity"
 
-  list_output="$("$utmctl_bin" list 2>&1)" || list_status=$?
+  list_output="$(run_vm_command_with_default_timeout "$utmctl_bin" list 2>&1)" || list_status=$?
+  list_status="$(utm_normalize_command_status "$list_status" "$list_output")"
   if utm_output_indicates_automation_denial "$list_output"; then
     UTM_AUTOMATION_BLOCKED=true
     warn 'macOS blocked utmctl automation for UTM.'
@@ -195,7 +216,7 @@ open_utm_vm_package() {
   fi
 
   out "Attempting UTM package path: $vm_path"
-  if ! open_output="$("$open_bin" -a UTM "$vm_path" 2>&1)"; then
+  if ! open_output="$(run_vm_command_with_default_timeout "$open_bin" -a UTM "$vm_path" 2>&1)"; then
     error "Could not open UTM package path: $vm_path"
     if [ -n "$open_output" ]; then
       error "$open_output"
@@ -222,7 +243,7 @@ open_utm_for_manual_start() {
     return 1
   fi
 
-  if ! open_output="$("$open_bin" -a UTM 2>&1)"; then
+  if ! open_output="$(run_vm_command_with_default_timeout "$open_bin" -a UTM 2>&1)"; then
     error 'Could not open UTM.'
     if [ -n "$open_output" ]; then
       error "$open_output"
@@ -252,13 +273,14 @@ start_vm_via_utm_package_path() {
     return 1
   fi
 
-  if retry_output="$("$utmctl_bin" start "$vm_name" 2>&1)"; then
+  retry_output="$(run_vm_command_with_default_timeout "$utmctl_bin" start "$vm_name" 2>&1)"
+  local retry_status=$?
+  retry_status="$(utm_normalize_command_status "$retry_status" "$retry_output")"
+  if [ "$retry_status" -eq 0 ]; then
     record_utm_start_attempt_result 'utmctl-after-package-open' 0 "$retry_output"
     return 0
-  else
-    local retry_status=$?
-    record_utm_start_attempt_result 'utmctl-after-package-open' "$retry_status" "$retry_output"
   fi
+  record_utm_start_attempt_result 'utmctl-after-package-open' "$retry_status" "$retry_output"
 
   error "utmctl still could not start VM \"$vm_name\" after opening the package."
   if [ -n "$retry_output" ]; then
@@ -302,13 +324,15 @@ start_vm_with_utm() {
   fi
 
   if [ -n "$utmctl_bin" ]; then
-    if utmctl_output="$("$utmctl_bin" start "$vm_name" 2>&1)"; then
+    utmctl_output="$(run_vm_command_with_default_timeout "$utmctl_bin" start "$vm_name" 2>&1)"
+    command_status=$?
+    command_status="$(utm_normalize_command_status "$command_status" "$utmctl_output")"
+    if [ "$command_status" -eq 0 ]; then
       record_utm_start_attempt_result 'utmctl' 0 "$utmctl_output"
       status_end '' 'info'
       return 0
     fi
 
-    command_status=$?
     record_utm_start_attempt_result 'utmctl' "$command_status" "$utmctl_output"
     status_end "utmctl could not start VM \"$vm_name\"; trying AppleScript." 'warning'
     if [ -n "$utmctl_output" ]; then
@@ -330,10 +354,12 @@ start_vm_with_utm() {
     UTMCTL_GUIDANCE_SHOWN=true
   fi
 
-  if osascript_output="$("$osascript_bin" -e 'tell application "UTM" to activate' 2>&1)"; then
+  osascript_output="$(run_vm_command_with_default_timeout "$osascript_bin" -e 'tell application "UTM" to activate' 2>&1)"
+  command_status=$?
+  command_status="$(utm_normalize_command_status "$command_status" "$osascript_output")"
+  if [ "$command_status" -eq 0 ]; then
     :
   else
-    command_status=$?
     record_utm_start_attempt_result 'applescript-activate' "$command_status" "$osascript_output"
     status_end "AppleScript could not activate UTM for VM \"$vm_name\"." 'error'
     print_utm_applescript_failure "$osascript_output"
@@ -352,7 +378,7 @@ start_vm_with_utm() {
   sleep 2
   status_tick 'Starting VM with UTM via AppleScript...'
 
-  if osascript_output="$("$osascript_bin" \
+  osascript_output="$(run_vm_command_with_default_timeout "$osascript_bin" \
     -e 'on run argv' \
     -e 'set vmIdentifier to item 1 of argv' \
     -e 'tell application "UTM"' \
@@ -362,10 +388,12 @@ start_vm_with_utm() {
     -e 'start item 1 of matchingVMs' \
     -e 'end tell' \
     -e 'end run' \
-    "$vm_name" 2>&1)"; then
+    "$vm_name" 2>&1)"
+  command_status=$?
+  command_status="$(utm_normalize_command_status "$command_status" "$osascript_output")"
+  if [ "$command_status" -eq 0 ]; then
     :
   else
-    command_status=$?
     record_utm_start_attempt_result 'applescript-start' "$command_status" "$osascript_output"
     status_end "AppleScript could not start VM \"$vm_name\"." 'error'
     print_utm_applescript_failure "$osascript_output"

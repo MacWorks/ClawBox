@@ -73,6 +73,32 @@ test_setup_vm_is_running_uses_resolved_utmctl() {
   assert_equals 'vm state marks utmctl-based detection as exact' "$VM_RUNNING_STATE_CONFIDENCE" 'exact'
 }
 
+test_setup_vm_running_check_times_out_blocked_utmctl() {
+  local elapsed_ms=0
+
+  prepare_vm_state_mocks
+
+  write_mock_command utmctl '#!/bin/bash
+if [ "$1" = "list" ]; then
+  sleep 5
+fi'
+
+  CLAWBOX_VM_EXTERNAL_COMMAND_TIMEOUT_SECONDS=1
+  export CLAWBOX_VM_EXTERNAL_COMMAND_TIMEOUT_SECONDS
+
+  load_setup_functions
+
+  VM_MACHINE_NAME='macOS'
+
+  if time_command_ms elapsed_ms setup_vm_is_running_via_utmctl; then
+    fail 'blocked utmctl list should not report the selected vm as running'
+  else
+    pass 'blocked utmctl list reports selected vm not running'
+  fi
+
+  assert_duration_under_ms 'blocked utmctl list is bounded by command timeout' "$elapsed_ms" '2500'
+}
+
 test_start_vm_uses_selected_vm_name_with_utmctl() {
   local start_log="$TEMP_DIR/utmctl-start-name.log"
 
@@ -227,9 +253,13 @@ exit 1'
   assert_contains 'automation denial preserves the AppleScript error detail' "$output" 'Not authorized to send Apple events to UTM. (-1743)'
   assert_contains 'automation denial states that automatic vm start is blocked' "$output" 'Automatic VM start is blocked by macOS Automation permissions.'
   assert_contains 'automation denial states that clawbox cannot bypass tcc' "$output" 'ClawBox cannot bypass this macOS security control.'
+  assert_contains 'automation denial explains the automation entry may appear only after an attempted request' "$output" 'The relevant Automation entry may not appear until macOS registers an Apple-event request.'
+  assert_contains 'automation denial asks the same terminal app to run the verification command' "$output" 'run the AppleScript verification command below from the same terminal app'
   assert_contains 'automation denial prints the AppleScript verification command' "$output" "/usr/bin/osascript -e 'tell application \"UTM\" to get name of every virtual machine'"
   assert_contains 'automation denial prints the utmctl verification command' "$output" '/Applications/UTM.app/Contents/MacOS/utmctl list'
   assert_contains 'automation denial explains error minus 1743' "$output" 'Error -1743 means macOS is blocking automation.'
+  assert_not_contains 'automation denial does not ask for unrelated Accessibility permission' "$output" 'Accessibility'
+  assert_not_contains 'automation denial does not ask for unrelated Full Disk Access permission' "$output" 'Full Disk Access'
   assert_not_contains 'automation denial does not imply a generic vm startup failure' "$output" 'Failed to start VM.'
 }
 
@@ -290,6 +320,48 @@ exit 1'
 
   assert_contains 'utmctl not-found diagnostics show the requested identity' "$output" 'Requested UTM VM identity: macOS'
   assert_contains 'utmctl not-found diagnostics show registered UUIDs and names' "$output" '11111111-2222-3333-4444-555555555555 stopped  macOS Sequoia'
+}
+
+test_start_vm_treats_not_found_output_as_failure_even_with_zero_status() {
+  local output
+  local output_file="$TEMP_DIR/masked-utm-status-output.txt"
+  local status=0
+
+  prepare_vm_state_mocks
+
+  write_mock_command utmctl '#!/bin/bash
+case "$1" in
+  start)
+    printf "Error: Virtual machine not found.\n" >&2
+    exit 0
+    ;;
+  list)
+    printf "UUID                                 Status   Name\n"
+    printf "11111111-2222-3333-4444-555555555555 stopped  macOS Sequoia\n"
+    ;;
+esac'
+
+  write_mock_command osascript '#!/bin/bash
+printf "Not authorized to send Apple events to UTM. (-1743)\n" >&2
+exit 1'
+
+  CLAWBOX_OSASCRIPT_BIN="$MOCK_BIN_DIR/osascript"
+  export CLAWBOX_OSASCRIPT_BIN
+
+  load_setup_functions
+
+  VM_MACHINE_NAME='macOS'
+
+  set +e
+  start_vm_with_utm > "$output_file" 2>&1
+  status=$?
+  print_utm_start_attempt_summary >> "$output_file" 2>&1
+  set -e
+  output="$(cat "$output_file")"
+
+  assert_equals 'utmctl not-found output with zero wrapper status still fails startup' "$status" '1'
+  assert_contains 'masked utmctl failure records nonzero method status' "$output" 'utmctl(status=1)'
+  assert_contains 'masked utmctl failure preserves diagnostic output' "$output" 'Error: Virtual machine not found.'
 }
 
 test_utm_package_discovery_uses_internal_display_name() {
@@ -544,7 +616,9 @@ exit 0'
 
 test_tcc_blocked_startup_can_continue_into_existing_readiness_flow() {
   local detect_calls=0
-  local manual_wait_file="$TEMP_DIR/tcc-manual-wait-count.txt"
+  local network_wait_file="$TEMP_DIR/tcc-manual-network-count.txt"
+  local ssh_wait_file="$TEMP_DIR/tcc-manual-ssh-count.txt"
+  local start_count_file="$TEMP_DIR/tcc-manual-start-count.txt"
   local output_file="$TEMP_DIR/tcc-manual-continuation-output.txt"
   local status=0
 
@@ -553,7 +627,9 @@ test_tcc_blocked_startup_can_continue_into_existing_readiness_flow() {
   load_setup_functions
   install_prompt_stubs
   queue_prompt_answers 'y' '2'
-  printf '0\n' > "$manual_wait_file"
+  printf '0\n' > "$network_wait_file"
+  printf '0\n' > "$ssh_wait_file"
+  printf '0\n' > "$start_count_file"
 
   detect_vm_state() {
     detect_calls=$((detect_calls + 1))
@@ -572,6 +648,9 @@ test_tcc_blocked_startup_can_continue_into_existing_readiness_flow() {
   }
 
   start_vm_with_utm() {
+    local count
+    count="$(cat "$start_count_file")"
+    printf '%s\n' "$((count + 1))" > "$start_count_file"
     UTM_AUTOMATION_BLOCKED=true
     UTM_PACKAGE_OPENED=true
     return 1
@@ -581,19 +660,23 @@ test_tcc_blocked_startup_can_continue_into_existing_readiness_flow() {
     return 0
   }
 
-  wait_for_manual_vm_running() {
+  wait_for_vm_network() {
     local count
-    count="$(cat "$manual_wait_file")"
-    printf '%s\n' "$((count + 1))" > "$manual_wait_file"
+    count="$(cat "$network_wait_file")"
+    printf '%s\n' "$((count + 1))" > "$network_wait_file"
+    REPLY='ready'
     return 0
   }
 
-  wait_for_vm_running() {
-    fail 'manual UTM startup should not enter the long automated runtime wait'
-    return 1
+  wait_for_vm_ssh_service() {
+    local count
+    count="$(cat "$ssh_wait_file")"
+    printf '%s\n' "$((count + 1))" > "$ssh_wait_file"
+    REPLY='ready'
+    return 0
   }
 
-  wait_for_known_vm_ssh_readiness() {
+  classify_vm_ssh_connectivity() {
     REPLY='ready'
     return 0
   }
@@ -605,14 +688,17 @@ test_tcc_blocked_startup_can_continue_into_existing_readiness_flow() {
   assert_contains 'manual UTM startup recovery offers manual check' "$(cat "$output_file")" '2) I started the VM manually; check again'
   assert_contains 'manual UTM startup recovery offers rediscovery' "$(cat "$output_file")" '3) Discover VM addresses again'
   assert_contains 'manual UTM startup recovery offers manual address entry' "$(cat "$output_file")" '4) Enter the VM address manually'
-  assert_equals 'manual UTM startup performs one bounded runtime verification' "$(cat "$manual_wait_file")" '1'
+  assert_equals 'manual UTM startup does not retry automatic startup from manual check' "$(cat "$start_count_file")" '1'
+  assert_equals 'manual UTM startup performs one bounded network verification' "$(cat "$network_wait_file")" '1'
+  assert_equals 'manual UTM startup performs one bounded ssh verification' "$(cat "$ssh_wait_file")" '1'
   assert_not_contains 'manual UTM startup does not emit a generic startup failure' "$(cat "$output_file")" 'Failed to start VM.'
 }
 
 test_manual_utm_start_reprompts_when_runtime_is_not_detected() {
   local detect_calls=0
-  local manual_wait_file="$TEMP_DIR/manual-reprompt-wait-count.txt"
   local network_wait_file="$TEMP_DIR/manual-reprompt-network-count.txt"
+  local ssh_wait_file="$TEMP_DIR/manual-reprompt-ssh-count.txt"
+  local start_count_file="$TEMP_DIR/manual-reprompt-start-count.txt"
   local output_file="$TEMP_DIR/manual-reprompt-output.txt"
   local status=0
 
@@ -621,8 +707,11 @@ test_manual_utm_start_reprompts_when_runtime_is_not_detected() {
   load_setup_functions
   install_prompt_stubs
   queue_prompt_answers 'y' '2' '2'
-  printf '0\n' > "$manual_wait_file"
+  VM_HOST='vm-user@192.168.64.2'
+  VM_IP='192.168.64.2'
   printf '0\n' > "$network_wait_file"
+  printf '0\n' > "$ssh_wait_file"
+  printf '0\n' > "$start_count_file"
 
   detect_vm_state() {
     detect_calls=$((detect_calls + 1))
@@ -641,6 +730,9 @@ test_manual_utm_start_reprompts_when_runtime_is_not_detected() {
   }
 
   start_vm_with_utm() {
+    local count
+    count="$(cat "$start_count_file")"
+    printf '%s\n' "$((count + 1))" > "$start_count_file"
     UTM_AUTOMATION_BLOCKED=true
     UTM_PACKAGE_OPENED=true
     return 1
@@ -650,35 +742,47 @@ test_manual_utm_start_reprompts_when_runtime_is_not_detected() {
     return 0
   }
 
-  wait_for_manual_vm_running() {
-    local count
-    count="$(cat "$manual_wait_file")"
-    count=$((count + 1))
-    printf '%s\n' "$count" > "$manual_wait_file"
-    [ "$count" -ge 2 ]
-  }
-
-  wait_for_known_vm_ssh_readiness() {
+  wait_for_vm_network() {
     local count
     count="$(cat "$network_wait_file")"
-    printf '%s\n' "$((count + 1))" > "$network_wait_file"
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$network_wait_file"
+    if [ "$count" -ge 2 ]; then
+      REPLY='ready'
+      return 0
+    fi
+    REPLY='network-timeout'
+    return 1
+  }
+
+  wait_for_vm_ssh_service() {
+    local count
+    count="$(cat "$ssh_wait_file")"
+    printf '%s\n' "$((count + 1))" > "$ssh_wait_file"
+    REPLY='ready'
+    return 0
+  }
+
+  classify_vm_ssh_connectivity() {
     REPLY='ready'
     return 0
   }
 
   ensure_vm_connectivity_or_repair > "$output_file" 2>&1 || status=$?
 
-  assert_equals 'manual startup retry succeeds after runtime appears on the second check' "$status" '0'
-  assert_contains 'manual startup reports that the runtime was not detected' "$(cat "$output_file")" 'The selected VM is still not confirmed running.'
+  assert_equals 'manual startup retry succeeds after network appears on the second check' "$status" '0'
+  assert_contains 'manual startup reports that the configured vm address is not ready' "$(cat "$output_file")" 'The VM is not reachable at 192.168.64.2 yet.'
   assert_contains 'manual startup offers automatic retry' "$(cat "$output_file")" '1) Try starting the selected VM again'
   assert_contains 'manual startup offers another runtime check' "$(cat "$output_file")" '2) I started the VM manually; check again'
   assert_contains 'manual startup offers an explicit exit' "$(cat "$output_file")" '6) Exit setup'
-  assert_equals 'manual startup performs the requested bounded recheck' "$(cat "$manual_wait_file")" '2'
-  assert_equals 'network and ssh readiness starts only after runtime detection' "$(cat "$network_wait_file")" '1'
+  assert_equals 'manual startup does not retry automatic startup from manual checks' "$(cat "$start_count_file")" '1'
+  assert_equals 'manual startup performs the requested bounded network recheck' "$(cat "$network_wait_file")" '2'
+  assert_equals 'ssh readiness starts only after network detection' "$(cat "$ssh_wait_file")" '1'
 }
 
 test_manual_utm_start_abort_never_enters_network_readiness() {
   local network_wait_file="$TEMP_DIR/manual-abort-network-count.txt"
+  local start_count_file="$TEMP_DIR/manual-abort-start-count.txt"
   local output_file="$TEMP_DIR/manual-abort-output.txt"
 
   prepare_vm_state_mocks
@@ -686,7 +790,10 @@ test_manual_utm_start_abort_never_enters_network_readiness() {
   load_setup_functions
   install_prompt_stubs
   queue_prompt_answers 'y' '2' '6'
+  VM_HOST='vm-user@192.168.64.2'
+  VM_IP='192.168.64.2'
   printf '0\n' > "$network_wait_file"
+  printf '0\n' > "$start_count_file"
 
   detect_vm_state() {
     REPLY='stopped'
@@ -699,6 +806,9 @@ test_manual_utm_start_abort_never_enters_network_readiness() {
   }
 
   start_vm_with_utm() {
+    local count
+    count="$(cat "$start_count_file")"
+    printf '%s\n' "$((count + 1))" > "$start_count_file"
     UTM_AUTOMATION_BLOCKED=true
     UTM_PACKAGE_OPENED=true
     return 1
@@ -708,19 +818,19 @@ test_manual_utm_start_abort_never_enters_network_readiness() {
     return 0
   }
 
-  wait_for_manual_vm_running() {
-    return 1
-  }
-
-  wait_for_known_vm_ssh_readiness() {
-    printf '1\n' > "$network_wait_file"
+  wait_for_vm_network() {
+    local count
+    count="$(cat "$network_wait_file")"
+    printf '%s\n' "$((count + 1))" > "$network_wait_file"
+    REPLY='network-timeout'
     return 1
   }
 
   ensure_vm_connectivity_or_repair > "$output_file" 2>&1 || true
 
-  assert_contains 'manual startup abort reports that runtime was not detected' "$(cat "$output_file")" 'The selected VM is still not confirmed running.'
-  assert_equals 'manual startup abort does not enter network or ssh readiness' "$(cat "$network_wait_file")" '0'
+  assert_contains 'manual startup abort reports that configured vm address is not ready' "$(cat "$output_file")" 'The VM is not reachable at 192.168.64.2 yet.'
+  assert_equals 'manual startup abort does not retry automatic startup' "$(cat "$start_count_file")" '1'
+  assert_equals 'manual startup abort remains bounded to one network check before exit' "$(cat "$network_wait_file")" '1'
 }
 
 test_non_tcc_startup_failure_does_not_offer_manual_continuation() {
@@ -1730,6 +1840,22 @@ test_startup_network_timeout_offers_bounded_recovery() {
     return 0
   }
 
+  wait_for_vm_network() {
+    printf 'attempt\n' >> "$readiness_attempt_file"
+    REPLY='ready'
+    return 0
+  }
+
+  wait_for_vm_ssh_service() {
+    REPLY='ready'
+    return 0
+  }
+
+  classify_vm_ssh_connectivity() {
+    REPLY='ready'
+    return 0
+  }
+
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
   assert_contains 'startup recovery flow reports the bounded network timeout' "$output" 'VM did not become SSH-ready within the expected time window.'
@@ -1957,6 +2083,7 @@ test_discover_vm_ip_candidates_excludes_host_api_address() {
 printf 'Running VM state tests\n'
 
 test_setup_vm_is_running_uses_resolved_utmctl
+test_setup_vm_running_check_times_out_blocked_utmctl
 test_start_vm_uses_selected_vm_name_with_utmctl
 test_selected_detected_vm_name_reaches_startup_path
 test_start_vm_falls_back_to_applescript_after_utmctl_failure
@@ -1964,6 +2091,7 @@ test_start_vm_reports_each_failed_start_method
 test_start_vm_reports_tcc_only_for_automation_denial
 test_start_vm_does_not_misclassify_non_tcc_applescript_failure
 test_start_vm_not_found_prints_utmctl_registered_identities
+test_start_vm_treats_not_found_output_as_failure_even_with_zero_status
 test_utm_package_discovery_uses_internal_display_name
 test_detected_vm_selection_retains_package_path
 test_start_vm_opens_package_path_after_identity_methods_fail

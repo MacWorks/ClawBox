@@ -484,6 +484,59 @@ vm_startup_readiness_can_prompt() {
   [ -t 0 ]
 }
 
+check_manual_vm_start_readiness() {
+  local probe_state=''
+  local target_display=''
+
+  if [ -n "${VM_IP:-}" ]; then
+    target_display="$VM_IP"
+  elif ssh_target_host "${VM_HOST:-}"; then
+    target_display="$REPLY"
+  else
+    target_display="${VM_HOST:-configured address}"
+  fi
+
+  if ! wait_for_vm_network; then
+    probe_state="$REPLY"
+    warn "The VM is not reachable at $target_display yet."
+    REPLY="$probe_state"
+    return 1
+  fi
+
+  probe_state="$REPLY"
+  case "$probe_state" in
+    invalid-target|unreachable|network-timeout|ssh-timeout)
+      warn "The VM is not reachable at $target_display yet."
+      REPLY="$probe_state"
+      return 1
+      ;;
+  esac
+
+  if wait_for_vm_ssh_service; then
+    classify_vm_ssh_connectivity
+    probe_state="$REPLY"
+  else
+    probe_state="$REPLY"
+  fi
+
+  case "$probe_state" in
+    ready)
+      success 'SSH readiness detected.'
+      REPLY='ready'
+      return 0
+      ;;
+    ssh-auth-required|ssh-refused|ssh-hostkey-unknown|ssh-hostkey-changed|ssh-hostkey-strict)
+      REPLY="$probe_state"
+      return 1
+      ;;
+    *)
+      warn "The VM is not reachable at $target_display yet."
+      REPLY="$probe_state"
+      return 1
+      ;;
+  esac
+}
+
 offer_vm_startup_readiness_recovery() {
   local vm_state="${1:-booting}"
   local running_confidence="${2:-unknown}"
@@ -573,12 +626,7 @@ offer_vm_startup_readiness_recovery() {
         ;;
       2)
         attempts=$((attempts + 1))
-        if ! wait_for_manual_vm_running; then
-          warn 'The selected VM is still not confirmed running.'
-          probe_state='network-timeout'
-          continue
-        fi
-        if wait_for_known_vm_ssh_readiness; then
+        if check_manual_vm_start_readiness; then
           return 0
         fi
         probe_state="$REPLY"
@@ -588,7 +636,6 @@ offer_vm_startup_readiness_recovery() {
             return 1
             ;;
         esac
-        print_vm_ssh_probe_guidance 'booting' 'exact' "$probe_state"
         ;;
       3)
         attempts=$((attempts + 1))

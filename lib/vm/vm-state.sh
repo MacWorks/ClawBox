@@ -19,6 +19,75 @@ resolve_utmctl_bin() {
   return 1
 }
 
+vm_external_command_timeout_seconds() {
+  printf '%s\n' "${CLAWBOX_VM_EXTERNAL_COMMAND_TIMEOUT_SECONDS:-5}"
+}
+
+run_vm_command_with_timeout() {
+  local timeout_seconds="$1"
+
+  shift
+  command perl -MIPC::Open3 -MSymbol=gensym -MIO::Select -e '
+    use strict;
+    use warnings;
+
+    my $timeout = shift @ARGV;
+    my $err = gensym;
+    my ($in, $out);
+    my $pid = eval { open3($in, $out, $err, @ARGV) };
+    if (!$pid) {
+      print STDERR $@ || "failed to execute command\n";
+      exit 127;
+    }
+
+    close $in;
+    my $selector = IO::Select->new($out, $err);
+    my $deadline = time() + $timeout;
+    my $output = "";
+
+    while ($selector->count) {
+      my $remaining = $deadline - time();
+      if ($remaining <= 0) {
+        kill "TERM", $pid;
+        select undef, undef, undef, 0.2;
+        kill "KILL", $pid;
+        print $output;
+        print STDERR "command timed out after ${timeout}s\n";
+        exit 124;
+      }
+
+      for my $fh ($selector->can_read($remaining)) {
+        my $buffer = "";
+        my $read = sysread($fh, $buffer, 4096);
+        if ($read) {
+          $output .= $buffer;
+        } else {
+          $selector->remove($fh);
+          close $fh;
+        }
+      }
+    }
+
+    waitpid($pid, 0);
+    my $status = $?;
+    print $output;
+    if ($status == -1) {
+      exit 127;
+    }
+    if ($status & 127) {
+      exit(128 + ($status & 127));
+    }
+    exit($status >> 8);
+  ' "$timeout_seconds" "$@"
+}
+
+run_vm_command_with_default_timeout() {
+  local timeout_seconds=''
+
+  timeout_seconds="$(vm_external_command_timeout_seconds)"
+  run_vm_command_with_timeout "$timeout_seconds" "$@"
+}
+
 resolve_ps_bin() {
   REPLY=''
 
@@ -85,7 +154,7 @@ setup_vm_is_running_via_utmctl() {
         ;;
     esac
   done <<EOF
-$($utmctl_bin list 2>/dev/null)
+$(run_vm_command_with_default_timeout "$utmctl_bin" list 2>/dev/null || true)
 EOF
 
   return 1
