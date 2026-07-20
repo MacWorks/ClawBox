@@ -39,34 +39,15 @@ openclaw_onboarding_command() {
   printf '%s\n' "ssh -t $VM_HOST 'zsh -lc \"openclaw onboard\"'"
 }
 
-run_openclaw_onboarding() {
-  require_vm_host || return 1
-
-  ssh -t "$VM_HOST" 'zsh -lc "openclaw onboard"'
-}
-
-offer_openclaw_onboarding() {
+print_openclaw_personalization_next_step() {
   local onboarding_command=''
 
   onboarding_command="$(openclaw_onboarding_command)" || return 1
 
-  section 'OpenClaw Onboarding'
-  out 'OpenClaw onboarding has not yet been completed.'
-  blank_line
-
-  prompt_yes_no 'Run onboarding now?' 'y'
-  if is_yes "$REPLY"; then
-    out 'If OpenClaw drops you into the agent chat, type /exit when finished so ClawBox setup can continue.'
-    blank_line
-    run_openclaw_onboarding || {
-      error 'OpenClaw onboarding did not complete.'
-      return 1
-    }
-    success 'OpenClaw onboarding completed.'
-  else
-    out 'Run onboarding later with:'
-    outf '  %s' "$onboarding_command"
-  fi
+  section 'Optional OpenClaw Personalization'
+  out 'ClawBox managed base configuration is separate from optional OpenClaw agent personalization.'
+  out 'Run personalization later with:'
+  outf '  %s' "$onboarding_command"
 }
 
 ensure_openclaw_provisioned() {
@@ -93,7 +74,7 @@ ensure_openclaw_provisioned() {
       return "$LLAMA_EXIT_GRACEFUL"
     fi
 
-    offer_openclaw_onboarding || return $?
+    out 'OpenClaw is installed. Setup will finish managed configuration and runtime startup from the host.'
   fi
 
   return 0

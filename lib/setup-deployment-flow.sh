@@ -55,6 +55,10 @@ print_setup_completion_summary() {
       else
         out 'OpenClaw CLI path could not be resolved; verify the gateway with ./clawbox status.'
       fi
+      if [ "${OPENCLAW_RUNTIME_MANAGEMENT_STATE:-unknown}" != 'running manually' ] &&
+         command -v print_openclaw_personalization_next_step >/dev/null 2>&1; then
+        print_openclaw_personalization_next_step
+      fi
       ;;
   esac
 }

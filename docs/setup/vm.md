@@ -133,7 +133,8 @@ The authoritative OpenClaw config remains:
 The intended deployment model is:
 
 - host runs `llama-server`
-- VM runs `openclaw gateway`
+- host setup starts and verifies `openclaw gateway` inside the VM through the
+  intended launchd runtime
 - VM calls the host's OpenAI-compatible endpoint using `LLAMA_BASE_URL`
 
 With UTM Shared Network:

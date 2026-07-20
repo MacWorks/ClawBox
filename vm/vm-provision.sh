@@ -258,25 +258,6 @@ else
 fi
 
 echo ""
-echo "Provisioning complete."
-echo ""
-
-if [ "${CLAWBOX_SKIP_GATEWAY_PROMPT:-false}" = 'true' ]; then
-	echo "Host setup will continue with runtime configuration."
-	echo ""
-	exit 0
-fi
-
-read -r -p "Start OpenClaw gateway now? [y/N]: " START_GATEWAY || START_GATEWAY=""
-
-if [[ "$START_GATEWAY" =~ ^[Yy]$ ]]; then
-	echo ""
-	echo "Starting OpenClaw gateway in the current terminal..."
-	exec "$openclaw_path" gateway
-fi
-
-echo ""
-echo "Next step:"
-echo "  cd $VM_RUNTIME_PATH"
-echo "  $openclaw_path gateway"
+echo "VM provisioning complete."
+echo "Return to the ClawBox setup process on the host to finish configuration and start OpenClaw."
 echo ""

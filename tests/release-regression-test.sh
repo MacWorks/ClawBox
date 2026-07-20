@@ -302,13 +302,13 @@ test_provisioning_fallback_uses_public_setup_command() {
   assert_contains 'provisioning fallback still exits gracefully' "$output" 'STATUS:42'
 }
 
-test_post_provisioning_offers_onboarding_with_configured_ssh_target() {
+test_post_provisioning_does_not_launch_interactive_onboarding() {
   local output
 
   output="$({
     load_setup_functions
     install_prompt_stubs
-    queue_prompt_answers 'y' 'n'
+    queue_prompt_answers 'y'
     NEEDS_PROVISIONING=true
     VM_HOST='vm-user@192.168.64.2'
     VM_RUNTIME_PATH='/Users/vm-user/ClawBox'
@@ -321,38 +321,24 @@ test_post_provisioning_offers_onboarding_with_configured_ssh_target() {
     ensure_openclaw_provisioned
   } 2>&1)"
 
-  assert_contains 'post-provisioning onboarding explains why it is offered' "$output" 'OpenClaw onboarding has not yet been completed.'
-  assert_contains 'post-provisioning onboarding prompts before running' "$output" 'Run onboarding now? [Y/n]:'
-  assert_contains 'post-provisioning onboarding prints the configured SSH command when declined' "$output" "ssh -t vm-user@192.168.64.2 'zsh -lc \"openclaw onboard\"'"
-  assert_not_contains 'post-provisioning onboarding guidance only appears when onboarding is launched' "$output" 'type /exit when finished'
+  assert_contains 'post-provisioning handoff keeps setup in managed host flow' "$output" 'Setup will finish managed configuration and runtime startup from the host.'
+  assert_not_contains 'post-provisioning does not prompt for optional onboarding during setup' "$output" 'Run onboarding now?'
+  assert_not_contains 'post-provisioning does not report onboarding completion' "$output" 'OpenClaw onboarding completed.'
 }
 
-test_post_provisioning_onboarding_runs_only_after_confirmation() {
+test_optional_personalization_prints_followup_command_without_completion_claim() {
   local output
 
   output="$({
     load_setup_functions
-    install_prompt_stubs
-    queue_prompt_answers 'y' 'y'
-    NEEDS_PROVISIONING=true
     VM_HOST='vm-user@192.168.64.2'
-    VM_RUNTIME_PATH='/Users/vm-user/ClawBox'
 
-    detect_openclaw_runtime_state() {
-      NEEDS_PROVISIONING=false
-      IS_RUNNING=false
-    }
-
-    ssh() {
-      printf 'SSH:%s\n' "$*"
-    }
-
-    ensure_openclaw_provisioned
+    print_openclaw_personalization_next_step
   } 2>&1)"
 
-  assert_contains 'post-provisioning onboarding uses an interactive SSH session after confirmation' "$output" 'SSH:-t vm-user@192.168.64.2 zsh -lc "openclaw onboard"'
-  assert_contains 'post-provisioning onboarding explains how to return from TUI' "$output" 'type /exit when finished so ClawBox setup can continue'
-  assert_contains 'post-provisioning onboarding reports completion after successful SSH command' "$output" 'OpenClaw onboarding completed.'
+  assert_contains 'optional personalization separates base config from agent personalization' "$output" 'managed base configuration is separate from optional OpenClaw agent personalization'
+  assert_contains 'optional personalization prints configured SSH command' "$output" "ssh -t vm-user@192.168.64.2 'zsh -lc \"openclaw onboard\"'"
+  assert_not_contains 'optional personalization does not claim completion' "$output" 'OpenClaw onboarding completed.'
 }
 
 test_status_avoids_duplicate_vm_host_api_failure() {
@@ -2102,8 +2088,8 @@ run_test test_status_shows_recent_llama_errors_when_log_exists
 run_test test_status_shows_no_log_output_when_no_logs_exist
 run_test test_status_uses_bounded_noninteractive_ssh_for_all_vm_checks
 run_test test_provisioning_fallback_uses_public_setup_command
-run_test test_post_provisioning_offers_onboarding_with_configured_ssh_target
-run_test test_post_provisioning_onboarding_runs_only_after_confirmation
+run_test test_post_provisioning_does_not_launch_interactive_onboarding
+run_test test_optional_personalization_prints_followup_command_without_completion_claim
 
 if [ "$FAILURES" -eq 0 ]; then
   printf 'PASS: test suite succeeded\n'
