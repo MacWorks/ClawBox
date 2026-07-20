@@ -471,6 +471,81 @@ offer_started_vm_network_recovery() {
   return 1
 }
 
+vm_startup_readiness_can_prompt() {
+  [ -t 0 ]
+}
+
+offer_vm_startup_readiness_recovery() {
+  local vm_state="${1:-booting}"
+  local running_confidence="${2:-unknown}"
+  local probe_state="${3:-network-timeout}"
+  local choice=''
+  local attempts=0
+  local max_attempts="${CLAWBOX_VM_STARTUP_READINESS_MAX_ATTEMPTS:-3}"
+
+  print_vm_ssh_probe_guidance "$vm_state" "$running_confidence" "$probe_state"
+
+  if ! vm_startup_readiness_can_prompt; then
+    error 'VM did not become SSH-ready before the timeout.'
+    out 'Re-run setup after the VM finishes booting, or enable Remote Login inside the VM.'
+    REPLY="$probe_state"
+    return "$LLAMA_EXIT_GRACEFUL"
+  fi
+
+  while [ "$attempts" -lt "$max_attempts" ]; do
+    blank_line
+    out 'ClawBox opened UTM, but the VM may still be booting or may require manual startup.'
+    blank_line
+    out '1) Retry waiting for the VM'
+    out '2) I have started the VM; check again'
+    out '3) Show manual SSH setup instructions'
+    out '4) Exit setup'
+    blank_line
+
+    while true; do
+      prompt_with_suffix 'Choose next step' '[1-4]'
+      choice="$REPLY"
+      [ -n "$choice" ] || choice='1'
+
+      case "$choice" in
+        1|2|3|4)
+          break
+          ;;
+        *)
+          error 'Invalid selection. Enter a number between 1 and 4.'
+          ;;
+      esac
+    done
+
+    case "$choice" in
+      1|2)
+        attempts=$((attempts + 1))
+        if wait_for_known_vm_ssh_readiness; then
+          return 0
+        fi
+        probe_state="$REPLY"
+        case "$probe_state" in
+          ssh-refused|ssh-auth-required|ssh-hostkey-unknown|ssh-hostkey-changed|ssh-hostkey-strict)
+            REPLY="$probe_state"
+            return 1
+            ;;
+        esac
+        print_vm_ssh_probe_guidance "$vm_state" "$running_confidence" "$probe_state"
+        ;;
+      3)
+        print_manual_ssh_setup_instructions
+        return "$LLAMA_EXIT_GRACEFUL"
+        ;;
+      4)
+        return "$LLAMA_EXIT_GRACEFUL"
+        ;;
+    esac
+  done
+
+  REPLY="$probe_state"
+  return 1
+}
+
 handle_ssh_refused_onboarding() {
   local vm_state="$1"
   local running_confidence="$2"
@@ -721,9 +796,17 @@ ensure_vm_connectivity_or_repair() {
       if [ "$manual_vm_start_verified" != true ] && ! wait_for_vm_running; then
         detect_vm_state
         vm_state="$REPLY"
-        VM_RECENTLY_STARTED=false
-        error 'ClawBox launched UTM but did not observe the VM enter a running state.'
-        return "$LLAMA_EXIT_GRACEFUL"
+        if offer_vm_startup_readiness_recovery "$vm_state" "$running_confidence" 'network-timeout'; then
+          VM_RECENTLY_STARTED=false
+          success 'VM started and SSH is now available.'
+          return 0
+        fi
+        recovery_status=$?
+        if [ "$recovery_status" -eq "$LLAMA_EXIT_GRACEFUL" ]; then
+          VM_RECENTLY_STARTED=false
+          return "$LLAMA_EXIT_GRACEFUL"
+        fi
+        ssh_probe_state="$REPLY"
       fi
 
       vm_runtime_detected_after_start=true
@@ -744,7 +827,7 @@ ensure_vm_connectivity_or_repair() {
 
         if [ "$ssh_probe_state" = 'network-timeout' ] && [ "$started_vm_this_run" = true ] && [ "$vm_runtime_detected_after_start" = true ]; then
           recovery_status=0
-          offer_started_vm_network_recovery
+          offer_vm_startup_readiness_recovery "$vm_state" "$running_confidence" "$ssh_probe_state"
           recovery_status=$?
 
           if [ "$recovery_status" -eq 0 ]; then

@@ -285,6 +285,7 @@ test_vm_provision_prints_return_to_host_instruction() {
   assert_equals 'vm provision succeeds without gateway prompt input' "$VM_PROVISION_LAST_STATUS" '0'
   assert_contains 'vm provision prints completion banner' "$VM_PROVISION_LAST_OUTPUT" 'VM provisioning complete.'
   assert_contains 'vm provision directs user back to host setup' "$VM_PROVISION_LAST_OUTPUT" 'Return to the ClawBox setup process on the host to finish configuration and start OpenClaw.'
+  assert_contains 'vm provision visually separates completion from host handoff' "$VM_PROVISION_LAST_OUTPUT" $'VM provisioning complete.\n\nReturn to the ClawBox setup process on the host to finish configuration and start OpenClaw.'
   assert_not_contains 'vm provision does not print the old next-step banner' "$VM_PROVISION_LAST_OUTPUT" 'Next step:'
   assert_not_contains 'vm provision does not print manual gateway instructions' "$VM_PROVISION_LAST_OUTPUT" "$fixture_root/opt/homebrew/bin/openclaw gateway"
 }

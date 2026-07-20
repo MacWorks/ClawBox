@@ -74,6 +74,11 @@ Typical flow:
 8. If the user declines provisioning completion, setup exits gracefully and prints the resume command:
    `./clawbox setup`.
 
+If UTM opens but the VM does not become SSH-ready before the bounded readiness
+timeout, setup offers to retry waiting, check again after a manual VM start,
+show manual SSH setup instructions, or exit. Noninteractive setup still fails
+clearly instead of prompting indefinitely.
+
 Provisioning remains a distinct phase separate from runtime execution.
 
 ---

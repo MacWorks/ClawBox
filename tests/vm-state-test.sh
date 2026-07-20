@@ -1660,15 +1660,15 @@ test_ensure_vm_connectivity_classifies_network_stage_failure_once() {
 test_startup_network_timeout_offers_bounded_recovery() {
   local detect_calls=0
   local output
-  local network_attempt_file
+  local readiness_attempt_file
 
   prepare_vm_state_mocks
 
   load_setup_functions
   install_prompt_stubs
-  queue_prompt_answers 'y' '2' '192.168.64.9'
-  network_attempt_file="$TEMP_DIR/startup-recovery-network-attempts.txt"
-  : > "$network_attempt_file"
+  queue_prompt_answers 'y' '2'
+  readiness_attempt_file="$TEMP_DIR/startup-recovery-readiness-attempts.txt"
+  : > "$readiness_attempt_file"
 
   detect_vm_state() {
     detect_calls=$((detect_calls + 1))
@@ -1688,52 +1688,45 @@ test_startup_network_timeout_offers_bounded_recovery() {
     return 0
   }
 
+  vm_startup_readiness_can_prompt() {
+    return 0
+  }
+
   wait_for_vm_running() {
     return 0
   }
 
-  wait_for_vm_network() {
+  wait_for_known_vm_ssh_readiness() {
     local attempt_count
 
-    printf 'attempt\n' >> "$network_attempt_file"
-    attempt_count="$(wc -l < "$network_attempt_file" | tr -d '[:space:]')"
+    printf 'attempt\n' >> "$readiness_attempt_file"
+    attempt_count="$(wc -l < "$readiness_attempt_file" | tr -d '[:space:]')"
 
-    status_begin 'Waiting for VM network...'
-    status_tick 'Waiting for VM network...'
+    status_begin 'Waiting for VM SSH readiness...'
+    status_tick 'Waiting for VM SSH readiness...'
 
     if [ "$attempt_count" -eq 1 ]; then
-      REPLY='ssh-timeout'
-      status_end 'VM network was not detected within the expected time window.'
+      REPLY='network-timeout'
+      status_end 'VM did not become SSH-ready within the expected time window.'
       return 1
     fi
 
-    REPLY='ssh-auth-required'
-    status_end 'VM network detected.'
-    return 0
-  }
-
-  wait_for_vm_ssh_after_network_ready() {
-    REPLY='ssh-refused'
-    return 1
-  }
-
-  attempt_ssh_access_bootstrap() {
+    REPLY='ready'
+    status_end 'SSH readiness detected.'
     return 0
   }
 
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
-  assert_contains 'startup recovery flow reports the bounded network timeout' "$output" 'VM network was not detected within the expected time window.'
-  assert_contains 'startup recovery flow offers network retry first' "$output" '1) Retry VM network detection'
-  assert_contains 'startup recovery flow offers manual ip replacement second' "$output" '2) Enter a different IP address'
-  assert_contains 'startup recovery flow offers vm ip discovery' "$output" '3) Attempt VM IP discovery'
-  assert_contains 'startup recovery flow offers continue waiting fourth' "$output" '4) Continue waiting'
-  assert_contains 'startup recovery flow offers abort fifth' "$output" '5) Abort setup'
-  assert_not_contains 'startup recovery flow accepts manual ip input without invalid-selection churn' "$output" 'Invalid selection. Enter a number between 1 and 5.'
-  assert_equals 'startup recovery flow retries only within the bounded recovery menu' "$(wc -l < "$network_attempt_file" | tr -d '[:space:]')" '1'
-  assert_contains 'startup recovery flow continues into ssh refusal onboarding after manual ip replacement' "$output" 'Using entered VM address: 192.168.64.9'
-  assert_contains 'startup recovery flow reaches the ssh refusal prompt after manual ip replacement' "$output" 'Is Remote Login now enabled? [Y/n]:'
-  assert_contains 'startup recovery flow keeps recovery output visually separated' "$output" 'VM network was not detected within the expected time window.'
+  assert_contains 'startup recovery flow reports the bounded network timeout' "$output" 'VM did not become SSH-ready within the expected time window.'
+  assert_contains 'startup recovery flow offers retry first' "$output" '1) Retry waiting for the VM'
+  assert_contains 'startup recovery flow offers manual check second' "$output" '2) I have started the VM; check again'
+  assert_contains 'startup recovery flow offers manual instructions third' "$output" '3) Show manual SSH setup instructions'
+  assert_contains 'startup recovery flow offers exit fourth' "$output" '4) Exit setup'
+  assert_not_contains 'startup recovery flow accepts manual ip input without invalid-selection churn' "$output" 'Invalid selection. Enter a number between 1 and 4.'
+  assert_equals 'startup recovery flow retries readiness within the bounded recovery menu' "$(wc -l < "$readiness_attempt_file" | tr -d '[:space:]')" '2'
+  assert_contains 'startup recovery flow keeps vm host configuration across retry' "$output" 'VM started and SSH is now available.'
+  assert_contains 'startup recovery flow keeps recovery output visually separated' "$output" 'VM did not become SSH-ready within the expected time window.'
 }
 
 test_startup_network_timeout_recovery_stays_bounded() {
@@ -1767,6 +1760,10 @@ test_startup_network_timeout_recovery_stays_bounded() {
     return 0
   }
 
+  vm_startup_readiness_can_prompt() {
+    return 0
+  }
+
   wait_for_vm_running() {
     return 0
   }
@@ -1780,8 +1777,8 @@ test_startup_network_timeout_recovery_stays_bounded() {
     return 1
   }
 
-  CLAWBOX_VM_STARTUP_RECOVERY_MAX_ATTEMPTS=2
-  export CLAWBOX_VM_STARTUP_RECOVERY_MAX_ATTEMPTS
+  CLAWBOX_VM_STARTUP_READINESS_MAX_ATTEMPTS=2
+  export CLAWBOX_VM_STARTUP_READINESS_MAX_ATTEMPTS
 
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
@@ -1799,7 +1796,7 @@ test_startup_network_timeout_recovery_stays_bounded() {
   assert_not_contains 'startup recovery flow does not offer ssh bootstrap after exhausting the bounded recovery menu' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
 }
 
-test_recovered_vm_ip_transitions_directly_to_ssh_stage() {
+test_startup_network_timeout_uses_bounded_readiness_recovery_before_ip_recovery() {
   local detect_calls=0
   local output
   local network_wait_file
@@ -1809,7 +1806,7 @@ test_recovered_vm_ip_transitions_directly_to_ssh_stage() {
 
   load_setup_functions
   install_prompt_stubs
-  queue_prompt_answers 'y' '3' 'n'
+  queue_prompt_answers 'y' '4'
   network_wait_file="$TEMP_DIR/recovered-ip-network-waits.txt"
   : > "$network_wait_file"
 
@@ -1828,6 +1825,10 @@ test_recovered_vm_ip_transitions_directly_to_ssh_stage() {
   }
 
   start_vm_with_utm() {
+    return 0
+  }
+
+  vm_startup_readiness_can_prompt() {
     return 0
   }
 
@@ -1852,9 +1853,8 @@ test_recovered_vm_ip_transitions_directly_to_ssh_stage() {
   }
 
   offer_vm_ip_recovery() {
-    update_vm_ip_selection '192.168.64.6'
-    success 'Using detected VM address: 192.168.64.6'
-    return 0
+    fail 'startup network timeout should use bounded readiness recovery before IP recovery'
+    return 1
   }
 
   probe_vm_ssh_endpoint() {
@@ -1867,12 +1867,12 @@ test_recovered_vm_ip_transitions_directly_to_ssh_stage() {
   }
 
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
-  post_recovery_output="${output#*Using detected VM address: 192.168.64.6}"
+  post_recovery_output="${output#*4) Exit setup}"
 
   assert_equals 'recovered vm ip flow only uses vm network polling for the initial pre-recovery timeout' "$(wc -l < "$network_wait_file" | tr -d '[:space:]')" '1'
-  assert_contains 'recovered vm ip flow keeps the recovered ip selection' "$output" 'Using detected VM address: 192.168.64.6'
-  assert_contains 'recovered vm ip flow transitions directly into ssh refusal onboarding' "$output" 'Is Remote Login now enabled? [Y/n]:'
-  assert_not_contains 'recovered vm ip flow does not print a second vm network wait after ip recovery' "$post_recovery_output" 'Waiting for VM network...'
+  assert_contains 'startup network timeout offers bounded readiness recovery before ip recovery' "$output" '1) Retry waiting for the VM'
+  assert_contains 'startup network timeout can exit setup from bounded readiness recovery' "$output" '4) Exit setup'
+  assert_not_contains 'startup network timeout does not print a second vm network wait after bounded recovery' "$post_recovery_output" 'Waiting for VM network...'
 }
 
 test_discover_vm_ip_candidates_prefers_utmctl_guest_ip_metadata() {
@@ -1950,7 +1950,7 @@ test_ensure_vm_connectivity_does_not_repeat_boot_wait_after_failed_startup_readi
 test_ensure_vm_connectivity_classifies_network_stage_failure_once
 test_startup_network_timeout_offers_bounded_recovery
 test_startup_network_timeout_recovery_stays_bounded
-test_recovered_vm_ip_transitions_directly_to_ssh_stage
+test_startup_network_timeout_uses_bounded_readiness_recovery_before_ip_recovery
 test_wait_for_vm_network_uses_bounded_tcp_probe_timing
 test_vm_onboarding_wait_defaults_increase_spinner_cadence
 test_wait_for_known_vm_ssh_readiness_distinguishes_network_ready_from_ssh_auth_failure

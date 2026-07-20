@@ -259,5 +259,10 @@ fi
 
 echo ""
 echo "VM provisioning complete."
-echo "Return to the ClawBox setup process on the host to finish configuration and start OpenClaw."
+echo ""
+if [ -t 1 ]; then
+	printf '\033[1m%s\033[0m\n' "Return to the ClawBox setup process on the host to finish configuration and start OpenClaw."
+else
+	echo "Return to the ClawBox setup process on the host to finish configuration and start OpenClaw."
+fi
 echo ""

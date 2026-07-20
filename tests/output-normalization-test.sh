@@ -2241,6 +2241,10 @@ test_vm_startup_progress_flow() {
       return 0
     }
 
+    vm_startup_readiness_can_prompt() {
+      return 0
+    }
+
     detect_vm_state() {
       if [ "$runtime_checks" -eq 0 ]; then
         REPLY='stopped'
@@ -2321,6 +2325,10 @@ test_vm_startup_network_recovery_flow() {
       return 0
     }
 
+    vm_startup_readiness_can_prompt() {
+      return 0
+    }
+
     detect_vm_state() {
       if [ "$runtime_checks" -eq 0 ]; then
         REPLY='stopped'
@@ -2377,11 +2385,10 @@ test_vm_startup_network_recovery_flow() {
   normalized_output="$(printf '%s' "$output" | perl -0pe 's/\\033\[[0-9;?]*[A-Za-z]//g; s/\e\[[0-9;?]*[A-Za-z]//g; s/\r[^\n]*//g')"
 
   assert_not_contains 'startup recovery flow does not duplicate the bounded network timeout line' "$normalized_output" $'VM network was not detected within the expected time window.\nVM network was not detected within the expected time window.'
-  assert_contains 'startup recovery flow offers retry network detection' "$normalized_output" '1) Retry VM network detection'
-  assert_contains 'startup recovery flow offers manual ip replacement' "$normalized_output" '2) Enter a different IP address'
-  assert_contains 'startup recovery flow offers vm ip discovery' "$normalized_output" '3) Attempt VM IP discovery'
-  assert_contains 'startup recovery flow offers continue waiting' "$normalized_output" '4) Continue waiting'
-  assert_contains 'startup recovery flow offers abort setup' "$normalized_output" '5) Abort setup'
+  assert_contains 'startup recovery flow offers retry waiting' "$normalized_output" '1) Retry waiting for the VM'
+  assert_contains 'startup recovery flow offers manual check again' "$normalized_output" '2) I have started the VM; check again'
+  assert_contains 'startup recovery flow offers manual ssh instructions' "$normalized_output" '3) Show manual SSH setup instructions'
+  assert_contains 'startup recovery flow offers exit setup' "$normalized_output" '4) Exit setup'
 }
 
 test_vm_ip_discovery_recovery_flow() {
