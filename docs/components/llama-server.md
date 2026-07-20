@@ -81,7 +81,10 @@ If `LLAMA_BIN` is missing, setup offers these explicit choices after user approv
 - HTTPS source build under `$HOME/ai/llama.cpp`, which requires `cmake`
 - manual binary path entry
 
-Setup does not automatically fall back between install methods.
+Setup does not silently fall back between install methods. If a Homebrew install
+fails and source-build prerequisites are available, setup preserves the brew
+output in `logs/setup/homebrew-install-*.log`, reports the concise failure
+category, and asks before cloning/building llama.cpp locally.
 
 If Homebrew is installed but not writable by the current user, setup warns and does not attempt to repair permissions automatically.
 

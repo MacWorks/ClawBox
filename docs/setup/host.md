@@ -31,7 +31,8 @@ keys, but they do not replace `~/.openclaw/openclaw.json`.
 - lets you reuse an already running `llama-server` instance, stop and replace it only when the current user owns it, choose a different port, or exit setup gracefully
 - detects Homebrew in common macOS locations even when it is missing from the current account `PATH`, temporarily uses the discovered installation for setup, and prints the exact shell commands needed to make the Homebrew path persistent for future sessions
 - caches Homebrew discovery during a setup run so repeated checks do not keep re-scanning the same installation state unless setup changes the active Homebrew path
-- classifies Homebrew install failures into actionable categories such as permissions, lock contention, missing Xcode Command Line Tools, missing brew, network failures, and unavailable formulae instead of collapsing them into a generic environment failure
+- classifies Homebrew install failures from the brew exit status and captured output into actionable categories such as permissions, Homebrew lock/process contention, missing Xcode Command Line Tools, missing brew, network failures, unavailable formulae, and successful brew runs that still leave `llama-server` unavailable
+- saves full Homebrew install output to a timestamped `logs/setup/homebrew-install-*.log` file and prints that path instead of dumping the full brew transcript into the terminal
 - if a shared Homebrew installation already contains `llama.cpp` but the current macOS account cannot modify it, explains that the existing installation may still be reusable from this account and points the user toward binary reuse, another port, or fixing Homebrew ownership
 - when the user chooses `Use existing llama-server binary`, attempts to discover reusable binaries in `PATH`, common Homebrew locations, `~/.local/bin`, and known local `llama.cpp` build outputs before falling back to a manual path prompt
 - installs the system-wide `llama-server` wrapper at `/usr/local/bin/clawbox-llama-wrapper.sh` when system mode is selected for an admin user
@@ -39,6 +40,7 @@ keys, but they do not replace `~/.openclaw/openclaw.json`.
 - installs the runtime env file for the selected mode
 - installs and starts the matching LaunchDaemon or LaunchAgent for the selected mode
 - can install `llama.cpp` through Homebrew or build it from source with HTTPS and `cmake` when `LLAMA_BIN` is missing and the user approves installation
+- presents recoverable Homebrew install failures as warnings when the local source-build fallback is available, and still asks before cloning/building the large llama.cpp source repository
 - validates the host `llama-server` startup in two phases after launch by waiting for the TCP port and then polling `http://HOST_IP:LLAMA_PORT/v1/models` for valid JSON, and offers retry, port change, log viewing, or graceful exit on failure
 - validates host prerequisites before doing remote work
 - when an existing VM auto-start runtime service is already present, distinguishes between keeping that managed runtime service and skipping runtime-service management for the current setup run

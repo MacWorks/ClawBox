@@ -338,7 +338,13 @@ install_llama_cpp_automatically() {
         continue
       fi
 
+      if [ "$can_build_source" = true ]; then
+        LLAMA_HOMEBREW_FAILURE_SEVERITY='warning'
+      else
+        LLAMA_HOMEBREW_FAILURE_SEVERITY='fatal'
+      fi
       llama_capture_status install_llama_cpp_with_homebrew "$homebrew_state"
+      unset LLAMA_HOMEBREW_FAILURE_SEVERITY
       status=$LLAMA_LAST_STATUS
 
       if [ "$status" -eq 0 ]; then
@@ -348,21 +354,6 @@ install_llama_cpp_automatically() {
       fi
 
       if [ "$can_build_source" = true ]; then
-        err_blank_line
-        case "${LLAMA_HOMEBREW_FAILURE_KIND:-unknown}" in
-          active-process)
-            err 'Homebrew installation could not proceed because another brew process is active.'
-            ;;
-          brew-unavailable)
-            err 'Homebrew installation could not proceed because the brew executable is unavailable.'
-            ;;
-          post-install-missing-binary)
-            err 'Homebrew installation finished, but llama-server was still unavailable.'
-            ;;
-          *)
-            err 'Homebrew installation could not complete.'
-            ;;
-        esac
         err_blank_line
         err 'ClawBox can instead clone and build llama.cpp locally for this account.'
         err 'This downloads a large source repository and may take several minutes.'
@@ -511,86 +502,163 @@ EOF
   [ -n "$REPLY" ]
 }
 
-llama_summarize_homebrew_failure() {
+llama_homebrew_install_log_path() {
+  local setup_log_dir=''
+
+  setup_log_dir="$(clawbox_log_category_dir setup)"
+  clawbox_ensure_log_dir "$setup_log_dir"
+  printf '%s/homebrew-install-%s-%s.log\n' "$setup_log_dir" "$(clawbox_log_timestamp)" "$$"
+}
+
+llama_classify_homebrew_failure() {
   local log_path="$1"
+  local exit_status="${2:-1}"
+
+  LLAMA_HOMEBREW_FAILURE_KIND='unknown'
+  LLAMA_HOMEBREW_EXIT_STATUS="$exit_status"
+
+  if [ "$exit_status" -eq 0 ]; then
+    LLAMA_HOMEBREW_FAILURE_KIND='post-install-missing-binary'
+    return 0
+  fi
+
+  if grep -qiE 'command not found|No such file or directory' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='brew-unavailable'
+    return 0
+  fi
+
+  if grep -qiE 'another active Homebrew process|Homebrew.*already running|brew.*already running|Homebrew.*lock|brew.*lock|Resource temporarily unavailable.*(Homebrew|brew)' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='active-process'
+    return 0
+  fi
+
+  if grep -qiE 'Command Line Tools|xcode-select --install|No developer tools were found' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='xcode-tools'
+    return 0
+  fi
+
+  if grep -qiE 'Failed to download|Could not resolve host|timed out|SSL|network|Connection reset|Failed to connect|Connection refused|curl:.*[0-9]+' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='network'
+    return 0
+  fi
+
+  if grep -qiE 'No available formula|No formulae found|formula .* unavailable|No formula or cask' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='formula'
+    return 0
+  fi
+
+  if grep -qiE 'Permission denied|Operation not permitted|not writable|Cannot write|permission.*denied|Failed during: .*chmod|Failed during: .*mkdir|is not writable' "$log_path"; then
+    LLAMA_HOMEBREW_FAILURE_KIND='permissions'
+    return 0
+  fi
+
+  return 0
+}
+
+llama_report_homebrew_failure() {
+  local log_path="$1"
+  local severity="${2:-fatal}"
   local existing_binary=''
   local affected_paths=''
   local current_user=''
+  local headline
 
-  LLAMA_HOMEBREW_FAILURE_KIND='unknown'
   current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
   resolve_homebrew_llama_bin >/dev/null 2>&1 || true
   existing_binary="$REPLY"
   llama_collect_homebrew_paths_from_log "$log_path" >/dev/null 2>&1 || true
   affected_paths="$REPLY"
 
-  if grep -qiE 'command not found|No such file or directory' "$log_path"; then
-    LLAMA_HOMEBREW_FAILURE_KIND='brew-unavailable'
-    error 'Homebrew installation failed because the brew executable is not available.'
-    err 'Re-run setup after restoring Homebrew or choosing a different install method.'
-    return 0
+  case "${LLAMA_HOMEBREW_FAILURE_KIND:-unknown}" in
+    brew-unavailable)
+      headline='Homebrew installation failed because the brew executable is not available.'
+      ;;
+    active-process)
+      headline='Homebrew installation is blocked by another active Homebrew process or lock.'
+      ;;
+    xcode-tools)
+      headline='Homebrew installation failed because Xcode Command Line Tools are missing.'
+      ;;
+    network)
+      headline='Homebrew installation failed due to a network or download error.'
+      ;;
+    formula)
+      headline='Homebrew installation failed because the llama.cpp formula is unavailable.'
+      ;;
+    permissions)
+      headline='Homebrew installation failed due to permissions issues.'
+      ;;
+    post-install-missing-binary)
+      headline='Homebrew installation finished, but llama-server was still unavailable.'
+      ;;
+    *)
+      headline='Homebrew installation failed while installing llama.cpp.'
+      ;;
+  esac
+
+  if [ "$severity" = 'warning' ]; then
+    warn "$headline"
+  else
+    error "$headline"
   fi
 
-  if grep -qiE 'another active Homebrew process|brew update.*already running|lock|Resource temporarily unavailable' "$log_path"; then
-    LLAMA_HOMEBREW_FAILURE_KIND='active-process'
-    error 'Homebrew installation is blocked by another active Homebrew process.'
-    err 'Wait for the other brew command to finish, or choose a different install method.'
-    return 0
-  fi
+  case "${LLAMA_HOMEBREW_FAILURE_KIND:-unknown}" in
+    brew-unavailable)
+      err 'Re-run setup after restoring Homebrew or choosing a different install method.'
+      ;;
+    active-process)
+      err 'Wait for the other brew command to finish, or choose a different install method.'
+      ;;
+    xcode-tools)
+      err 'Run: xcode-select --install'
+      ;;
+    network)
+      err 'Check connectivity, then retry setup.'
+      ;;
+    formula)
+      err 'Run brew update or install llama.cpp manually, then retry setup.'
+      ;;
+    permissions)
 
-  if grep -qiE 'Command Line Tools|xcode-select --install|No developer tools were found' "$log_path"; then
-    LLAMA_HOMEBREW_FAILURE_KIND='xcode-tools'
-    error 'Homebrew installation failed because Xcode Command Line Tools are missing.'
-    err 'Run: xcode-select --install'
-    return 0
-  fi
+      if [ -n "$existing_binary" ]; then
+        err 'A shared Homebrew installation was detected, but this account does not currently have permission to modify or upgrade llama.cpp.'
+        err 'The existing installation may still be usable.'
+        err "Detected binary: $existing_binary"
+      else
+        err 'This Homebrew installation appears to be owned or managed by another macOS user.'
+      fi
 
-  if grep -qiE 'Failed to download|Could not resolve host|timed out|SSL|network|Connection reset' "$log_path"; then
-    LLAMA_HOMEBREW_FAILURE_KIND='network'
-    error 'Homebrew installation failed due to a network or download error.'
-    err 'Check connectivity, then retry setup.'
-    return 0
-  fi
-
-  if grep -qiE 'No available formula|No formulae found|formula .* unavailable' "$log_path"; then
-    LLAMA_HOMEBREW_FAILURE_KIND='formula'
-    error 'Homebrew installation failed because the llama.cpp formula is unavailable.'
-    err 'Run brew update or install llama.cpp manually, then retry setup.'
-    return 0
-  fi
-
-  if grep -qiE 'Permission denied|Operation not permitted|not writable|Cannot write|permission.*denied|Failed during: .*chmod|Failed during: .*mkdir' "$log_path"; then
-    LLAMA_HOMEBREW_FAILURE_KIND='permissions'
-    error 'Homebrew installation failed due to permissions issues.'
-
-    if [ -n "$existing_binary" ]; then
-      err 'A shared Homebrew installation was detected, but this account does not currently have permission to modify or upgrade llama.cpp.'
-      err 'The existing installation may still be usable.'
-      err "Detected binary: $existing_binary"
-    else
-      err 'This Homebrew installation appears to be owned or managed by another macOS user.'
-    fi
-
-    if [ -n "$affected_paths" ]; then
-      err 'Affected directories:'
-      while IFS= read -r path; do
-        [ -n "$path" ] && err "- $path"
-      done <<EOF
+      if [ -n "$affected_paths" ]; then
+        err 'Affected directories:'
+        while IFS= read -r path; do
+          [ -n "$path" ] && err "- $path"
+        done <<EOF
 $affected_paths
 EOF
-      err 'Suggested fix:'
-      err "sudo chown -R ${current_user:-$(whoami)} $(printf '%s ' $affected_paths)"
-    else
-      err 'Suggested fix:'
-      err "sudo chown -R ${current_user:-$(whoami)} /opt/homebrew /usr/local"
-    fi
+        err 'Suggested fix:'
+        err "sudo chown -R ${current_user:-$(whoami)} $(printf '%s ' $affected_paths)"
+      else
+        err 'Suggested fix:'
+        err "sudo chown -R ${current_user:-$(whoami)} /opt/homebrew /usr/local"
+      fi
+      ;;
+    unknown)
+      err "Homebrew exit status: ${LLAMA_HOMEBREW_EXIT_STATUS:-unknown}"
+      ;;
+  esac
 
-    return 0
-  fi
+  err 'Homebrew details were saved to:'
+  err "$log_path"
+  return 0
+}
 
-  error 'Homebrew installation failed while installing llama.cpp.'
-  err 'Homebrew reported:'
-  llama_emit_log_excerpt "$log_path" 20 || err '(no additional Homebrew output captured)'
+llama_summarize_homebrew_failure() {
+  local log_path="$1"
+  local exit_status="${2:-1}"
+  local severity="${3:-fatal}"
+
+  llama_classify_homebrew_failure "$log_path" "$exit_status"
+  llama_report_homebrew_failure "$log_path" "$severity"
 }
 
 llama_homebrew_available() {
@@ -1084,6 +1152,8 @@ install_llama_cpp_with_homebrew() {
   local homebrew_shellenv_line
   local installed_path
   local install_log=''
+  local install_status=0
+  local failure_severity="${LLAMA_HOMEBREW_FAILURE_SEVERITY:-fatal}"
 
   if [ "$homebrew_state" != 'usable' ]; then
     error 'Cannot use Homebrew install'
@@ -1110,24 +1180,22 @@ install_llama_cpp_with_homebrew() {
   fi
 
   err 'Installing llama.cpp with Homebrew...'
-  install_log="$(mktemp)"
+  install_log="$(llama_homebrew_install_log_path)"
   brew install llama.cpp >"$install_log" 2>&1 || {
-    llama_summarize_homebrew_failure "$install_log"
-    rm -f "$install_log"
+    install_status=$?
+    llama_summarize_homebrew_failure "$install_log" "$install_status" "$failure_severity"
     return 1
   }
-
-  rm -f "$install_log"
 
   if resolve_homebrew_llama_bin >/dev/null; then
     installed_path="$REPLY"
     err "Installed at: $installed_path"
+    rm -f "$install_log"
     REPLY="$installed_path"
     return 0
   fi
 
-  LLAMA_HOMEBREW_FAILURE_KIND='post-install-missing-binary'
-  llama_fail "Failed to locate llama-server binary after Homebrew install"
+  llama_summarize_homebrew_failure "$install_log" 0 "$failure_severity"
   return 1
 }
 

@@ -14,6 +14,42 @@ fail() {
   FAILURES=$((FAILURES + 1))
 }
 
+assert_equals() {
+  local description="$1"
+  local actual="$2"
+  local expected="$3"
+
+  if [ "$actual" = "$expected" ]; then
+    pass "$description"
+  else
+    fail "$description"
+  fi
+}
+
+assert_contains() {
+  local description="$1"
+  local haystack="$2"
+  local needle="$3"
+
+  if [[ "$haystack" == *"$needle"* ]]; then
+    pass "$description"
+  else
+    fail "$description"
+  fi
+}
+
+assert_not_contains() {
+  local description="$1"
+  local haystack="$2"
+  local needle="$3"
+
+  if [[ "$haystack" == *"$needle"* ]]; then
+    fail "$description"
+  else
+    pass "$description"
+  fi
+}
+
 cleanup() {
   if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
     rm -rf "$TEMP_DIR"
@@ -3232,6 +3268,10 @@ test_llama_automatic_install_uses_discovered_homebrew_outside_path() {
 
 test_llama_homebrew_install_reports_actual_failure_reason() {
   local stderr_file="$TEMP_DIR/llama-homebrew-failure.stderr"
+  local setup_log_root="$TEMP_DIR/homebrew-xcode-log-root"
+
+  BASE_DIR="$setup_log_root"
+  export BASE_DIR
 
   command() {
     if [ "${1:-}" = '-v' ] && [ "${2:-}" = 'brew' ]; then
@@ -3326,7 +3366,7 @@ test_llama_homebrew_active_process_fallback_is_explicit() {
     fail "llama active Homebrew process should fall back to source build"
   fi
 
-  if grep -Fq 'another brew process is active' "$stderr_file" \
+  if grep -Fq 'another active Homebrew process' "$stderr_file" \
     && grep -Fq 'ClawBox can instead clone and build llama.cpp locally for this account.' "$stderr_file" \
     && grep -Fq 'This downloads a large source repository and may take several minutes.' "$stderr_file"; then
     pass "llama active Homebrew process fallback is explicit"
@@ -3344,6 +3384,10 @@ test_llama_homebrew_active_process_fallback_is_explicit() {
 test_llama_homebrew_install_classifies_shared_install_permissions() {
   local stderr_file="$TEMP_DIR/llama-homebrew-permissions.stderr"
   local shared_bin="$TEMP_DIR/shared-homebrew-llama-server"
+  local setup_log_root="$TEMP_DIR/homebrew-permissions-log-root"
+
+  BASE_DIR="$setup_log_root"
+  export BASE_DIR
 
   printf '#!/bin/bash\nexit 0\n' > "$shared_bin"
   chmod +x "$shared_bin"
@@ -3397,6 +3441,108 @@ test_llama_homebrew_install_classifies_shared_install_permissions() {
     pass "llama Homebrew permission failures do not fall back to the inaccurate automatic-installation-unavailable message"
   else
     fail "llama Homebrew permission failures should not fall back to the inaccurate automatic-installation-unavailable message"
+  fi
+}
+
+test_llama_homebrew_failure_classification_matrix() {
+  local log_file="$TEMP_DIR/homebrew-classification.log"
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/llama.sh"
+
+  printf '%s\n' 'Error: Another active Homebrew process is already running.' > "$log_file"
+  llama_classify_homebrew_failure "$log_file" 1
+  assert_equals 'Homebrew active process output classifies as active-process' "$LLAMA_HOMEBREW_FAILURE_KIND" 'active-process'
+
+  printf '%s\n' 'Error: Permission denied @ dir_s_mkdir - /opt/homebrew/share/man' > "$log_file"
+  llama_classify_homebrew_failure "$log_file" 1
+  assert_equals 'Homebrew permission output classifies as permissions' "$LLAMA_HOMEBREW_FAILURE_KIND" 'permissions'
+
+  printf '%s\n' 'curl: (6) Could not resolve host: ghcr.io' > "$log_file"
+  llama_classify_homebrew_failure "$log_file" 1
+  assert_equals 'Homebrew network output classifies as network' "$LLAMA_HOMEBREW_FAILURE_KIND" 'network'
+
+  printf '%s\n' 'Error: No available formula with the name "llama.cpp".' > "$log_file"
+  llama_classify_homebrew_failure "$log_file" 1
+  assert_equals 'Homebrew unavailable formula output classifies as formula' "$LLAMA_HOMEBREW_FAILURE_KIND" 'formula'
+
+  printf '%s\n' 'Error: Something failed while writing the lockfile field.' > "$log_file"
+  llama_classify_homebrew_failure "$log_file" 2
+  assert_equals 'generic lock wording without Homebrew context remains unknown' "$LLAMA_HOMEBREW_FAILURE_KIND" 'unknown'
+
+  : > "$log_file"
+  llama_classify_homebrew_failure "$log_file" 0
+  assert_equals 'successful brew with missing llama-server classifies separately' "$LLAMA_HOMEBREW_FAILURE_KIND" 'post-install-missing-binary'
+}
+
+test_llama_homebrew_failure_logs_details_without_terminal_dump() {
+  local stderr_file="$TEMP_DIR/llama-homebrew-log.stderr"
+  local log_path=''
+  local setup_log_root="$TEMP_DIR/homebrew-log-root"
+  local secret_value='fixture-secret-token'
+
+  BASE_DIR="$setup_log_root"
+  CLAWBOX_TEST_SECRET="$secret_value"
+  export BASE_DIR CLAWBOX_TEST_SECRET
+
+  command() {
+    if [ "${1:-}" = '-v' ] && [ "${2:-}" = 'brew' ]; then
+      printf '%s\n' 'brew'
+      return 0
+    fi
+
+    builtin command "$@"
+  }
+
+  brew() {
+    if [ "${1:-}" = 'install' ] && [ "${2:-}" = 'llama.cpp' ]; then
+      printf '%s\n' 'UNIQUE_BREW_DETAIL: generic failure from fixture' >&2
+      return 9
+    fi
+
+    return 1
+  }
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/llama.sh"
+
+  warn() {
+    printf 'WARN:%s\n' "$1" >&2
+  }
+
+  error() {
+    printf 'ERROR:%s\n' "$1" >&2
+  }
+
+  LLAMA_HOMEBREW_FAILURE_SEVERITY='warning'
+  run_llama_capture "$stderr_file" install_llama_cpp_with_homebrew 'usable'
+  unset LLAMA_HOMEBREW_FAILURE_SEVERITY
+
+  log_path="$(sed -n '/Homebrew details were saved to:/{n;p;}' "$stderr_file" | tail -1)"
+
+  assert_equals 'generic brew failure exits unsuccessfully' "$LLAMA_LAST_STATUS" '1'
+  assert_contains 'recoverable Homebrew failure uses warning presentation' "$(cat "$stderr_file")" 'WARN:Homebrew installation failed while installing llama.cpp.'
+  assert_not_contains 'recoverable Homebrew failure does not use fatal presentation' "$(cat "$stderr_file")" 'ERROR:Homebrew installation failed while installing llama.cpp.'
+  assert_contains 'Homebrew failure reports diagnostic log path' "$(cat "$stderr_file")" '/logs/setup/homebrew-install-'
+
+  if [ -f "$log_path" ]; then
+    pass 'Homebrew failure diagnostic log is created'
+  else
+    fail 'Homebrew failure diagnostic log should be created'
+  fi
+
+  if [ -f "$log_path" ] && grep -Fq 'UNIQUE_BREW_DETAIL: generic failure from fixture' "$log_path"; then
+    pass 'Homebrew failure diagnostic log preserves full brew output'
+  else
+    fail 'Homebrew failure diagnostic log should preserve full brew output'
+  fi
+
+  assert_not_contains 'Homebrew failure does not dump full brew output to terminal' "$(cat "$stderr_file")" 'UNIQUE_BREW_DETAIL'
+
+  if [ -f "$log_path" ] && ! grep -Fq "$secret_value" "$log_path"; then
+    pass 'Homebrew failure diagnostic log does not include unrelated environment values'
+  else
+    fail 'Homebrew failure diagnostic log should not include unrelated environment values'
   fi
 }
 
@@ -4828,6 +4974,8 @@ run_test test_llama_automatic_install_uses_discovered_homebrew_outside_path
 run_test test_llama_homebrew_install_reports_actual_failure_reason
 run_test test_llama_homebrew_active_process_fallback_is_explicit
 run_test test_llama_homebrew_install_classifies_shared_install_permissions
+run_test test_llama_homebrew_failure_classification_matrix
+run_test test_llama_homebrew_failure_logs_details_without_terminal_dump
 run_test test_llama_homebrew_state_caches_discovery_results
 run_test test_llama_health_decision_module
 run_test test_llama_recent_error_log_module
