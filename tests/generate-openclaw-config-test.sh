@@ -189,6 +189,13 @@ test_generate_openclaw_config_rejects_invalid_max_tokens() {
 
   assert_equals 'generator rejects zero OPENCLAW_MAX_TOKENS' "$GENERATOR_LAST_STATUS" '1'
   assert_contains 'generator reports non-positive OPENCLAW_MAX_TOKENS' "$GENERATOR_LAST_OUTPUT" 'Invalid OPENCLAW_MAX_TOKENS value in .env: 0'
+
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '8192' 'clawbox' 'sample-model' 'local' \
+    'false' '' '' '8192'
+  run_generator "$fixture_root"
+
+  assert_equals 'generator rejects OPENCLAW_MAX_TOKENS equal to LLAMA_CTX' "$GENERATOR_LAST_STATUS" '1'
+  assert_contains 'generator reports max token and context values' "$GENERATOR_LAST_OUTPUT" 'OPENCLAW_MAX_TOKENS=8192 must be less than LLAMA_CTX=8192'
 }
 
 test_generate_openclaw_config_defaults_invalid_gateway_mode_to_local() {
@@ -212,7 +219,8 @@ test_generate_openclaw_config_enforces_minimum_context_window() {
 
   setup_generator_fixture
   fixture_root="$REPLY"
-  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '8000' 'clawbox' 'sample-model' 'local'
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '8000' 'clawbox' 'sample-model' 'local' \
+    'false' '' '' '4096'
 
   run_generator "$fixture_root"
 

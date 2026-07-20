@@ -59,7 +59,9 @@ target OpenClaw memory search at the embeddings server with
 `remote.baseUrl=EMBEDDINGS_LLAMA_BASE_URL`, and `remote.apiKey=ollama-local`.
 Those targeted updates do not replace `~/.openclaw/openclaw.json`.
 
-New setups default `LLAMA_PORT` to `11434`. Existing `.env` values are kept as-is.
+New setups default `LLAMA_PORT` to `11434` and `LLAMA_CTX` to `32768`.
+Existing `.env` values are kept as-is. `OPENCLAW_MAX_TOKENS` is a separate
+OpenClaw output-token setting and must be lower than `LLAMA_CTX`.
 
 Before ClawBox starts or reconfigures any managed host service, setup checks `http://HOST_IP:LLAMA_PORT/v1/models` and requires the response to parse as valid JSON. After starting a managed service, setup first waits for the TCP port to open and then keeps polling that API until it responds or the 120 second timeout expires.
 

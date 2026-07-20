@@ -265,11 +265,13 @@ PY
 openclaw_config_model_array() {
   local max_tokens="${OPENCLAW_MAX_TOKENS:-8192}"
 
-  python3 - "${OPENCLAW_DEFAULT_MODEL:-local}" "${LLAMA_CTX:-16384}" "$max_tokens" <<'PY'
+  python3 - "${OPENCLAW_DEFAULT_MODEL:-local}" "${LLAMA_CTX:-32768}" "$max_tokens" <<'PY'
 import json, sys
 try:
-    context = max(16384, int(sys.argv[2]))
+    raw_context = int(sys.argv[2])
+    context = max(16384, raw_context)
 except ValueError:
+    raw_context = 16384
     context = 16384
 try:
     max_tokens = int(sys.argv[3])
@@ -277,6 +279,13 @@ try:
         raise ValueError
 except ValueError:
     print(f"Invalid OPENCLAW_MAX_TOKENS value: {sys.argv[3]}", file=sys.stderr)
+    raise SystemExit(1)
+if max_tokens >= raw_context:
+    print(
+        f"Invalid OpenClaw token configuration: OPENCLAW_MAX_TOKENS={max_tokens} "
+        f"must be less than LLAMA_CTX={raw_context}",
+        file=sys.stderr,
+    )
     raise SystemExit(1)
 print(json.dumps([{"id": sys.argv[1], "name": sys.argv[1], "contextWindow": context,
                   "maxTokens": max_tokens,

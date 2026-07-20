@@ -189,3 +189,58 @@ configured_or_default() {
   REPLY="$fallback_value"
   return 0
 }
+
+validate_openclaw_token_context_values() {
+  local context_value="$1"
+  local max_tokens_value="$2"
+  local source_label="${3:-configuration}"
+
+  case "$context_value" in
+    ''|*[!0-9]*)
+      error "Invalid LLAMA_CTX value in $source_label: $context_value"
+      error 'Set LLAMA_CTX to a positive integer greater than OPENCLAW_MAX_TOKENS.'
+      return 1
+      ;;
+  esac
+
+  case "$max_tokens_value" in
+    ''|*[!0-9]*)
+      error "Invalid OPENCLAW_MAX_TOKENS value in $source_label: $max_tokens_value"
+      error 'Set OPENCLAW_MAX_TOKENS to a positive integer less than LLAMA_CTX.'
+      return 1
+      ;;
+  esac
+
+  if [ "$context_value" -lt 1 ]; then
+    error "Invalid LLAMA_CTX value in $source_label: $context_value"
+    error 'Set LLAMA_CTX to a positive integer greater than OPENCLAW_MAX_TOKENS.'
+    return 1
+  fi
+
+  if [ "$max_tokens_value" -lt 1 ]; then
+    error "Invalid OPENCLAW_MAX_TOKENS value in $source_label: $max_tokens_value"
+    error 'Set OPENCLAW_MAX_TOKENS to a positive integer less than LLAMA_CTX.'
+    return 1
+  fi
+
+  if [ "$max_tokens_value" -ge "$context_value" ]; then
+    error "Invalid OpenClaw token configuration in $source_label: OPENCLAW_MAX_TOKENS=$max_tokens_value must be less than LLAMA_CTX=$context_value."
+    error 'Increase LLAMA_CTX or lower OPENCLAW_MAX_TOKENS, then rerun ./clawbox setup.'
+    return 1
+  fi
+
+  return 0
+}
+
+prompt_llama_context_for_openclaw() {
+  local current_value="$1"
+  local fallback_value="$2"
+  local max_tokens_value="${3:-8192}"
+
+  while true; do
+    prompt_resolved_value 'Context size for llama-server' 'LLAMA_CTX' "$current_value" "$fallback_value" || return $?
+    if validate_openclaw_token_context_values "$REPLY" "$max_tokens_value" 'setup input'; then
+      return 0
+    fi
+  done
+}
