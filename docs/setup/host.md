@@ -46,11 +46,13 @@ keys, but they do not replace `~/.openclaw/openclaw.json`.
 - detects whether OpenClaw is installed and running on the VM
 - installs an initial minimal OpenClaw config only when the VM has no `~/.openclaw/openclaw.json`
 - preserves an existing VM `~/.openclaw/openclaw.json` and updates only ClawBox-managed keys with `openclaw config set`
+- persists managed gateway authentication without printing the token
 - exposes `./clawbox openclaw reset` as the explicit, default-no full config replacement path
 - copies `vm-provision.sh` to the VM runtime path when missing
 - if OpenClaw is not installed yet, presents VM-local provisioning guidance and
   prompts for confirmation when provisioning has completed inside the VM
 - optionally starts OpenClaw as a VM user launchd service when `OPENCLAW_AUTOSTART=true`
+- after managed gateway verification, can optionally open the OpenClaw Web UI through a host-loopback SSH tunnel
 
 It does not install OpenClaw inside the VM or run `vm-provision.sh` remotely.
 Provisioning activity remains manual, VM-local, visible to the user, and
@@ -150,6 +152,11 @@ A successful run of `./clawbox setup` should:
 - report whether OpenClaw is missing, stopped, or already running
 
 When `OPENCLAW_AUTOSTART=true`, setup writes or refreshes a per-user OpenClaw launchd plist in the VM, starts it with `launchctl`, and waits for that service to become active before continuing.
+
+If you accept the Web UI prompt, ClawBox opens a local browser URL backed by an
+SSH tunnel from host loopback to the VM gateway. The gateway is not exposed on a
+non-loopback host interface. Declining the prompt leaves setup successful and
+creates no tunnel.
 
 If OpenClaw is not yet installed, setup guides the user through manual
 provisioning inside the VM. After confirmation, setup refreshes runtime state and

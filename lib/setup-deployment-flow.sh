@@ -106,5 +106,7 @@ run_provisioning_and_deployment() {
 
   offer_openclaw_restart_after_llama_update || return $?
 
+  offer_openclaw_webui || return $?
+
   print_setup_completion_summary
 }

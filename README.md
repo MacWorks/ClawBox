@@ -129,6 +129,10 @@ What to expect:
   continues into launchd/runtime service setup; optional OpenClaw
   personalization is shown only as a follow-up command after managed setup
   succeeds
+- if the VM does not become SSH-ready after UTM is opened, setup offers a
+  bounded retry/check-again menu instead of forcing you to restart setup
+- managed setup persists OpenClaw gateway authentication without printing the
+  token, and can optionally open the Web UI through a host-loopback SSH tunnel
 - after an actual managed `llama-server` restart/update, setup may offer a
   default-no VM OpenClaw gateway restart only when the running, ClawBox-managed
   gateway cannot complete a VM-to-host inference probe; this does not rewrite

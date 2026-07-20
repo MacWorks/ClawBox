@@ -56,6 +56,7 @@ OPENCLAW_GATEWAY_MODE_VALUE="${OPENCLAW_GATEWAY_MODE:-local}"
 LLAMA_CONTEXT_WINDOW_VALUE="$LLAMA_CTX"
 LLAMA_CONTEXT_WINDOW_RAW_VALUE="$LLAMA_CTX"
 OPENCLAW_MAX_TOKENS_VALUE="${OPENCLAW_MAX_TOKENS:-8192}"
+OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE="${OPENCLAW_GATEWAY_AUTH_TOKEN:-}"
 
 case "$OPENCLAW_GATEWAY_MODE_VALUE" in
   local|remote)
@@ -103,7 +104,15 @@ fi
 
 mkdir -p "$RUNTIME_DIR"
 
-export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE OPENCLAW_MAX_TOKENS_VALUE
+if [ -z "$OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE" ]; then
+  OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE="$(python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(32))
+PY
+)"
+fi
+
+export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE OPENCLAW_MAX_TOKENS_VALUE OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE
 
 python3 - "$CONFIG_PATH" <<'PY'
 import json
@@ -113,7 +122,10 @@ import sys
 provider = os.environ["OPENCLAW_PROVIDER_NAME"]
 model = os.environ["OPENCLAW_DEFAULT_MODEL"]
 config = {
-    "gateway": {"mode": os.environ["OPENCLAW_GATEWAY_MODE_VALUE"]},
+    "gateway": {
+        "mode": os.environ["OPENCLAW_GATEWAY_MODE_VALUE"],
+        "auth": {"token": os.environ["OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE"]},
+    },
     "agents": {"defaults": {"model": {"primary": f"{provider}/{model}"}}},
     "tools": {"deny": ["cron"]},
     "models": {"providers": {provider: {

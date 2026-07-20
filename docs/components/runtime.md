@@ -37,8 +37,8 @@ That comparison deliberately ignores:
 Those exclusions matter because OpenClaw mutates runtime-managed fields after startup. Without normalization, the same effective config would look different on every run.
 
 Normal setup never replaces an existing VM config. It reads and updates only
-ClawBox-managed provider, primary-model, local tool-deny, and optional
-embeddings memory-search keys through `openclaw config get` and
+ClawBox-managed provider, primary-model, local tool-deny, gateway-auth, and
+optional embeddings memory-search keys through `openclaw config get` and
 `openclaw config set`. All other OpenClaw settings remain user/OpenClaw-owned.
 
 The managed primary keys are:
@@ -48,6 +48,7 @@ The managed primary keys are:
 - `models.providers.<provider>.baseUrl`
 - `models.providers.<provider>.api`
 - `models.providers.<provider>.models`
+- `gateway.auth.token` when no persistent gateway token exists
 
 The generated `clawbox/local` model entry sets `maxTokens` from
 `OPENCLAW_MAX_TOKENS`, which defaults to `8192`. This is the output-token
@@ -59,6 +60,11 @@ OpenClaw `contextWindow`. New setups default `LLAMA_CTX` to `32768`, and
 responses avoid ending with `stopReason=length`, but it does not by itself
 recover interrupted or non-replay-safe tool turns such as an incomplete
 `stopReason=toolUse` turn.
+
+Managed setup also ensures the gateway has a persistent auth token. If an
+existing token is present, ClawBox preserves it. If the token is missing,
+ClawBox generates one and stores it in the VM OpenClaw config with restrictive
+permissions. Setup, status, tests, and release notes must not print the token.
 
 The generated `clawbox/local` model entry includes OpenClaw compatibility
 metadata for the local llama.cpp backend. ClawBox sets
@@ -132,6 +138,14 @@ When targeted settings are unchanged:
 - OpenClaw may still be started when it is installed, stopped, and `OPENCLAW_AUTOSTART=true`
 
 When `OPENCLAW_AUTOSTART=true`, setup installs or refreshes a per-user launchd plist for OpenClaw in the VM, checks whether the `gui/$uid` launchd service is already loaded, safely boots out stale loaded state when needed, bootstraps the service once, and waits for both `launchctl print` and a live `openclaw gateway` PID before reporting success.
+
+After a managed gateway is verified, interactive setup can optionally open the
+OpenClaw Web UI from the host. ClawBox creates an SSH local-forward bound only
+to host loopback, from `127.0.0.1:<host-port>` to VM
+`127.0.0.1:18789`. The default host tunnel port is `18790`; if it is occupied,
+setup chooses the next available loopback port. Tunnel state is stored under
+`.clawbox/openclaw-webui-tunnel.env` so ClawBox can reuse or replace only its
+own tunnel process. To close the tunnel manually, stop the recorded PID.
 
 That plist is generated on the host and uploaded to the VM before `launchctl` runs. Runtime management does not rely on nested heredocs or multiline shell generation embedded directly inside quoted SSH commands.
 

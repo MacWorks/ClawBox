@@ -95,6 +95,13 @@ test_generate_openclaw_config_writes_expected_config() {
   json_query "$fixture_root" 'gateway.mode'
   assert_equals 'generator writes the configured gateway mode' "$REPLY" 'remote'
 
+  json_query "$fixture_root" 'gateway.auth.token'
+  if [ -n "$REPLY" ] && [ "$REPLY" != 'null' ]; then
+    pass 'generator writes persistent gateway authentication token'
+  else
+    fail 'generator should write persistent gateway authentication token'
+  fi
+
   json_query "$fixture_root" 'agents.defaults.model.primary'
   assert_equals 'generator writes the provider-qualified primary model' "$REPLY" 'clawbox/sample-model'
 

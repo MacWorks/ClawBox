@@ -827,6 +827,7 @@ test_deploy_module() {
   local mkdir_marker="$TEMP_DIR/deploy-mkdir-called"
   local last_ssh_run_quiet=''
   local last_ssh_exec=''
+  local ssh_exec_log=''
   local last_scp_target=''
   local remote_exists=true
   local managed_primary='clawbox/local'
@@ -851,6 +852,7 @@ test_deploy_module() {
 
   ssh_exec() {
     last_ssh_exec="$1"
+    ssh_exec_log="${ssh_exec_log}$1"$'\n'
 
     case "$1" in
       test\ -f\ *)
@@ -1143,6 +1145,56 @@ PY
     pass "OpenClaw memorySearch API key comparison detects missing key"
   fi
 
+  if openclaw_config_gateway_auth_token_is_configured '__OPENCLAW_REDACTED__' &&
+     ! openclaw_config_gateway_auth_token_is_configured ''; then
+    pass "OpenClaw gateway auth token detection preserves redacted existing token"
+  else
+    fail "OpenClaw gateway auth token detection should preserve redacted existing token"
+  fi
+
+  gateway_token='__OPENCLAW_REDACTED__'
+  set_log=''
+  last_ssh_exec=''
+  openclaw_config_remote_get() {
+    case "$1" in
+      gateway.auth.token) printf '%s\n' "$gateway_token" ;;
+      *) return 1 ;;
+    esac
+  }
+  openclaw_config_remote_set() {
+    set_log="${set_log}$1=$2\n"
+    gateway_token="$2"
+  }
+  ensure_openclaw_gateway_auth_config
+  if [ -z "$set_log" ] && [[ "$last_ssh_exec" == *'chmod 600 ~/.openclaw/openclaw.json'* ]]; then
+    pass "OpenClaw gateway auth sync preserves existing token and tightens permissions"
+  else
+    fail "OpenClaw gateway auth sync should preserve existing token and tighten permissions"
+  fi
+
+  gateway_token=''
+  set_log=''
+  openclaw_generate_gateway_auth_token() { printf '%s\n' 'sentinel-token-for-test'; }
+  ensure_openclaw_gateway_auth_config
+  if [[ "$set_log" == *'gateway.auth.token=sentinel-token-for-test'* ]]; then
+    pass "OpenClaw gateway auth sync creates a missing persistent token"
+  else
+    fail "OpenClaw gateway auth sync should create a missing persistent token"
+  fi
+
+  openclaw_config_remote_set() {
+    local key="$1" value="$2"
+    case "$key" in
+      models.providers.*.models)
+        ssh_exec "openclaw config set --merge $key $value"
+        ;;
+      *)
+        ssh_exec "openclaw config set $key $value"
+        ;;
+    esac
+  }
+  set_log=''
+
   last_ssh_exec=''
   openclaw_config_remote_set 'tools.deny' "$cron_deny"
   if [[ "$last_ssh_exec" != *'--merge'* ]] \
@@ -1172,6 +1224,7 @@ PY
       agents.defaults.model.primary) printf '%s\n' "$managed_primary" ;;
       tools.deny) printf '%s\n' "$managed_tools_deny" ;;
       models.providers.clawbox.baseUrl) printf '%s\n' "$managed_base_url" ;;
+      gateway.auth.token) printf '%s\n' '__OPENCLAW_REDACTED__' ;;
       *) return 1 ;;
     esac
   }
@@ -1192,7 +1245,7 @@ PY
     fail "deploy logic should skip config mutation when managed settings match"
   fi
 
-  if [ "$last_ssh_run_quiet" = 'mkdir -p ~/.openclaw' ] && [ "$last_ssh_exec" = 'test -f ~/.openclaw/openclaw.json' ]; then
+  if [ "$last_ssh_run_quiet" = 'mkdir -p ~/.openclaw' ] && [[ "$ssh_exec_log" == *'test -f ~/.openclaw/openclaw.json'* ]]; then
     pass "deploy logic keeps remote config paths VM-resolved"
   else
     fail "deploy logic should use VM-resolved remote config paths"
@@ -1215,6 +1268,7 @@ PY
       models.providers.clawbox.models) printf '%s\n' "$extra_models" ;;
       tools.deny) printf '%s\n' '["shell","cron"]' ;;
       agents.defaults.memorySearch.remote.apiKey) printf '%s\n' '__OPENCLAW_REDACTED__' ;;
+      gateway.auth.token) printf '%s\n' '__OPENCLAW_REDACTED__' ;;
       *) return 1 ;;
     esac
   }
@@ -1237,6 +1291,7 @@ PY
       agents.defaults.model.primary) printf '%s\n' "$managed_primary" ;;
       tools.deny) printf '%s\n' '["cron"]' ;;
       models.providers.clawbox.baseUrl) printf '%s\n' "$managed_base_url" ;;
+      gateway.auth.token) printf '%s\n' '__OPENCLAW_REDACTED__' ;;
       *) return 1 ;;
     esac
   }
@@ -1399,6 +1454,142 @@ test_prompt_module() {
   fi
 
   eval "$saved_error"
+}
+
+test_openclaw_webui_module() {
+  local output=''
+  local ssh_log="$TEMP_DIR/openclaw-webui-ssh.log"
+  local open_log="$TEMP_DIR/openclaw-webui-open.log"
+  local kill_log="$TEMP_DIR/openclaw-webui-kill.log"
+  local state_root="$TEMP_DIR/openclaw-webui-state"
+  local port_mode='free'
+  local prompt_answer='true'
+  local token_value='secret-token-for-test'
+
+  BASE_DIR="$state_root"
+  VM_HOST='tester@192.168.64.8'
+  OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by VM launchd'
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/openclaw-webui.sh"
+
+  is_yes() {
+    case "$1" in
+      true|y|Y|yes|YES) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
+  prompt_yes_no() {
+    REPLY="$prompt_answer"
+  }
+
+  openclaw_webui_can_prompt() {
+    return 0
+  }
+
+  vm_openclaw_gateway_port() {
+    printf '%s\n' '18789'
+  }
+
+  lsof() {
+    case "$port_mode:$*" in
+      occupied-default:*18790*)
+        return 0
+        ;;
+    esac
+    return 1
+  }
+
+  ssh() {
+    printf '%s\n' "$*" >> "$ssh_log"
+    return 0
+  }
+
+  pgrep() {
+    printf '%s\n' '4242'
+  }
+
+  ps() {
+    if [[ "$*" == *'4242'* ]]; then
+      printf '%s\n' 'ssh -f -N -L 127.0.0.1:18790:127.0.0.1:18789 tester@192.168.64.8'
+      return 0
+    fi
+    if [[ "$*" == *'4243'* ]]; then
+      printf '%s\n' 'ssh -f -N -L 127.0.0.1:18791:127.0.0.1:18789 tester@192.168.64.8'
+      return 0
+    fi
+    return 1
+  }
+
+  open() {
+    printf '%s\n' "$*" >> "$open_log"
+    return "${OPEN_SHOULD_FAIL:-0}"
+  }
+
+  kill() {
+    printf '%s\n' "$*" >> "$kill_log"
+  }
+
+  openclaw_config_remote_get() {
+    [ "$1" = 'gateway.auth.token' ] || return 1
+    printf '%s\n' "$token_value"
+  }
+
+  prompt_answer='false'
+  output="$({ offer_openclaw_webui; } 2>&1)"
+  if [ ! -f "$ssh_log" ] && [ -z "$output" ]; then
+    pass "OpenClaw Web UI declined path leaves no tunnel"
+  else
+    fail "OpenClaw Web UI declined path should leave no tunnel"
+  fi
+
+  prompt_answer='true'
+  output="$({ offer_openclaw_webui; } 2>&1)"
+  if grep -Fq '127.0.0.1:18790:127.0.0.1:18789' "$ssh_log" \
+    && grep -Fq 'OpenClaw Web UI opened in your browser.' <<<"$output"; then
+    pass "OpenClaw Web UI accepted path opens a loopback tunnel"
+  else
+    fail "OpenClaw Web UI accepted path should open a loopback tunnel"
+  fi
+  if ! grep -Fq "$token_value" <<<"$output"; then
+    pass "OpenClaw Web UI does not print the gateway token"
+  else
+    fail "OpenClaw Web UI should not print the gateway token"
+  fi
+
+  : > "$ssh_log"
+  port_mode='occupied-default'
+  rm -f "$(openclaw_webui_state_file)"
+  pgrep() { printf '%s\n' '4243'; }
+  ps() {
+    printf '%s\n' 'ssh -f -N -L 127.0.0.1:18791:127.0.0.1:18789 tester@192.168.64.8'
+  }
+  openclaw_webui_ensure_tunnel
+  if [ "$REPLY" = '18791' ] && grep -Fq '127.0.0.1:18791:127.0.0.1:18789' "$ssh_log"; then
+    pass "OpenClaw Web UI selects an alternate loopback port when default is occupied"
+  else
+    fail "OpenClaw Web UI should select an alternate loopback port when default is occupied"
+  fi
+
+  : > "$ssh_log"
+  openclaw_webui_ensure_tunnel
+  if [ "$REPLY" = '18791' ] && [ ! -s "$ssh_log" ]; then
+    pass "OpenClaw Web UI reuses a healthy ClawBox-owned tunnel"
+  else
+    fail "OpenClaw Web UI should reuse a healthy ClawBox-owned tunnel"
+  fi
+
+  OPEN_SHOULD_FAIL=1
+  output="$({ offer_openclaw_webui; } 2>&1)"
+  unset OPEN_SHOULD_FAIL
+  if grep -Fq 'browser did not open automatically' <<<"$output" \
+    && grep -Fq 'Open this local URL in your browser: http://127.0.0.1:' <<<"$output" \
+    && ! grep -Fq "$token_value" <<<"$output"; then
+    pass "OpenClaw Web UI browser failure prints a token-safe manual URL"
+  else
+    fail "OpenClaw Web UI browser failure should print a token-safe manual URL"
+  fi
 }
 
 test_launchagent_module() {
@@ -4614,6 +4805,7 @@ run_test test_ssh_module
 run_test test_runtime_module
 run_test test_runtime_handle_module
 run_test test_deploy_module
+run_test test_openclaw_webui_module
 run_test test_prompt_module
 run_test test_launchagent_module
 run_test test_launchagent_wrapper_logs_tcc_denial
