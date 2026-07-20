@@ -481,11 +481,14 @@ $1"
       *'command -v openclaw'*)
         [ "$MODULE_OPENCLAW_INSTALLED" = true ]
         ;;
+      *'ai.openclaw.gateway'*'gateway_service_output='*)
+        [ "${MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING:-false}" = true ] && [ "$MODULE_OPENCLAW_PROCESS_RUNNING" = true ]
+        ;;
       *'ai.openclaw.gateway'*)
         [ "${MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING:-false}" = true ]
         ;;
       *'gateway_service_output='*)
-        [ "$MODULE_OPENCLAW_SERVICE_RUNNING" = true ]
+        [ "$MODULE_OPENCLAW_SERVICE_RUNNING" = true ] && [ "$MODULE_OPENCLAW_PROCESS_RUNNING" = true ]
         ;;
       *'ps -axo pid=,comm=,args='*)
         [ "$MODULE_OPENCLAW_PROCESS_RUNNING" = true ]
@@ -637,7 +640,7 @@ $1"
   fi
 
   MODULE_OPENCLAW_INSTALLED=true
-  MODULE_OPENCLAW_PROCESS_RUNNING=false
+  MODULE_OPENCLAW_PROCESS_RUNNING=true
   MODULE_OPENCLAW_SERVICE_PRESENT=true
   MODULE_OPENCLAW_SERVICE_RUNNING=false
   MODULE_OPENCLAW_NATIVE_SERVICE_RUNNING=true
@@ -653,12 +656,10 @@ $1"
     fail "runtime detection should recognize a running native OpenClaw LaunchAgent"
   fi
 
-  if [[ "$OPENCLAW_RUNTIME_CHECK_LOG" != *'pgrep -f openclaw'* ]] \
-    && [[ "$OPENCLAW_RUNTIME_CHECK_LOG" != *'test -f'* ]] \
-    && [[ "$OPENCLAW_RUNTIME_CHECK_LOG" != *'lsof'* ]]; then
-    pass "runtime detection avoids ambiguous stale-artifact checks"
+  if [[ "$OPENCLAW_RUNTIME_CHECK_LOG" != *'pgrep -f openclaw'* ]]; then
+    pass "runtime detection avoids ambiguous pgrep stale-artifact checks"
   else
-    fail "runtime detection should avoid ambiguous stale-artifact checks"
+    fail "runtime detection should avoid ambiguous pgrep stale-artifact checks"
   fi
 }
 
@@ -965,6 +966,16 @@ PY
     pass "OpenClaw provider model generation rejects invalid maxTokens clearly"
   else
     fail "OpenClaw provider model generation should explain invalid maxTokens"
+  fi
+  unset OPENCLAW_MAX_TOKENS
+
+  OPENCLAW_MAX_TOKENS=32768
+  if openclaw_config_model_array >/dev/null 2>"$TEMP_DIR/openclaw-max-tokens-context.err"; then
+    fail "OpenClaw provider model generation should reject maxTokens equal to LLAMA_CTX"
+  elif grep -Fq 'OPENCLAW_MAX_TOKENS=32768 must be less than LLAMA_CTX=32768' "$TEMP_DIR/openclaw-max-tokens-context.err"; then
+    pass "OpenClaw provider model generation rejects maxTokens equal to LLAMA_CTX"
+  else
+    fail "OpenClaw provider model generation should explain maxTokens/context conflict"
   fi
   unset OPENCLAW_MAX_TOKENS
 
