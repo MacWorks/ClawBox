@@ -36,6 +36,7 @@ resolve_ps_bin() {
 }
 
 VM_RUNNING_STATE_CONFIDENCE='unknown'
+VM_GENERIC_VIRTUALIZATION_RUNNING=false
 
 normalize_vm_machine_name() {
   local vm_name="$1"
@@ -90,6 +91,16 @@ EOF
   return 1
 }
 
+setup_selected_vm_is_running() {
+  VM_RUNNING_STATE_CONFIDENCE='unknown'
+
+  if setup_vm_is_running_via_utmctl; then
+    return 0
+  fi
+
+  return 1
+}
+
 setup_vm_is_running_via_virtualization_processes() {
   local ps_bin=''
   local line
@@ -110,16 +121,19 @@ EOF
 }
 
 setup_vm_is_running() {
-  VM_RUNNING_STATE_CONFIDENCE='unknown'
+  setup_selected_vm_is_running
+}
 
-  if setup_vm_is_running_via_utmctl; then
-    return 0
-  fi
+refresh_generic_virtualization_context() {
+  VM_GENERIC_VIRTUALIZATION_RUNNING=false
 
   if setup_vm_is_running_via_virtualization_processes; then
+    VM_GENERIC_VIRTUALIZATION_RUNNING=true
+    VM_RUNNING_STATE_CONFIDENCE='unknown'
     return 0
   fi
 
+  VM_RUNNING_STATE_CONFIDENCE='unknown'
   return 1
 }
 
@@ -130,7 +144,9 @@ detect_vm_state() {
     return 0
   fi
 
-  if setup_vm_is_running; then
+  refresh_generic_virtualization_context >/dev/null 2>&1 || true
+
+  if setup_selected_vm_is_running; then
     if [ "${VM_RECENTLY_STARTED:-false}" = true ]; then
       REPLY='booting'
     else

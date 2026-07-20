@@ -82,6 +82,10 @@ vm_ip_should_be_excluded() {
     return 0
   fi
 
+  if [ -n "${HOST_IP:-}" ] && [ "$ip_value" = "$HOST_IP" ]; then
+    return 0
+  fi
+
   return 1
 }
 

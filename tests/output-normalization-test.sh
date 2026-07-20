@@ -1741,7 +1741,7 @@ test_vm_connectivity_repair_flow() {
     ssh_check() {
       return 1
     }
-    setup_vm_is_running() {
+    setup_selected_vm_is_running() {
       return 1
     }
 
@@ -1779,7 +1779,7 @@ test_vm_running_without_ssh_flow() {
       return 0
     }
 
-    setup_vm_is_running() {
+    setup_selected_vm_is_running() {
       VM_RUNNING_STATE_CONFIDENCE='exact'
       return 0
     }
@@ -2257,7 +2257,7 @@ test_vm_startup_progress_flow() {
       return 0
     }
 
-    setup_vm_is_running() {
+    setup_selected_vm_is_running() {
       runtime_checks=$((runtime_checks + 1))
       return 0
     }
@@ -2341,7 +2341,7 @@ test_vm_startup_network_recovery_flow() {
       return 0
     }
 
-    setup_vm_is_running() {
+    setup_selected_vm_is_running() {
       runtime_checks=$((runtime_checks + 1))
       return 0
     }
@@ -2385,10 +2385,11 @@ test_vm_startup_network_recovery_flow() {
   normalized_output="$(printf '%s' "$output" | perl -0pe 's/\\033\[[0-9;?]*[A-Za-z]//g; s/\e\[[0-9;?]*[A-Za-z]//g; s/\r[^\n]*//g')"
 
   assert_not_contains 'startup recovery flow does not duplicate the bounded network timeout line' "$normalized_output" $'VM network was not detected within the expected time window.\nVM network was not detected within the expected time window.'
-  assert_contains 'startup recovery flow offers retry waiting' "$normalized_output" '1) Retry waiting for the VM'
-  assert_contains 'startup recovery flow offers manual check again' "$normalized_output" '2) I have started the VM; check again'
-  assert_contains 'startup recovery flow offers manual ssh instructions' "$normalized_output" '3) Show manual SSH setup instructions'
-  assert_contains 'startup recovery flow offers exit setup' "$normalized_output" '4) Exit setup'
+  assert_contains 'startup recovery flow offers retry waiting' "$normalized_output" '1) Try starting the selected VM again'
+  assert_contains 'startup recovery flow offers manual check again' "$normalized_output" '2) I started the VM manually; check again'
+  assert_contains 'startup recovery flow offers rediscovery' "$normalized_output" '3) Discover VM addresses again'
+  assert_contains 'startup recovery flow offers manual ssh instructions' "$normalized_output" '5) Show manual SSH guidance'
+  assert_contains 'startup recovery flow offers exit setup' "$normalized_output" '6) Exit setup'
 }
 
 test_vm_ip_discovery_recovery_flow() {
@@ -2438,7 +2439,7 @@ test_detect_vm_state() {
     return 0
   }
 
-  setup_vm_is_running() {
+  setup_selected_vm_is_running() {
     return 1
   }
 
@@ -2455,7 +2456,7 @@ test_detect_vm_state() {
     return 1
   }
 
-  setup_vm_is_running() {
+  setup_selected_vm_is_running() {
     return 1
   }
 
@@ -2468,7 +2469,7 @@ test_detect_vm_state() {
     fail 'vm state should detect stopped when vm is not running'
   fi
 
-  setup_vm_is_running() {
+  setup_selected_vm_is_running() {
     return 0
   }
 

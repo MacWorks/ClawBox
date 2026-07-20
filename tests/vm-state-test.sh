@@ -552,7 +552,7 @@ test_tcc_blocked_startup_can_continue_into_existing_readiness_flow() {
 
   load_setup_functions
   install_prompt_stubs
-  queue_prompt_answers 'y' 'y'
+  queue_prompt_answers 'y' '2'
   printf '0\n' > "$manual_wait_file"
 
   detect_vm_state() {
@@ -575,6 +575,10 @@ test_tcc_blocked_startup_can_continue_into_existing_readiness_flow() {
     UTM_AUTOMATION_BLOCKED=true
     UTM_PACKAGE_OPENED=true
     return 1
+  }
+
+  vm_startup_readiness_can_prompt() {
+    return 0
   }
 
   wait_for_manual_vm_running() {
@@ -597,10 +601,10 @@ test_tcc_blocked_startup_can_continue_into_existing_readiness_flow() {
   ensure_vm_connectivity_or_repair > "$output_file" 2>&1 || status=$?
 
   assert_equals 'manual UTM startup confirmation can continue successfully' "$status" '0'
-  assert_contains 'manual UTM startup explains the blocked automation state' "$(cat "$output_file")" 'macOS is blocking automated control of UTM.'
-  assert_contains 'manual UTM startup explains that opening the package cannot start the VM' "$(cat "$output_file")" 'Opening the package can select the VM, but it cannot start the VM.'
-  assert_contains 'manual UTM startup instructs the user to click Run or Play' "$(cat "$output_file")" 'Click the Run/Play button in UTM.'
-  assert_contains 'manual UTM startup asks before resuming readiness checks' "$(cat "$output_file")" 'Once the VM is starting or running, continue? [Y/n]:'
+  assert_contains 'manual UTM startup recovery identifies the selected vm' "$(cat "$output_file")" 'The selected VM "macOS" is not confirmed running.'
+  assert_contains 'manual UTM startup recovery offers manual check' "$(cat "$output_file")" '2) I started the VM manually; check again'
+  assert_contains 'manual UTM startup recovery offers rediscovery' "$(cat "$output_file")" '3) Discover VM addresses again'
+  assert_contains 'manual UTM startup recovery offers manual address entry' "$(cat "$output_file")" '4) Enter the VM address manually'
   assert_equals 'manual UTM startup performs one bounded runtime verification' "$(cat "$manual_wait_file")" '1'
   assert_not_contains 'manual UTM startup does not emit a generic startup failure' "$(cat "$output_file")" 'Failed to start VM.'
 }
@@ -616,7 +620,7 @@ test_manual_utm_start_reprompts_when_runtime_is_not_detected() {
 
   load_setup_functions
   install_prompt_stubs
-  queue_prompt_answers 'y' 'y' '1'
+  queue_prompt_answers 'y' '2' '2'
   printf '0\n' > "$manual_wait_file"
   printf '0\n' > "$network_wait_file"
 
@@ -642,6 +646,10 @@ test_manual_utm_start_reprompts_when_runtime_is_not_detected() {
     return 1
   }
 
+  vm_startup_readiness_can_prompt() {
+    return 0
+  }
+
   wait_for_manual_vm_running() {
     local count
     count="$(cat "$manual_wait_file")"
@@ -661,10 +669,10 @@ test_manual_utm_start_reprompts_when_runtime_is_not_detected() {
   ensure_vm_connectivity_or_repair > "$output_file" 2>&1 || status=$?
 
   assert_equals 'manual startup retry succeeds after runtime appears on the second check' "$status" '0'
-  assert_contains 'manual startup reports that the runtime was not detected' "$(cat "$output_file")" 'The VM is still not running.'
-  assert_contains 'manual startup offers another runtime check' "$(cat "$output_file")" '1) I clicked Run/Play; check again'
-  assert_contains 'manual startup offers to reopen UTM' "$(cat "$output_file")" '2) Open UTM again'
-  assert_contains 'manual startup offers an explicit abort' "$(cat "$output_file")" '3) Abort setup'
+  assert_contains 'manual startup reports that the runtime was not detected' "$(cat "$output_file")" 'The selected VM is still not confirmed running.'
+  assert_contains 'manual startup offers automatic retry' "$(cat "$output_file")" '1) Try starting the selected VM again'
+  assert_contains 'manual startup offers another runtime check' "$(cat "$output_file")" '2) I started the VM manually; check again'
+  assert_contains 'manual startup offers an explicit exit' "$(cat "$output_file")" '6) Exit setup'
   assert_equals 'manual startup performs the requested bounded recheck' "$(cat "$manual_wait_file")" '2'
   assert_equals 'network and ssh readiness starts only after runtime detection' "$(cat "$network_wait_file")" '1'
 }
@@ -677,7 +685,7 @@ test_manual_utm_start_abort_never_enters_network_readiness() {
 
   load_setup_functions
   install_prompt_stubs
-  queue_prompt_answers 'y' 'y' '3'
+  queue_prompt_answers 'y' '2' '6'
   printf '0\n' > "$network_wait_file"
 
   detect_vm_state() {
@@ -696,6 +704,10 @@ test_manual_utm_start_abort_never_enters_network_readiness() {
     return 1
   }
 
+  vm_startup_readiness_can_prompt() {
+    return 0
+  }
+
   wait_for_manual_vm_running() {
     return 1
   }
@@ -707,7 +719,7 @@ test_manual_utm_start_abort_never_enters_network_readiness() {
 
   ensure_vm_connectivity_or_repair > "$output_file" 2>&1 || true
 
-  assert_contains 'manual startup abort reports that runtime was not detected' "$(cat "$output_file")" 'The VM is still not running.'
+  assert_contains 'manual startup abort reports that runtime was not detected' "$(cat "$output_file")" 'The selected VM is still not confirmed running.'
   assert_equals 'manual startup abort does not enter network or ssh readiness' "$(cat "$network_wait_file")" '0'
 }
 
@@ -738,12 +750,13 @@ test_non_tcc_startup_failure_does_not_offer_manual_continuation() {
 
   ensure_vm_connectivity_or_repair > "$output_file" 2>&1 || true
 
-  assert_contains 'generic automated startup failure still fails clearly' "$(cat "$output_file")" 'Failed to start VM.'
+  assert_contains 'generic automated startup failure still fails clearly' "$(cat "$output_file")" 'VM did not become SSH-ready before the timeout.'
+  assert_contains 'generic automated startup failure reports startup methods' "$(cat "$output_file")" 'Startup methods attempted:'
   assert_not_contains 'generic automated startup failure does not claim TCC blocking' "$(cat "$output_file")" 'macOS is blocking automated control of UTM.'
   assert_not_contains 'generic automated startup failure does not offer manual TCC continuation' "$(cat "$output_file")" 'Once the VM is starting or running, continue?'
 }
 
-test_detect_vm_state_uses_cross_user_virtualization_fallback() {
+test_detect_vm_state_keeps_generic_virtualization_advisory_only() {
   prepare_vm_state_mocks
 
   load_setup_functions
@@ -755,8 +768,9 @@ test_detect_vm_state_uses_cross_user_virtualization_fallback() {
 
   VM_RECENTLY_STARTED=false
   detect_vm_state
-  assert_equals 'detect_vm_state reports running-no-ssh for a VM already running under another macOS user' "$REPLY" 'running-no-ssh'
-  assert_equals 'detect_vm_state marks cross-user virtualization fallback as generic' "$VM_RUNNING_STATE_CONFIDENCE" 'generic'
+  assert_equals 'detect_vm_state reports stopped when only a generic virtualization process exists' "$REPLY" 'stopped'
+  assert_equals 'detect_vm_state does not mark generic virtualization as selected-vm confidence' "$VM_RUNNING_STATE_CONFIDENCE" 'unknown'
+  assert_equals 'detect_vm_state records generic virtualization as advisory context' "$VM_GENERIC_VIRTUALIZATION_RUNNING" 'true'
 }
 
 test_detect_vm_state_distinguishes_running_from_stopped() {
@@ -771,11 +785,11 @@ test_detect_vm_state_distinguishes_running_from_stopped() {
 
   VM_RECENTLY_STARTED=false
   detect_vm_state
-  assert_equals 'detect_vm_state reports running-no-ssh when VM is running without SSH' "$REPLY" 'running-no-ssh'
+  assert_equals 'detect_vm_state reports stopped when only generic virtualization exists' "$REPLY" 'stopped'
 
   : > "$CLAWBOX_TEST_PROCESS_LIST_FILE"
   detect_vm_state
-  assert_equals 'detect_vm_state reports stopped only when VM is not running' "$REPLY" 'stopped'
+  assert_equals 'detect_vm_state reports stopped when no selected-vm runtime is detected' "$REPLY" 'stopped'
 }
 
 test_detect_vm_state_does_not_treat_open_utm_app_as_running() {
@@ -809,10 +823,10 @@ test_ensure_vm_connectivity_reports_running_without_ssh() {
 
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
-  assert_contains 'connectivity repair warns that the configured VM could not be confirmed from generic virtualization evidence' "$output" 'A virtualization process is running on this Mac, but ClawBox could not confirm that it matches the configured VM.'
-  assert_contains 'connectivity repair still offers SSH bootstrap flow' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
-  assert_not_contains 'connectivity repair does not claim the VM is stopped when it is running' "$output" 'VM is not running.'
-  assert_not_contains 'connectivity repair does not attempt a second startup when another user already has the VM running' "$output" 'Start the VM now?'
+  assert_contains 'connectivity repair warns that the configured VM could not be confirmed from generic virtualization evidence' "$output" 'Another virtualization process is running, but the selected VM "Shared VM" is not confirmed running.'
+  assert_contains 'connectivity repair offers selected-vm startup instead of ssh bootstrap' "$output" 'Start the VM now?'
+  assert_contains 'connectivity repair correctly reports the selected vm is stopped' "$output" 'VM is not running.'
+  assert_not_contains 'connectivity repair does not offer SSH bootstrap for generic virtualization evidence' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
   assert_not_contains 'connectivity repair does not print failed startup when another user already has the VM running' "$output" 'Failed to start VM.'
   assert_not_contains 'connectivity repair does not use the unsupported probable-running wording' "$output" 'VM appears to already be running but is not yet reachable via SSH.'
 }
@@ -827,13 +841,13 @@ test_ensure_vm_connectivity_fails_fast_for_invalid_target() {
 
   VM_MACHINE_NAME='Shared VM'
   VM_HOST='vm-user@bad-target'
-  : > "$CLAWBOX_TEST_UTMCTL_LIST_FILE"
-  printf 'usera 4242 /System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine\n' > "$CLAWBOX_TEST_PROCESS_LIST_FILE"
+  printf 'Shared VM running\n' > "$CLAWBOX_TEST_UTMCTL_LIST_FILE"
+  : > "$CLAWBOX_TEST_PROCESS_LIST_FILE"
   CLAWBOX_TEST_SSH_STDERR='ssh: Could not resolve hostname bad-target: nodename nor servname provided, or not known'
 
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
-  assert_contains 'invalid-target flow reports the current vm address is invalid' "$output" 'A virtualization process is running on this Mac, but the current VM address is invalid.'
+  assert_contains 'invalid-target flow reports the current vm address is invalid' "$output" 'VM is running, but the current VM address is invalid.'
   assert_contains 'invalid-target flow points to vm ip correction' "$output" '- The VM IP address is incorrect'
   assert_not_contains 'invalid-target flow does not offer automatic ssh bootstrap' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
   assert_not_contains 'invalid-target flow does not use the unsupported probable-running wording' "$output" 'VM appears to already be running but is not yet reachable via SSH.'
@@ -1719,11 +1733,12 @@ test_startup_network_timeout_offers_bounded_recovery() {
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
   assert_contains 'startup recovery flow reports the bounded network timeout' "$output" 'VM did not become SSH-ready within the expected time window.'
-  assert_contains 'startup recovery flow offers retry first' "$output" '1) Retry waiting for the VM'
-  assert_contains 'startup recovery flow offers manual check second' "$output" '2) I have started the VM; check again'
-  assert_contains 'startup recovery flow offers manual instructions third' "$output" '3) Show manual SSH setup instructions'
-  assert_contains 'startup recovery flow offers exit fourth' "$output" '4) Exit setup'
-  assert_not_contains 'startup recovery flow accepts manual ip input without invalid-selection churn' "$output" 'Invalid selection. Enter a number between 1 and 4.'
+  assert_contains 'startup recovery flow offers retry first' "$output" '1) Try starting the selected VM again'
+  assert_contains 'startup recovery flow offers manual check second' "$output" '2) I started the VM manually; check again'
+  assert_contains 'startup recovery flow offers rediscovery third' "$output" '3) Discover VM addresses again'
+  assert_contains 'startup recovery flow offers manual instructions fifth' "$output" '5) Show manual SSH guidance'
+  assert_contains 'startup recovery flow offers exit sixth' "$output" '6) Exit setup'
+  assert_not_contains 'startup recovery flow accepts manual ip input without invalid-selection churn' "$output" 'Invalid selection. Enter a number between 1 and 6.'
   assert_equals 'startup recovery flow retries readiness within the bounded recovery menu' "$(wc -l < "$readiness_attempt_file" | tr -d '[:space:]')" '2'
   assert_contains 'startup recovery flow keeps vm host configuration across retry' "$output" 'VM started and SSH is now available.'
   assert_contains 'startup recovery flow keeps recovery output visually separated' "$output" 'VM did not become SSH-ready within the expected time window.'
@@ -1738,7 +1753,7 @@ test_startup_network_timeout_recovery_stays_bounded() {
 
   load_setup_functions
   install_prompt_stubs
-  queue_prompt_answers 'y' '4' '4'
+  queue_prompt_answers 'y' '6' '6'
   network_attempt_file="$TEMP_DIR/startup-recovery-bounded-attempts.txt"
   : > "$network_attempt_file"
 
@@ -1806,7 +1821,7 @@ test_startup_network_timeout_uses_bounded_readiness_recovery_before_ip_recovery(
 
   load_setup_functions
   install_prompt_stubs
-  queue_prompt_answers 'y' '4'
+  queue_prompt_answers 'y' '6'
   network_wait_file="$TEMP_DIR/recovered-ip-network-waits.txt"
   : > "$network_wait_file"
 
@@ -1870,8 +1885,8 @@ test_startup_network_timeout_uses_bounded_readiness_recovery_before_ip_recovery(
   post_recovery_output="${output#*4) Exit setup}"
 
   assert_equals 'recovered vm ip flow only uses vm network polling for the initial pre-recovery timeout' "$(wc -l < "$network_wait_file" | tr -d '[:space:]')" '1'
-  assert_contains 'startup network timeout offers bounded readiness recovery before ip recovery' "$output" '1) Retry waiting for the VM'
-  assert_contains 'startup network timeout can exit setup from bounded readiness recovery' "$output" '4) Exit setup'
+  assert_contains 'startup network timeout offers bounded readiness recovery before ip recovery' "$output" '1) Try starting the selected VM again'
+  assert_contains 'startup network timeout can exit setup from bounded readiness recovery' "$output" '6) Exit setup'
   assert_not_contains 'startup network timeout does not print a second vm network wait after bounded recovery' "$post_recovery_output" 'Waiting for VM network...'
 }
 
@@ -1903,6 +1918,42 @@ test_discover_vm_ip_candidates_prefers_utmctl_guest_ip_metadata() {
   assert_equals 'utmctl guest IP discovery returns the authoritative IPv4 address first' "$REPLY" '192.168.64.9'
 }
 
+test_discover_vm_ip_candidates_excludes_host_api_address() {
+  prepare_vm_state_mocks
+
+  load_setup_functions
+
+  VM_MACHINE_NAME='Shared VM'
+  VM_USER='vm-user'
+  VM_IP='192.168.64.7'
+  HOST_IP='192.168.64.1'
+  printf '192.168.64.1\n192.168.64.9\n' > "$CLAWBOX_TEST_UTMCTL_IP_FILE"
+
+  probe_ssh_target_endpoint() {
+    case "$1" in
+      vm-user@192.168.64.1)
+        fail 'vm ip discovery should not probe the host-side api address as a guest candidate'
+        REPLY='ssh-auth-required'
+        ;;
+      vm-user@192.168.64.9)
+        REPLY='ssh-auth-required'
+        ;;
+      *)
+        REPLY='unreachable'
+        ;;
+    esac
+    return 0
+  }
+
+  if discover_vm_ip_candidates; then
+    pass 'vm ip discovery succeeds after excluding the host-side api address'
+  else
+    fail 'vm ip discovery should still find guest candidates after excluding host-side api address'
+  fi
+
+  assert_equals 'vm ip discovery excludes the configured host-side api address' "$REPLY" '192.168.64.9'
+}
+
 printf 'Running VM state tests\n'
 
 test_setup_vm_is_running_uses_resolved_utmctl
@@ -1922,7 +1973,7 @@ test_tcc_blocked_startup_can_continue_into_existing_readiness_flow
 test_manual_utm_start_reprompts_when_runtime_is_not_detected
 test_manual_utm_start_abort_never_enters_network_readiness
 test_non_tcc_startup_failure_does_not_offer_manual_continuation
-test_detect_vm_state_uses_cross_user_virtualization_fallback
+test_detect_vm_state_keeps_generic_virtualization_advisory_only
 test_detect_vm_state_distinguishes_running_from_stopped
 test_detect_vm_state_does_not_treat_open_utm_app_as_running
 test_ensure_vm_connectivity_reports_running_without_ssh
@@ -1955,6 +2006,7 @@ test_wait_for_vm_network_uses_bounded_tcp_probe_timing
 test_vm_onboarding_wait_defaults_increase_spinner_cadence
 test_wait_for_known_vm_ssh_readiness_distinguishes_network_ready_from_ssh_auth_failure
 test_discover_vm_ip_candidates_prefers_utmctl_guest_ip_metadata
+test_discover_vm_ip_candidates_excludes_host_api_address
 test_discover_vm_ip_candidates_excludes_ips_already_proven_unreachable
 
 if [ "$FAILURES" -eq 0 ]; then

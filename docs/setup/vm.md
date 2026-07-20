@@ -81,17 +81,19 @@ If SSH prompts for a password, key setup is not complete.
 - Remote Login should be enabled in the VM
 - Passwordless SSH is still the preferred steady state
 
-During setup, ClawBox distinguishes between a stopped VM, a booting VM, a running VM with SSH unavailable, an invalid or unreachable VM address, and a fully ready VM.
+During setup, ClawBox distinguishes between a stopped selected VM, a booting selected VM, a selected VM with SSH unavailable, an invalid or unreachable VM address, and a fully ready VM.
 
 - If the VM is stopped, setup can offer to start it.
 - If setup starts the VM itself, it now separates the phases of launching the VM, waiting for VM runtime evidence, waiting for VM network reachability, and then waiting for SSH. These phases use one updating spinner line in an interactive terminal and a single start line plus a single result line in noninteractive output.
 - Launching the UTM application alone is not treated as proof that the VM itself is powered on.
-- UTM runtime state detection through `utmctl list` and `utmctl status` is treated as authoritative for VM power and running state.
+- UTM runtime state detection for the selected VM is treated as authoritative for VM power and running state.
+- A generic virtualization process on the Mac is advisory only. It may explain why UTM or virtualization appears active, but it is not treated as proof that the selected VM is running.
 - The network phase uses a short bounded TCP probe to port 22 so network readiness is measured separately from the slower SSH authentication probe.
 - When the network phase times out, the stage emits one final `VM network was not detected within the expected time window.` result line and the higher-level repair flow does not print the same failure headline again.
-- If ClawBox itself just started the VM and runtime was detected, a bounded recovery menu is shown instead of exiting immediately. That recovery menu can continue waiting, retry the network check, attempt VM IP discovery, or abort setup.
+- If ClawBox itself tried to start the selected VM and SSH readiness still fails, a bounded recovery menu is shown instead of exiting immediately. That recovery menu can try starting the selected VM again, recheck after manual startup, rediscover VM addresses, accept a manually entered address, print manual SSH guidance, or exit setup.
+- If the selected VM is still known to be stopped, address discovery is not treated as authoritative. Setup explains that discovery may be incomplete and asks for confirmation before running it.
 - If VM IP recovery succeeds, setup does not return to the network phase. It transitions directly into SSH-stage handling so the next outcomes are SSH readiness, SSH refusal guidance, SSH bootstrap, or manual SSH recovery.
-- If the current VM IP address is still unreachable after the VM is running, setup first tries `utmctl ip-address <vm-name>`. UTM documents this as guest-agent-backed `query ip` data, which means it is authoritative only when the QEMU guest agent is installed and running.
+- If the current VM IP address is still unreachable after the selected VM is confirmed running, setup first tries `utmctl ip-address <vm-name>`. UTM documents this as guest-agent-backed `query ip` data, which means it is authoritative only when the QEMU guest agent is installed and running.
 - `utmctl ip-address` is not universally reliable for Apple Virtualization macOS guests, so ClawBox does not treat it as a guaranteed guest-IP source for those guests.
 - If `utmctl ip-address` does not return a usable guest IPv4 address, setup falls back to a short bounded discovery pass across the expected shared subnet, which remains the recovery path for macOS guest networking.
 - If the current VM address is invalid, unreachable, refusing connections, or timing out, setup reports that specific condition before offering any SSH repair flow.
@@ -111,7 +113,7 @@ In practice this means:
 
 - QEMU guests with the guest agent installed can provide authoritative guest IP metadata through UTM.
 - Apple Virtualization guests and guests without the QEMU guest agent do not provide a universally reliable guest IP through UTM alone.
-- ClawBox therefore prefers `utmctl ip-address` when it returns usable data, and otherwise keeps the existing bounded subnet-based recovery flow as the fallback.
+- ClawBox therefore prefers `utmctl ip-address` when it returns usable data, excludes clearly identifiable host-side addresses where safe, and otherwise keeps the existing bounded subnet-based recovery flow as the fallback.
 
 ## Runtime directory
 

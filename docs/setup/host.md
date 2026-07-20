@@ -16,7 +16,8 @@ keys, but they do not replace `~/.openclaw/openclaw.json`.
 - bootstraps `.env` values interactively when required
 - runs a VM platform check before network prompts so first-run users can confirm Apple Silicon, UTM, and detect existing `.utm` VMs before continuing
 - offers a distinct VM detection flow when macOS privacy settings block access to the sandboxed UTM documents directory, explains how to grant Full Disk Access to the app running setup, attempts to open the Full Disk Access settings pane, lets you continue with manual VM configuration, or exits gracefully
-- reports when the VM is running but SSH is not yet reachable instead of treating SSH failure as proof that the VM is stopped, including cases where another macOS user owns the running UTM process and `utmctl list` is not visible to the current setup user
+- reports when the selected VM is running but SSH is not yet reachable instead of treating SSH failure as proof that the VM is stopped
+- treats generic UTM or virtualization processes as advisory only; another virtualization process on the Mac is not proof that the selected VM is running
 - prompts for a `llama-server` install mode
 - checks for healthy reusable `llama-server` instances before host-side binary installability checks, including listeners discovered on alternate local ports
 - when the configured/default endpoint is unhealthy, continues scanning alternate listening ports, explicitly reports that the configured endpoint is unhealthy, and states when setup switches to a discovered healthy port before entering any binary install flow
