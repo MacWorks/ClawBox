@@ -104,6 +104,7 @@ A healthy host inference service should satisfy all of the following:
 
 - the `llama-server` API responds at `http://HOST_IP:LLAMA_PORT/v1/models` with valid JSON
 - if startup validation fails after waiting for the TCP port and API readiness, setup offers retry, port change, log viewing, or graceful exit instead of silently continuing
+- setup prints the managed stdout and stderr log paths before the readiness wait so startup failures can be inspected after the fact
 - the VM can reach `LLAMA_BASE_URL`
 
 `./scripts/status.sh` treats an opted-in external instance as healthy when `LLAMA_EXTERNAL=true` and the configured API responds. If the API responds but that opt-in flag is not set, the script reports that the instance is not managed by this user and instructs the user to re-run setup and accept the external instance explicitly.

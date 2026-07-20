@@ -786,7 +786,13 @@ llama_verify_service_health() {
   local api_url=''
   local choice=''
   local selected_port=''
+  local stdout_path=''
+  local stderr_path=''
 
+  stdout_path="$(llama_mode_stdout_log "${LLAMA_ACTIVE_MODE:-user}")"
+  stderr_path="$(llama_mode_stderr_log "${LLAMA_ACTIVE_MODE:-user}")"
+  out "llama-server stdout: $stdout_path"
+  out "llama-server stderr: $stderr_path"
   step "Waiting for llama-server port"
   while [ "$attempt" -le 120 ]; do
     if llama_port_in_use "$LLAMA_PORT"; then

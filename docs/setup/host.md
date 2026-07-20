@@ -42,6 +42,7 @@ keys, but they do not replace `~/.openclaw/openclaw.json`.
 - can install `llama.cpp` through Homebrew or build it from source with HTTPS and `cmake` when `LLAMA_BIN` is missing and the user approves installation
 - presents recoverable Homebrew install failures as warnings when the local source-build fallback is available, and still asks before cloning/building the large llama.cpp source repository
 - validates the host `llama-server` startup in two phases after launch by waiting for the TCP port and then polling `http://HOST_IP:LLAMA_PORT/v1/models` for valid JSON, and offers retry, port change, log viewing, or graceful exit on failure
+- prints the managed llama-server stdout and stderr log paths before the startup readiness wait so model-load or launchd failures can be inspected after setup exits unexpectedly
 - validates host prerequisites before doing remote work
 - when an existing VM auto-start runtime service is already present, distinguishes between keeping that managed runtime service and skipping runtime-service management for the current setup run
 - when a chosen models directory contains no supported `.gguf` files, keeps setup in an explicit recovery menu that allows entering a different directory, entering a full model path manually, re-scanning the current directory, or exiting setup gracefully instead of silently collapsing into manual file mode

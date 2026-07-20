@@ -3648,6 +3648,8 @@ test_llama_health_decision_module() {
   } 2>&1)"
 
   if printf '%s\n' "$output" | grep -Fq 'SUCCESS:llama-server is responding on port 11434' \
+    && printf '%s\n' "$output" | grep -Fq 'OUT:llama-server stdout:' \
+    && printf '%s\n' "$output" | grep -Fq 'OUT:llama-server stderr:' \
     && printf '%s\n' "$output" | grep -Fq 'STATUS:0' \
     && printf '%s\n' "$output" | grep -Fq 'PORT_CHECKS:3' \
     && printf '%s\n' "$output" | grep -Fq 'API_CHECKS:3' \
