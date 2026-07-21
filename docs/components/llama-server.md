@@ -61,7 +61,10 @@ Those targeted updates do not replace `~/.openclaw/openclaw.json`.
 
 New setups default `LLAMA_PORT` to `11434` and `LLAMA_CTX` to `32768`.
 Existing `.env` values are kept as-is. `OPENCLAW_MAX_TOKENS` is a separate
-OpenClaw output-token setting and must be lower than `LLAMA_CTX`.
+OpenClaw output-token setting and must be lower than the effective context
+window. If llama-server reports that it capped the configured `LLAMA_CTX`, setup
+uses the reported effective value for OpenClaw `contextWindow` without rewriting
+the requested `.env` value.
 
 Before ClawBox starts or reconfigures any managed host service, setup checks `http://HOST_IP:LLAMA_PORT/v1/models` and requires the response to parse as valid JSON. After starting a managed service, setup first waits for the TCP port to open and then keeps polling that API until it responds or the 120 second timeout expires.
 

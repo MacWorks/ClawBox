@@ -103,8 +103,8 @@ Important values:
 - `VM_MACHINE_NAME`: UTM VM name used for optional login auto-start
 - `LLAMA_BIN`: absolute path to the host `llama-server` binary
 - `MODEL_PATH`: absolute path to the model file used by `llama-server`
-- `LLAMA_HOST`, `LLAMA_PORT`, `LLAMA_CTX`, `LLAMA_BASE_URL`: host inference settings, with a default port of `11434` and default context of `32768` for new setups
-- `OPENCLAW_MAX_TOKENS`: output-token budget advertised for the managed OpenClaw local model; defaults to `8192`, must be less than `LLAMA_CTX`, and is separate from the context window
+- `LLAMA_HOST`, `LLAMA_PORT`, `LLAMA_CTX`, `LLAMA_BASE_URL`: host inference settings, with a default port of `11434` and default requested context of `32768` for new setups
+- `OPENCLAW_MAX_TOKENS`: output-token budget advertised for the managed OpenClaw local model; defaults to `8192`, must be less than the effective llama-server context window, and is separate from the requested context window
 - `LLAMA_EXTERNAL`: whether setup explicitly accepted an externally managed `llama-server` instance for the configured endpoint
 - `LLAMA_EXTERNAL` remains `false` when setup reuses an existing current-user ClawBox-managed instance on the configured port
 - `FIREWALL_SHARED_SUBNET`: shared-network hint used by VM SSH recovery and VM IP discovery; the legacy variable name remains for compatibility

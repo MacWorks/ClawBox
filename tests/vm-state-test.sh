@@ -16,6 +16,8 @@ prepare_vm_state_mocks() {
   local process_output_file="$TEMP_DIR/process-list.txt"
 
   setup_mock_bin_dir
+  rm -f "$MOCK_BIN_DIR/utmctl" "$MOCK_BIN_DIR/osascript" "$MOCK_BIN_DIR/open" "$MOCK_BIN_DIR/ps" "$MOCK_BIN_DIR/ssh" "$MOCK_BIN_DIR/arp" "$MOCK_BIN_DIR/ifconfig"
+  unset CLAWBOX_OSASCRIPT_BIN CLAWBOX_OPEN_BIN CLAWBOX_VM_EXTERNAL_COMMAND_TIMEOUT_SECONDS
   HOME="$TEMP_DIR/home"
   mkdir -p "$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
   export HOME
@@ -962,10 +964,32 @@ test_ensure_vm_connectivity_fails_fast_for_invalid_target() {
 
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
-  assert_contains 'invalid-target flow reports the current vm address is invalid' "$output" 'VM is running, but the current VM address is invalid.'
+  assert_contains 'invalid-target flow reports the configured vm address is invalid' "$output" 'VM is running, but the configured VM address is invalid.'
   assert_contains 'invalid-target flow points to vm ip correction' "$output" '- The VM IP address is incorrect'
   assert_not_contains 'invalid-target flow does not offer automatic ssh bootstrap' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
   assert_not_contains 'invalid-target flow does not use the unsupported probable-running wording' "$output" 'VM appears to already be running but is not yet reachable via SSH.'
+}
+
+test_ensure_vm_connectivity_reports_stale_configured_address() {
+  local output
+
+  prepare_vm_state_mocks
+
+  load_setup_functions
+  install_prompt_stubs
+
+  VM_MACHINE_NAME='Shared VM'
+  VM_HOST='vm-user@192.168.64.2'
+  printf 'Shared VM running\n' > "$CLAWBOX_TEST_UTMCTL_LIST_FILE"
+  : > "$CLAWBOX_TEST_PROCESS_LIST_FILE"
+  CLAWBOX_TEST_SSH_STDERR='ssh: connect to host 192.168.64.2 port 22: No route to host'
+  queue_prompt_answers '6'
+
+  output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
+
+  assert_contains 'unreachable flow reports the configured vm address as stale or unreachable' "$output" 'VM is running, but the configured VM address is not reachable.'
+  assert_not_contains 'unreachable flow does not imply the selected vm itself is unreachable' "$output" 'VM is running, but the current VM address is not reachable.'
+  assert_not_contains 'unreachable flow does not list selected vm stopped when exact running evidence exists' "$output" '- The selected VM is not running'
 }
 
 test_ensure_vm_connectivity_distinguishes_ssh_timeout_for_running_vm() {
@@ -2276,6 +2300,7 @@ test_detect_vm_state_distinguishes_running_from_stopped
 test_detect_vm_state_does_not_treat_open_utm_app_as_running
 test_ensure_vm_connectivity_reports_running_without_ssh
 test_ensure_vm_connectivity_fails_fast_for_invalid_target
+test_ensure_vm_connectivity_reports_stale_configured_address
 test_ensure_vm_connectivity_distinguishes_ssh_timeout_for_running_vm
 test_ensure_vm_connectivity_distinguishes_ssh_refusal
 test_ensure_vm_connectivity_classifies_missing_key_auth_without_failure_framing

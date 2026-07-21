@@ -208,26 +208,26 @@ print_vm_ssh_probe_guidance() {
       ;;
     invalid-target)
       if [ "$running_confidence" = 'exact' ]; then
-        warn 'VM is running, but the current VM address is invalid.'
+        warn 'VM is running, but the configured VM address is invalid.'
       elif [ "$running_confidence" = 'generic' ]; then
-        warn 'A virtualization process is running on this Mac, but the current VM address is invalid.'
+        warn 'A virtualization process is running on this Mac, but the configured VM address is invalid.'
       else
-        warn 'The current VM address is invalid.'
+        warn 'The configured VM address is invalid.'
       fi
       print_possible_causes \
         'The VM IP address is incorrect' \
-        'The current VM address cannot be resolved'
+        'The configured VM address cannot be resolved'
       return 0
       ;;
     unreachable)
       if [ "$running_confidence" = 'exact' ]; then
-        warn 'VM is running, but the current VM address is not reachable.'
+        warn 'VM is running, but the configured VM address is not reachable.'
       elif [ "$running_confidence" = 'generic' ]; then
-        warn 'A virtualization process is running on this Mac, but the current VM address is not reachable.'
+        warn 'A virtualization process is running on this Mac, but the configured VM address is not reachable.'
       elif [ "$vm_state" = 'stopped' ] && [ "${VM_GENERIC_VIRTUALIZATION_RUNNING:-false}" = true ]; then
         warn "Another virtualization process is running, but the selected VM \"${VM_MACHINE_NAME:-configured VM}\" is not confirmed running."
       else
-        warn 'The current VM address is not reachable.'
+        warn 'The configured VM address is not reachable.'
       fi
       if [ "$vm_state" = 'stopped' ]; then
         print_possible_causes \

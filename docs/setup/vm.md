@@ -107,7 +107,7 @@ an invalid or unreachable VM address, and a fully ready VM.
 - If the current VM IP address is still unreachable after the selected VM is confirmed running, setup first tries `utmctl ip-address <vm-name>`. UTM documents this as guest-agent-backed `query ip` data, which means it is authoritative only when the QEMU guest agent is installed and running.
 - `utmctl ip-address` is not universally reliable for Apple Virtualization macOS guests, so ClawBox does not treat it as a guaranteed guest-IP source for those guests.
 - If `utmctl ip-address` does not return a usable guest IPv4 address, setup falls back to a short bounded discovery pass across the expected shared subnet, which remains the recovery path for macOS guest networking.
-- If the current VM address is invalid, unreachable, refusing connections, or timing out, setup reports that specific condition before offering any SSH repair flow.
+- If the configured VM address is invalid, unreachable, refusing connections, or timing out, setup reports that specific condition before offering any SSH repair flow.
 - If port 22 refuses connections, setup treats that as proof that the guest network is reachable. It does not describe the VM as stopped, start UTM, or rediscover IPs. Instead, setup prompts the user to enable Remote Login inside the guest before retrying only the SSH readiness stage.
 - If SSH transport is reachable and password authentication works but key authentication is not configured, setup reports this as a bootstrap-needed state instead of an SSH transport failure:
     - `SSH connectivity is working.`

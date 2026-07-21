@@ -69,6 +69,10 @@ run_provisioning_and_deployment() {
   setup_host_inference_service_phase || return $?
   setup_embeddings_service_phase || return $?
 
+  if command -v llama_refresh_openclaw_effective_context_window >/dev/null 2>&1; then
+    llama_refresh_openclaw_effective_context_window || return $?
+  fi
+
   section "VM Onboarding"
   step "Checking SSH access to the VM."
 

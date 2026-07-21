@@ -1848,6 +1848,11 @@ test_vm_connection_setup_reports_vm_settings_completion_without_progress_spinner
   else
     pass 'vm connection setup does not leave two blank separators before settings saved'
   fi
+  if [[ "$rendered_output" == *'VM settings saved.'$'\n\n\n'* ]]; then
+    fail 'vm connection setup does not leave two blank separators after settings saved'
+  else
+    pass 'vm connection setup does not leave two blank separators after settings saved'
+  fi
 }
 
 test_vm_connection_setup_prefers_configured_vm_ip_default() {

@@ -997,6 +997,36 @@ PY
     fail "OpenClaw provider model generation should accept custom maxTokens"
   fi
 
+  LLAMA_CTX=65536
+  OPENCLAW_EFFECTIVE_CONTEXT_WINDOW=32768
+  custom_models="$(openclaw_config_model_array)"
+  unset OPENCLAW_EFFECTIVE_CONTEXT_WINDOW
+  LLAMA_CTX=32768
+  if python3 - "$custom_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+assert models[0]["contextWindow"] == 32768
+PY
+  then
+    pass "OpenClaw provider model generation caps contextWindow to effective llama-server context"
+  else
+    fail "OpenClaw provider model generation should cap contextWindow to effective llama-server context"
+  fi
+
+  LLAMA_CTX=65536
+  OPENCLAW_EFFECTIVE_CONTEXT_WINDOW=32768
+  OPENCLAW_MAX_TOKENS=32768
+  if openclaw_config_model_array >/dev/null 2>"$TEMP_DIR/openclaw-effective-context.err"; then
+    fail "OpenClaw provider model generation should reject maxTokens equal to effective context"
+  elif grep -Fq 'OPENCLAW_MAX_TOKENS=32768 must be less than effective contextWindow=32768' "$TEMP_DIR/openclaw-effective-context.err"; then
+    pass "OpenClaw provider model generation rejects maxTokens equal to effective context"
+  else
+    fail "OpenClaw provider model generation should explain effective maxTokens/context conflict"
+  fi
+  unset OPENCLAW_MAX_TOKENS
+  unset OPENCLAW_EFFECTIVE_CONTEXT_WINDOW
+  LLAMA_CTX=32768
+
   OPENCLAW_MAX_TOKENS=0
   if openclaw_config_model_array >/dev/null 2>"$TEMP_DIR/openclaw-max-tokens.err"; then
     fail "OpenClaw provider model generation should reject invalid maxTokens"
@@ -3577,6 +3607,60 @@ test_llama_homebrew_state_caches_discovery_results() {
   fi
 }
 
+test_llama_effective_context_detection_module() {
+  local output=''
+  local curl_log="$TEMP_DIR/llama-effective-context-curl.log"
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/llama.sh"
+
+  curl() {
+    local url="${@: -1}"
+    printf '%s\n' "$url" >> "$curl_log"
+    case "$url" in
+      http://127.0.0.1:11434/props)
+        printf '%s\n' '{"default_generation_settings":{"n_ctx":32768}}'
+        return 0
+        ;;
+      *)
+        return 22
+        ;;
+    esac
+  }
+
+  HOST_IP='127.0.0.1'
+  LLAMA_PORT='11434'
+  LLAMA_BASE_URL='http://127.0.0.1:11434/v1'
+  LLAMA_CTX=65536
+  OPENCLAW_MAX_TOKENS=8192
+
+  if llama_detect_effective_context_window && [ "$REPLY" = '32768' ]; then
+    pass "llama effective context detection reads the JSON props endpoint"
+  else
+    fail "llama effective context detection should read the JSON props endpoint"
+  fi
+
+  if grep -Fq 'http://127.0.0.1:11434/props' "$curl_log"; then
+    pass "llama effective context detection strips /v1 before probing props"
+  else
+    fail "llama effective context detection should probe the root props endpoint"
+  fi
+
+  llama_refresh_openclaw_effective_context_window >"$TEMP_DIR/clawbox-effective-context-refresh.out" 2>&1
+  output="$(cat "$TEMP_DIR/clawbox-effective-context-refresh.out")"
+  assert_equals 'llama refresh stores effective OpenClaw context window' "${OPENCLAW_EFFECTIVE_CONTEXT_WINDOW:-}" '32768'
+  assert_contains 'llama refresh reports capped effective context' "$output" 'OpenClaw will use that instead of configured LLAMA_CTX=65536'
+
+  OPENCLAW_MAX_TOKENS=32768
+  if llama_refresh_openclaw_effective_context_window >"$TEMP_DIR/clawbox-effective-context.out" 2>&1; then
+    fail "llama refresh should reject maxTokens equal to effective context"
+  elif grep -Fq 'OPENCLAW_MAX_TOKENS=32768 must be less than effective contextWindow=32768' "$TEMP_DIR/clawbox-effective-context.out"; then
+    pass "llama refresh rejects maxTokens equal to effective context"
+  else
+    fail "llama refresh should explain maxTokens/effective context conflict"
+  fi
+}
+
 test_llama_health_decision_module() {
   local output=''
 
@@ -4979,6 +5063,7 @@ run_test test_llama_homebrew_install_classifies_shared_install_permissions
 run_test test_llama_homebrew_failure_classification_matrix
 run_test test_llama_homebrew_failure_logs_details_without_terminal_dump
 run_test test_llama_homebrew_state_caches_discovery_results
+run_test test_llama_effective_context_detection_module
 run_test test_llama_health_decision_module
 run_test test_llama_recent_error_log_module
 run_test test_llama_service_health_result_handling_module

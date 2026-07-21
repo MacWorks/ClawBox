@@ -308,8 +308,9 @@ PY
 
 openclaw_config_model_array() {
   local max_tokens="${OPENCLAW_MAX_TOKENS:-8192}"
+  local effective_context="${OPENCLAW_EFFECTIVE_CONTEXT_WINDOW:-}"
 
-  python3 - "${OPENCLAW_DEFAULT_MODEL:-local}" "${LLAMA_CTX:-32768}" "$max_tokens" <<'PY'
+  python3 - "${OPENCLAW_DEFAULT_MODEL:-local}" "${LLAMA_CTX:-32768}" "$max_tokens" "$effective_context" <<'PY'
 import json, sys
 try:
     raw_context = int(sys.argv[2])
@@ -324,10 +325,25 @@ try:
 except ValueError:
     print(f"Invalid OPENCLAW_MAX_TOKENS value: {sys.argv[3]}", file=sys.stderr)
     raise SystemExit(1)
-if max_tokens >= raw_context:
+
+validation_context = raw_context
+context_source = f"LLAMA_CTX={raw_context}"
+if sys.argv[4]:
+    try:
+        effective_context = int(sys.argv[4])
+        if effective_context < 1:
+            raise ValueError
+    except ValueError:
+        print(f"Invalid OPENCLAW_EFFECTIVE_CONTEXT_WINDOW value: {sys.argv[4]}", file=sys.stderr)
+        raise SystemExit(1)
+    context = min(context, effective_context)
+    validation_context = context
+    context_source = f"effective contextWindow={context}"
+
+if max_tokens >= validation_context:
     print(
         f"Invalid OpenClaw token configuration: OPENCLAW_MAX_TOKENS={max_tokens} "
-        f"must be less than LLAMA_CTX={raw_context}",
+        f"must be less than {context_source}",
         file=sys.stderr,
     )
     raise SystemExit(1)

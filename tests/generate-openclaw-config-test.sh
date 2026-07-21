@@ -155,6 +155,34 @@ test_generate_openclaw_config_supports_custom_max_tokens() {
   assert_equals 'generator writes configured OpenClaw maxTokens numerically' "$REPLY" '12288'
 }
 
+test_generate_openclaw_config_uses_effective_context_window_when_known() {
+  local fixture_root
+
+  setup_generator_fixture
+  fixture_root="$REPLY"
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '65536' 'clawbox' 'sample-model' 'local'
+
+  OPENCLAW_EFFECTIVE_CONTEXT_WINDOW='32768' run_generator "$fixture_root"
+
+  assert_equals 'generator succeeds with an effective llama-server context window' "$GENERATOR_LAST_STATUS" '0'
+  json_query "$fixture_root" 'models.providers.clawbox.models.0.contextWindow'
+  assert_equals 'generator caps OpenClaw contextWindow to effective llama-server context' "$REPLY" '32768'
+}
+
+test_generate_openclaw_config_rejects_max_tokens_at_effective_context_window() {
+  local fixture_root
+
+  setup_generator_fixture
+  fixture_root="$REPLY"
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '65536' 'clawbox' 'sample-model' 'local' \
+    'false' '' '' '32768'
+
+  OPENCLAW_EFFECTIVE_CONTEXT_WINDOW='32768' run_generator "$fixture_root"
+
+  assert_equals 'generator rejects maxTokens equal to effective context window' "$GENERATOR_LAST_STATUS" '1'
+  assert_contains 'generator reports maxTokens and effective context conflict' "$GENERATOR_LAST_OUTPUT" 'OPENCLAW_MAX_TOKENS=32768 must be less than effective contextWindow=32768'
+}
+
 test_generate_openclaw_config_defaults_missing_max_tokens() {
   local fixture_root
 
@@ -338,6 +366,8 @@ printf 'Running generate-openclaw-config tests\n'
 
 run_test test_generate_openclaw_config_writes_expected_config
 run_test test_generate_openclaw_config_supports_custom_max_tokens
+run_test test_generate_openclaw_config_uses_effective_context_window_when_known
+run_test test_generate_openclaw_config_rejects_max_tokens_at_effective_context_window
 run_test test_generate_openclaw_config_defaults_missing_max_tokens
 run_test test_generate_openclaw_config_rejects_invalid_max_tokens
 run_test test_generate_openclaw_config_defaults_invalid_gateway_mode_to_local
