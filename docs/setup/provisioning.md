@@ -58,20 +58,26 @@ Typical flow:
    - setup prompts `Provisioning completed inside the VM? [Y/n]:`
 5. The user runs `./vm-provision.sh` inside the VM.
 6. If the user confirms provisioning completed, host setup refreshes OpenClaw
-   runtime state. After OpenClaw is detected, setup offers to run the
-   interactive onboarding command over SSH:
+   runtime state and continues into managed runtime service setup. VM
+   provisioning does not start `openclaw gateway` in the foreground; host setup
+   is the authority for deploying managed configuration, installing the
+   LaunchAgent, starting the service, and verifying gateway health.
+7. After managed setup succeeds, setup prints the optional personalization
+   command:
 
    ```bash
    ssh -t vm-user@vm-ip 'zsh -lc "openclaw onboard"'
    ```
 
-   Onboarding runs only after the user confirms. If declined, setup prints the
-   exact command using the configured VM SSH target and continues. If onboarding
-   opens the terminal agent chat, type `/exit` when finished so ClawBox setup
-   can continue.
-7. Setup continues into runtime service setup.
+   ClawBox setup does not report personalization as completed unless a future
+   flow can prove that state with a reliable postcondition.
 8. If the user declines provisioning completion, setup exits gracefully and prints the resume command:
    `./clawbox setup`.
+
+If UTM opens but the VM does not become SSH-ready before the bounded readiness
+timeout, setup offers to retry waiting, check again after a manual VM start,
+show manual SSH setup instructions, or exit. Noninteractive setup still fails
+clearly instead of prompting indefinitely.
 
 Provisioning remains a distinct phase separate from runtime execution.
 

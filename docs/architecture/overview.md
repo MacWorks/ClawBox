@@ -51,7 +51,8 @@ The VM is responsible for:
 - running OpenClaw
 - executing `vm-provision.sh`
 - maintaining required runtime dependencies
-- running `openclaw gateway`
+- running the `openclaw gateway` process under the runtime service configured
+  or recognized by host setup
 - exposing runtime state for host-side inspection
 - keeping provisioning separate from runtime execution
 
@@ -75,8 +76,9 @@ Typical flow:
 2. Host deploys required runtime artifacts.
 3. Host verifies OpenClaw availability.
 4. If provisioning is required, ClawBox presents provisioning instructions or provisioning commands.
-5. Provisioning executes.
-6. Setup resumes after provisioning succeeds.
+5. Provisioning executes dependency installation and preparation only.
+6. Setup resumes after provisioning succeeds and remains responsible for
+   managed OpenClaw configuration and runtime startup.
 
 Provisioning failures stop the workflow.
 

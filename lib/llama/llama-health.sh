@@ -26,6 +26,138 @@ llama_api_responding() {
   curl -sS --fail --connect-timeout "$connect_timeout" --max-time "$max_time" "$api_url" >/dev/null 2>&1
 }
 
+llama_effective_context_probe_url() {
+  local endpoint="${LLAMA_BASE_URL:-}"
+  local path="$1"
+
+  if [ -z "$endpoint" ]; then
+    endpoint="$(llama_api_url "${HOST_IP:-}" "${LLAMA_PORT:-}")" || return 1
+  fi
+
+  endpoint="${endpoint%/}"
+  case "$endpoint" in
+    */v1)
+      endpoint="${endpoint%/v1}"
+      ;;
+  esac
+
+  printf '%s/%s\n' "$endpoint" "$path"
+}
+
+llama_effective_context_from_json() {
+  python3 -c '
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+
+candidate_paths = [
+    ("n_ctx_slot",),
+    ("n_ctx",),
+    ("context_window",),
+    ("contextWindow",),
+    ("default_generation_settings", "n_ctx"),
+    ("default_generation_settings", "n_ctx_slot"),
+    ("slots", 0, "n_ctx_slot"),
+    ("slots", 0, "n_ctx"),
+]
+
+if isinstance(data, list):
+    data = {"slots": data}
+
+def value_at(root, path):
+    current = root
+    for key in path:
+        if isinstance(key, int):
+            if not isinstance(current, list) or len(current) <= key:
+                return None
+            current = current[key]
+        else:
+            if not isinstance(current, dict):
+                return None
+            current = current.get(key)
+    return current
+
+for path in candidate_paths:
+    value = value_at(data, path)
+    try:
+        value = int(value)
+    except Exception:
+        continue
+    if value > 0:
+        print(value)
+        raise SystemExit(0)
+
+raise SystemExit(1)
+'
+}
+
+llama_detect_effective_context_window() {
+  local url=''
+  local payload=''
+  local detected=''
+  local path=''
+
+  REPLY=''
+
+  for path in props slots; do
+    url="$(llama_effective_context_probe_url "$path")" || continue
+    payload="$(curl -sS --fail --connect-timeout 2 --max-time 5 "$url" 2>/dev/null || true)"
+    [ -n "$payload" ] || continue
+    detected="$(printf '%s' "$payload" | llama_effective_context_from_json 2>/dev/null || true)"
+    if [ -n "$detected" ]; then
+      REPLY="$detected"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+llama_refresh_openclaw_effective_context_window() {
+  local detected=''
+  local requested="${LLAMA_CTX:-32768}"
+  local max_tokens="${OPENCLAW_MAX_TOKENS:-8192}"
+
+  unset OPENCLAW_EFFECTIVE_CONTEXT_WINDOW
+
+  if ! llama_detect_effective_context_window; then
+    return 0
+  fi
+
+  detected="$REPLY"
+
+  case "$detected" in
+    ''|*[!0-9]*)
+      return 0
+      ;;
+  esac
+
+  if [ "$max_tokens" -ge "$detected" ]; then
+    error "Invalid OpenClaw token configuration for effective llama-server context: OPENCLAW_MAX_TOKENS=$max_tokens must be less than effective contextWindow=$detected."
+    error 'Increase the effective llama-server context or lower OPENCLAW_MAX_TOKENS, then rerun ./clawbox setup.'
+    return 1
+  fi
+
+  OPENCLAW_EFFECTIVE_CONTEXT_WINDOW="$detected"
+  export OPENCLAW_EFFECTIVE_CONTEXT_WINDOW
+
+  case "$requested" in
+    *[!0-9]*|'')
+      return 0
+      ;;
+  esac
+
+  if [ "$detected" -lt "$requested" ]; then
+    warn "llama-server effective contextWindow is $detected; OpenClaw will use that instead of configured LLAMA_CTX=$requested."
+  fi
+
+  return 0
+}
+
 llama_port_in_use() {
   local port="$1"
 
@@ -786,7 +918,13 @@ llama_verify_service_health() {
   local api_url=''
   local choice=''
   local selected_port=''
+  local stdout_path=''
+  local stderr_path=''
 
+  stdout_path="$(llama_mode_stdout_log "${LLAMA_ACTIVE_MODE:-user}")"
+  stderr_path="$(llama_mode_stderr_log "${LLAMA_ACTIVE_MODE:-user}")"
+  out "llama-server stdout: $stdout_path"
+  out "llama-server stderr: $stderr_path"
   step "Waiting for llama-server port"
   while [ "$attempt" -le 120 ]; do
     if llama_port_in_use "$LLAMA_PORT"; then

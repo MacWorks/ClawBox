@@ -427,5 +427,5 @@ ensure_vm_connection_setup() {
     return 1
   fi
 
-  success 'VM settings saved.'
+  out 'VM settings saved.'
 }

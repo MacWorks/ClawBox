@@ -151,7 +151,9 @@ EOF
   assert_contains 'vm provision creates .zprofile when missing' "$VM_PROVISION_LAST_OUTPUT" "Created $home_dir/.zprofile"
   assert_contains 'vm provision copies the OpenClaw config when it is missing' "$VM_PROVISION_LAST_OUTPUT" "Copied OpenClaw config to $target_config"
   assert_contains 'vm provision installs qualification suite' "$VM_PROVISION_LAST_OUTPUT" "Installed qualification suite at $home_dir/.openclaw/workspace/.clawbox/qualification"
-  assert_contains 'vm provision reports host setup continuation when gateway prompt is skipped' "$VM_PROVISION_LAST_OUTPUT" 'Host setup will continue with runtime configuration.'
+  assert_contains 'vm provision reports return-to-host ownership boundary' "$VM_PROVISION_LAST_OUTPUT" 'Return to the ClawBox setup process on the host to finish configuration and start OpenClaw.'
+  assert_not_contains 'vm provision does not prompt to start OpenClaw' "$VM_PROVISION_LAST_OUTPUT" 'Start OpenClaw gateway now?'
+  assert_not_contains 'vm provision does not print a manual gateway command' "$VM_PROVISION_LAST_OUTPUT" 'openclaw gateway'
 
   if cmp -s "$fixture_root/vm/openclaw.json" "$target_config"; then
     pass 'vm provision copies the exact OpenClaw config contents'
@@ -268,9 +270,9 @@ EOF
   assert_equals 'vm provision keeps one Node PATH line after deduplication' "$node_path_count" '1'
 }
 
-test_vm_provision_prints_next_step_when_gateway_start_is_declined() {
+test_vm_provision_prints_return_to_host_instruction() {
   local fixture_root
-  local home_dir="$TEMP_DIR/home-decline"
+  local home_dir="$TEMP_DIR/home-return"
 
   setup_vm_provision_fixture
   fixture_root="$REPLY"
@@ -278,18 +280,19 @@ test_vm_provision_prints_next_step_when_gateway_start_is_declined() {
 
   mkdir -p "$home_dir"
 
-  run_vm_provision "$fixture_root" "$home_dir" 'n'
+  run_vm_provision "$fixture_root" "$home_dir" ''
 
-  assert_equals 'vm provision succeeds when gateway start is declined' "$VM_PROVISION_LAST_STATUS" '0'
-  assert_contains 'vm provision prints the next-step banner after declining gateway start' "$VM_PROVISION_LAST_OUTPUT" 'Next step:'
-  assert_contains 'vm provision prints the runtime directory next step' "$VM_PROVISION_LAST_OUTPUT" "  cd $fixture_root/vm"
-  assert_contains 'vm provision prints the gateway command next step' "$VM_PROVISION_LAST_OUTPUT" "  $fixture_root/opt/homebrew/bin/openclaw gateway"
-  assert_not_contains 'vm provision does not start the gateway after declining' "$VM_PROVISION_LAST_OUTPUT" 'Starting OpenClaw gateway in the current terminal...'
+  assert_equals 'vm provision succeeds without gateway prompt input' "$VM_PROVISION_LAST_STATUS" '0'
+  assert_contains 'vm provision prints completion banner' "$VM_PROVISION_LAST_OUTPUT" 'VM provisioning complete.'
+  assert_contains 'vm provision directs user back to host setup' "$VM_PROVISION_LAST_OUTPUT" 'Return to the ClawBox setup process on the host to finish configuration and start OpenClaw.'
+  assert_contains 'vm provision visually separates completion from host handoff' "$VM_PROVISION_LAST_OUTPUT" $'VM provisioning complete.\n\nReturn to the ClawBox setup process on the host to finish configuration and start OpenClaw.'
+  assert_not_contains 'vm provision does not print the old next-step banner' "$VM_PROVISION_LAST_OUTPUT" 'Next step:'
+  assert_not_contains 'vm provision does not print manual gateway instructions' "$VM_PROVISION_LAST_OUTPUT" "$fixture_root/opt/homebrew/bin/openclaw gateway"
 }
 
-test_vm_provision_starts_gateway_when_prompt_is_accepted() {
+test_vm_provision_never_starts_foreground_gateway() {
   local fixture_root
-  local home_dir="$TEMP_DIR/home-accept"
+  local home_dir="$TEMP_DIR/home-no-gateway"
 
   setup_vm_provision_fixture
   fixture_root="$REPLY"
@@ -299,10 +302,10 @@ test_vm_provision_starts_gateway_when_prompt_is_accepted() {
 
   run_vm_provision "$fixture_root" "$home_dir" 'y'
 
-  assert_equals 'vm provision succeeds when gateway start is accepted' "$VM_PROVISION_LAST_STATUS" '0'
-  assert_contains 'vm provision prints the gateway start banner when accepted' "$VM_PROVISION_LAST_OUTPUT" 'Starting OpenClaw gateway in the current terminal...'
-  assert_contains 'vm provision executes the gateway command when accepted' "$VM_PROVISION_LAST_OUTPUT" 'gateway started'
-  assert_not_contains 'vm provision does not fall back to next-step instructions after starting the gateway' "$VM_PROVISION_LAST_OUTPUT" 'Next step:'
+  assert_equals 'vm provision succeeds even if obsolete prompt input is present' "$VM_PROVISION_LAST_STATUS" '0'
+  assert_not_contains 'vm provision never prints gateway start banner' "$VM_PROVISION_LAST_OUTPUT" 'Starting OpenClaw gateway in the current terminal...'
+  assert_not_contains 'vm provision never executes the foreground gateway command' "$VM_PROVISION_LAST_OUTPUT" 'gateway started'
+  assert_contains 'vm provision still directs user back to host setup' "$VM_PROVISION_LAST_OUTPUT" 'Return to the ClawBox setup process on the host to finish configuration and start OpenClaw.'
 }
 
 printf 'Running vm provision tests\n'
@@ -310,8 +313,8 @@ printf 'Running vm provision tests\n'
 run_test test_vm_provision_copies_config_and_skips_gateway_prompt_when_requested
 run_test test_vm_provision_installs_qualification_suite_idempotently
 run_test test_vm_provision_deduplicates_zprofile_entries
-run_test test_vm_provision_prints_next_step_when_gateway_start_is_declined
-run_test test_vm_provision_starts_gateway_when_prompt_is_accepted
+run_test test_vm_provision_prints_return_to_host_instruction
+run_test test_vm_provision_never_starts_foreground_gateway
 
 if [ "$FAILURES" -eq 0 ]; then
   printf 'PASS: test suite succeeded\n'

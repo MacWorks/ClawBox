@@ -82,6 +82,22 @@ vm_ip_should_be_excluded() {
     return 0
   fi
 
+  if [ -n "${HOST_IP:-}" ] && [ "$ip_value" = "$HOST_IP" ]; then
+    return 0
+  fi
+
+  if vm_ip_is_loopback "$ip_value"; then
+    return 0
+  fi
+
+  if vm_ip_is_network_or_broadcast "$ip_value"; then
+    return 0
+  fi
+
+  if vm_ip_is_local_host_interface "$ip_value"; then
+    return 0
+  fi
+
   return 1
 }
 
@@ -392,6 +408,107 @@ vm_ip_is_ipv4() {
   return 1
 }
 
+vm_ipv4_last_octet() {
+  local ip_value="$1"
+  local octet_1=''
+  local octet_2=''
+  local octet_3=''
+  local octet_4=''
+
+  REPLY=''
+  IFS=. read -r octet_1 octet_2 octet_3 octet_4 <<EOF
+$ip_value
+EOF
+
+  REPLY="$octet_4"
+  [ -n "$REPLY" ]
+}
+
+vm_ip_is_loopback() {
+  case "$1" in
+    127.*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+vm_ip_is_network_or_broadcast() {
+  local last_octet=''
+
+  vm_ipv4_last_octet "$1" || return 1
+  last_octet="$REPLY"
+
+  case "$last_octet" in
+    0|255)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+vm_host_local_interface_ips() {
+  local ifconfig_bin="${CLAWBOX_IFCONFIG_BIN:-}"
+
+  REPLY=''
+
+  if [ -z "$ifconfig_bin" ]; then
+    if command -v ifconfig >/dev/null 2>&1; then
+      ifconfig_bin="$(command -v ifconfig)"
+    else
+      return 1
+    fi
+  fi
+
+  REPLY="$("$ifconfig_bin" 2>/dev/null | awk '
+    $1 == "inet" {
+      ip = $2
+      if (ip ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) {
+        print ip
+      }
+    }
+  ' | awk '!seen[$0]++')"
+
+  [ -n "$REPLY" ]
+}
+
+vm_ip_is_local_host_interface() {
+  local ip_value="$1"
+  local host_ips=''
+
+  vm_host_local_interface_ips >/dev/null 2>&1 || return 1
+  host_ips="$REPLY"
+
+  vm_ip_in_list "$ip_value" "$host_ips"
+}
+
+vm_network_state_is_reachable() {
+  case "$1" in
+    ready|ssh-refused|ssh-auth-required|ssh-hostkey-unknown|ssh-hostkey-changed|ssh-hostkey-strict|ssh-remote-command-failed)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+configured_vm_ip_is_network_reachable() {
+  local probe_state=''
+
+  [ -n "${VM_HOST:-}" ] || return 1
+
+  probe_vm_network_endpoint
+  probe_state="$REPLY"
+
+  if vm_network_state_is_reachable "$probe_state"; then
+    return 0
+  fi
+
+  return 1
+}
+
 utmctl_vm_ip_candidates() {
   local utmctl_bin=''
   local raw_ip_list=''
@@ -585,9 +702,12 @@ discover_vm_ip_candidates() {
   local candidate_target=''
   local candidate_state=''
   local discovered_count=0
+  local vm_user="${VM_USER:-}"
 
   REPLY=''
   VM_IP_DISCOVERY_CANDIDATES=''
+
+  [ -n "$vm_user" ] || return 1
 
   derive_vm_shared_subnet
   subnet_value="$REPLY"
@@ -601,7 +721,7 @@ discover_vm_ip_candidates() {
         continue
       fi
 
-      candidate_target="${VM_USER}@${candidate_ip}"
+      candidate_target="${vm_user}@${candidate_ip}"
       probe_ssh_target_endpoint "$candidate_target"
       candidate_state="$REPLY"
 
@@ -640,7 +760,7 @@ EOF
       continue
     fi
 
-    candidate_target="${VM_USER}@${candidate_ip}"
+    candidate_target="${vm_user}@${candidate_ip}"
     probe_ssh_target_endpoint "$candidate_target"
     candidate_state="$REPLY"
 
@@ -668,7 +788,7 @@ EOF
       continue
     fi
 
-    candidate_target="${VM_USER}@${candidate_ip}"
+    candidate_target="${vm_user}@${candidate_ip}"
     probe_ssh_target_endpoint "$candidate_target"
     candidate_state="$REPLY"
 
@@ -701,7 +821,7 @@ EOF
         continue
       fi
 
-      candidate_target="${VM_USER}@${candidate_ip}"
+      candidate_target="${vm_user}@${candidate_ip}"
       probe_ssh_target_endpoint "$candidate_target"
       candidate_state="$REPLY"
 

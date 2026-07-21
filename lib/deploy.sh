@@ -20,6 +20,50 @@ openclaw_config_remote_set() {
   esac
 }
 
+openclaw_generate_gateway_auth_token() {
+  python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(32))
+PY
+}
+
+openclaw_config_gateway_auth_token_is_configured() {
+  local current="$1"
+
+  case "$current" in
+    ''|null|'{}'|'[]')
+      return 1
+      ;;
+    __OPENCLAW_REDACTED__)
+      return 0
+      ;;
+  esac
+
+  [ -n "$current" ]
+}
+
+ensure_openclaw_gateway_auth_config() {
+  local current=''
+  local token=''
+
+  current="$(openclaw_config_remote_get 'gateway.auth.token' 2>/dev/null || true)"
+  if openclaw_config_gateway_auth_token_is_configured "$current"; then
+    ssh_exec "chmod 600 $REMOTE_CONFIG_PATH" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  token="$(openclaw_generate_gateway_auth_token)" || return 1
+  [ -n "$token" ] || return 1
+
+  if ! openclaw_config_remote_set 'gateway.auth.token' "$token"; then
+    error 'OpenClaw gateway authentication could not be persisted.'
+    out 'OpenClaw config was not replaced.'
+    return 1
+  fi
+
+  ssh_exec "chmod 600 $REMOTE_CONFIG_PATH" >/dev/null 2>&1 || true
+}
+
 openclaw_config_json_array_contains_all() {
   local current="$1" desired="$2"
   python3 - "$current" "$desired" <<'PY' >/dev/null 2>&1
@@ -264,12 +308,15 @@ PY
 
 openclaw_config_model_array() {
   local max_tokens="${OPENCLAW_MAX_TOKENS:-8192}"
+  local effective_context="${OPENCLAW_EFFECTIVE_CONTEXT_WINDOW:-}"
 
-  python3 - "${OPENCLAW_DEFAULT_MODEL:-local}" "${LLAMA_CTX:-16384}" "$max_tokens" <<'PY'
+  python3 - "${OPENCLAW_DEFAULT_MODEL:-local}" "${LLAMA_CTX:-32768}" "$max_tokens" "$effective_context" <<'PY'
 import json, sys
 try:
-    context = max(16384, int(sys.argv[2]))
+    raw_context = int(sys.argv[2])
+    context = max(16384, raw_context)
 except ValueError:
+    raw_context = 16384
     context = 16384
 try:
     max_tokens = int(sys.argv[3])
@@ -277,6 +324,28 @@ try:
         raise ValueError
 except ValueError:
     print(f"Invalid OPENCLAW_MAX_TOKENS value: {sys.argv[3]}", file=sys.stderr)
+    raise SystemExit(1)
+
+validation_context = raw_context
+context_source = f"LLAMA_CTX={raw_context}"
+if sys.argv[4]:
+    try:
+        effective_context = int(sys.argv[4])
+        if effective_context < 1:
+            raise ValueError
+    except ValueError:
+        print(f"Invalid OPENCLAW_EFFECTIVE_CONTEXT_WINDOW value: {sys.argv[4]}", file=sys.stderr)
+        raise SystemExit(1)
+    context = min(context, effective_context)
+    validation_context = context
+    context_source = f"effective contextWindow={context}"
+
+if max_tokens >= validation_context:
+    print(
+        f"Invalid OpenClaw token configuration: OPENCLAW_MAX_TOKENS={max_tokens} "
+        f"must be less than {context_source}",
+        file=sys.stderr,
+    )
     raise SystemExit(1)
 print(json.dumps([{"id": sys.argv[1], "name": sys.argv[1], "contextWindow": context,
                   "maxTokens": max_tokens,
@@ -387,11 +456,13 @@ sync_openclaw_config() {
     out 'Installing initial minimal OpenClaw config...'
     generate_openclaw_config || return $?
     scp -O -q "$CONFIG_PATH" "$VM_HOST:$REMOTE_CONFIG_PATH" </dev/null
+    ssh_exec "chmod 600 $REMOTE_CONFIG_PATH" >/dev/null 2>&1 || true
     ssh_exec "test -f $REMOTE_CONFIG_PATH"
     return 0
   fi
 
   apply_targeted_openclaw_config_updates all
+  ensure_openclaw_gateway_auth_config
 }
 
 sync_openclaw_config_targeted_only() {

@@ -55,41 +55,78 @@ launchctl print \"\$domain/\$label\" >/dev/null 2>&1"
 
 openclaw_runtime_has_running_gateway_service() {
   local label=''
+  local plist_rel=''
+  local gateway_port=''
 
   label="$(openclaw_runtime_service_label)"
+  if command -v vm_openclaw_launchagent_relpath >/dev/null 2>&1; then
+    plist_rel="$(vm_openclaw_launchagent_relpath)"
+  else
+    plist_rel='Library/LaunchAgents/com.clawbox.openclaw.plist'
+  fi
+  if command -v vm_openclaw_gateway_port >/dev/null 2>&1; then
+    gateway_port="$(vm_openclaw_gateway_port)"
+  else
+    gateway_port='18789'
+  fi
   openclaw_runtime_launchctl_domain_command
   openclaw_runtime_zsh_check \
     "label=$(printf '%q' "$label")
+plist=\"\$HOME/$(printf '%q' "$plist_rel")\"
+gateway_port=$(printf '%q' "$gateway_port")
 $(printf '%s\n' "$REPLY")
+[ -f \"\$plist\" ] || exit 1
 gateway_service_output=\$(launchctl print \"\$domain/\$label\" 2>/dev/null) || exit 1
 printf '%s\n' \"\$gateway_service_output\" | grep -Eq '(^|[[:space:]])(state|job state) = running'
-printf '%s\n' \"\$gateway_service_output\" | grep -Eq 'pid = [1-9][0-9]*'
+service_pid=\$(printf '%s\n' \"\$gateway_service_output\" | awk -F '= ' '/pid = [1-9][0-9]*/ { print \$2; exit }')
+[ -n \"\$service_pid\" ] || exit 1
 printf '%s\n' \"\$gateway_service_output\" | grep -Fq 'openclaw'
-printf '%s\n' \"\$gateway_service_output\" | grep -Eq '(^|[[:space:]])gateway([[:space:]]|\$)'"
+printf '%s\n' \"\$gateway_service_output\" | grep -Eq '(^|[[:space:]])gateway([[:space:]]|\$)'
+if command -v lsof >/dev/null 2>&1; then
+  listener_pids=\$(lsof -nP -t -iTCP:\"\$gateway_port\" -sTCP:LISTEN 2>/dev/null || true)
+  [ -n \"\$listener_pids\" ] || exit 1
+  printf '%s\n' \"\$listener_pids\" | grep -Fxq \"\$service_pid\" || exit 1
+fi"
 }
 
 openclaw_runtime_has_running_native_gateway_service() {
   local label=''
+  local gateway_port=''
 
   label="$(openclaw_runtime_native_service_label)"
+  if command -v vm_openclaw_gateway_port >/dev/null 2>&1; then
+    gateway_port="$(vm_openclaw_gateway_port)"
+  else
+    gateway_port='18789'
+  fi
   openclaw_runtime_launchctl_domain_command
   openclaw_runtime_zsh_check \
     "label=$(printf '%q' "$label")
+plist=\"\$HOME/Library/LaunchAgents/\$label.plist\"
+gateway_port=$(printf '%q' "$gateway_port")
 $(printf '%s\n' "$REPLY")
+[ -f \"\$plist\" ] || exit 1
 gateway_service_output=\$(launchctl print \"\$domain/\$label\" 2>/dev/null) || exit 1
 printf '%s\n' \"\$gateway_service_output\" | grep -Eq '(^|[[:space:]])(state|job state) = running'
-printf '%s\n' \"\$gateway_service_output\" | grep -Eq 'pid = [1-9][0-9]*'
+service_pid=\$(printf '%s\n' \"\$gateway_service_output\" | awk -F '= ' '/pid = [1-9][0-9]*/ { print \$2; exit }')
+[ -n \"\$service_pid\" ] || exit 1
 printf '%s\n' \"\$gateway_service_output\" | grep -Fq 'openclaw'
-printf '%s\n' \"\$gateway_service_output\" | grep -Eq '(^|[[:space:]])gateway([[:space:]]|\$)'"
+printf '%s\n' \"\$gateway_service_output\" | grep -Eq '(^|[[:space:]])gateway([[:space:]]|\$)'
+if command -v lsof >/dev/null 2>&1; then
+  listener_pids=\$(lsof -nP -t -iTCP:\"\$gateway_port\" -sTCP:LISTEN 2>/dev/null || true)
+  [ -n \"\$listener_pids\" ] || exit 1
+  printf '%s\n' \"\$listener_pids\" | grep -Fxq \"\$service_pid\" || exit 1
+fi"
 }
 
 openclaw_runtime_has_launchd_gateway() {
-  openclaw_runtime_has_running_gateway_service && openclaw_runtime_has_any_process
+  openclaw_runtime_has_running_gateway_service
 }
 
 openclaw_runtime_has_manual_process() {
-  openclaw_runtime_has_any_process || return 1
+  openclaw_runtime_has_live_process || return 1
   openclaw_runtime_has_launchd_gateway && return 1
+  openclaw_runtime_has_running_native_gateway_service && return 1
   return 0
 }
 

@@ -76,6 +76,7 @@ prompt_with_default() {
   local prompt_label
   local allow_empty="${3:-false}"
 
+  PROMPT_USED_DEFAULT=false
   sanitize_prompt_default_value "$default_value"
   default_value="$REPLY"
 
@@ -94,16 +95,19 @@ prompt_with_default() {
     input_value="$REPLY"
 
     if [ -n "$input_value" ]; then
+      PROMPT_USED_DEFAULT=false
       REPLY="$input_value"
       return 0
     fi
 
     if [ "$allow_empty" = 'true' ]; then
+      PROMPT_USED_DEFAULT=false
       REPLY=''
       return 0
     fi
 
     if [ -n "$default_value" ]; then
+      PROMPT_USED_DEFAULT=true
       REPLY="$default_value"
       return 0
     fi

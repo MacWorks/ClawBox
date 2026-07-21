@@ -585,6 +585,113 @@ test_first_run_bootstrap_detects_cross_user_llama_before_binary_setup() {
   assert_not_contains 'first-run bootstrap does not show binary install options after reuse decision' "$output" 'llama-server binary not found.'
 }
 
+test_first_run_bootstrap_honors_explicit_custom_llama_port() {
+  local output
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    local env_example="$TEMP_DIR/custom-port.env.example"
+    local env_file="$TEMP_DIR/custom-port.env"
+    local models_dir="$TEMP_DIR/custom-port-models"
+    local fake_bin="$TEMP_DIR/custom-port-bin/llama-server"
+
+    mkdir -p "$models_dir" "$(dirname "$fake_bin")"
+    : > "$models_dir/lone.gguf"
+    printf '#!/bin/bash\nexit 0\n' > "$fake_bin"
+    chmod +x "$fake_bin"
+    cp "$ROOT_DIR/.env.example" "$env_example"
+    cp "$env_example" "$env_file"
+
+    queue_prompt_answers \
+      "$models_dir" \
+      '11801' \
+      '' \
+      '' \
+      '' \
+      ''
+
+    ENV_EXAMPLE_FILE="$env_example"
+    ENV_FILE="$env_file"
+    BASE_DIR="$TEMP_DIR"
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    ENV_CREATED_FROM_EXAMPLE=true
+    ENV_BOOTSTRAPPED=false
+    VM_REPAIR_MODE=false
+    HOST_IP=''
+    VM_IP=''
+    VM_USER=''
+    VM_USER_PATH=''
+    VM_HOST=''
+    VM_RUNTIME_PATH=''
+    VM_MACHINE_NAME=''
+    LLAMA_BIN=''
+    LLAMA_HOST=''
+    LLAMA_PORT=''
+    LLAMA_CTX=''
+    LLAMA_BASE_URL=''
+    MODEL_PATH=''
+    FIREWALL_SHARED_SUBNET=''
+    OPENCLAW_PROVIDER_NAME=''
+    OPENCLAW_DEFAULT_MODEL=''
+    OPENCLAW_AUTOSTART=''
+
+    ensure_vm_connection_setup() {
+      VM_IP='192.168.64.2'
+      VM_USER='tester'
+      VM_USER_PATH='/Users/tester'
+      VM_HOST='tester@192.168.64.2'
+      VM_RUNTIME_PATH='/Users/tester/ClawBox'
+      VM_MACHINE_NAME='ClawVM'
+      return 0
+    }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    derive_llama_bin_path() { REPLY="$fake_bin"; }
+    resolve_configured_llama_bin() { REPLY="$fake_bin"; }
+    llama_classify_runtime_health() {
+      printf 'CLASSIFY:%s\n' "$2"
+      LLAMA_INSTANCE_HEALTH='absent'
+      LLAMA_INSTANCE_HAS_PROCESS=false
+      LLAMA_INSTANCE_HAS_LISTENER=false
+      LLAMA_INSTANCE_HEALTHCHECK_OK=false
+      LLAMA_INSTANCE_LAUNCHD_LOADED=false
+      return 0
+    }
+    llama_discover_healthy_instance_port() {
+      printf 'UNEXPECTED_DISCOVERY:%s\n' "$2"
+      REPLY='11434'
+      return 0
+    }
+    llama_api_responding() {
+      printf 'API_PROBE:%s\n' "$2"
+      return 1
+    }
+    llama_port_in_use() { return 1; }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'STATUS:%s\n' "$?"
+    printf 'LLAMA_PORT:%s\n' "$LLAMA_PORT"
+    printf 'LLAMA_CTX:%s\n' "$LLAMA_CTX"
+    printf 'LLAMA_BASE_URL:%s\n' "$LLAMA_BASE_URL"
+    printf 'ENV_FILE_PORT:%s\n' "$(grep '^LLAMA_PORT=' "$ENV_FILE")"
+    printf 'ENV_FILE_CTX:%s\n' "$(grep '^LLAMA_CTX=' "$ENV_FILE")"
+    printf 'ENV_FILE_BASE_URL:%s\n' "$(grep '^LLAMA_BASE_URL=' "$ENV_FILE")"
+  } 2>&1)"
+
+  assert_contains 'first-run explicit custom port flow probes the selected port' "$output" 'API_PROBE:11801'
+  assert_contains 'first-run explicit custom port flow succeeds' "$output" 'STATUS:0'
+  assert_contains 'first-run explicit custom port remains in memory' "$output" 'LLAMA_PORT:11801'
+  assert_contains 'first-run default context is raised to 32768' "$output" 'LLAMA_CTX:32768'
+  assert_contains 'first-run explicit custom port sets the base URL' "$output" 'LLAMA_BASE_URL:http://192.168.64.1:11801/v1'
+  assert_contains 'first-run explicit custom port persists to .env' "$output" 'ENV_FILE_PORT:LLAMA_PORT="11801"'
+  assert_contains 'first-run default context persists to .env' "$output" 'ENV_FILE_CTX:LLAMA_CTX="32768"'
+  assert_contains 'first-run custom port base URL persists to .env' "$output" 'ENV_FILE_BASE_URL:LLAMA_BASE_URL="http://192.168.64.1:11801/v1"'
+  assert_not_contains 'first-run explicit custom port does not discover default service' "$output" 'UNEXPECTED_DISCOVERY'
+  assert_not_contains 'first-run explicit custom port does not probe the default llama port' "$output" 'API_PROBE:11434'
+}
+
 test_ensure_env_bootstrap_fast_path_rewrites_env_after_prestart_port_change() {
   local output
 
@@ -646,6 +753,69 @@ test_ensure_env_bootstrap_fast_path_rewrites_env_after_prestart_port_change() {
   assert_contains 'fast path updates the in-memory llama base url after prestart discovery' "$output" 'LLAMA_BASE_URL=http://127.0.0.1:11435/v1'
   assert_contains 'fast path rewrites the env file llama port after prestart discovery' "$output" 'ENV_FILE_PORT=LLAMA_PORT="11435"'
   assert_contains 'fast path rewrites the env file llama base url after prestart discovery' "$output" 'ENV_FILE_BASE_URL=LLAMA_BASE_URL="http://127.0.0.1:11435/v1"'
+}
+
+test_ensure_env_bootstrap_fast_path_preserves_configured_custom_port() {
+  local output
+
+  output="$({
+    load_setup_functions
+
+    local env_example="$TEMP_DIR/.env.example"
+    local env_file="$TEMP_DIR/.env"
+    local temp_file="$TEMP_DIR/env.tmp"
+
+    cp "$ROOT_DIR/.env.example" "$env_example"
+    cp "$env_example" "$env_file"
+
+    ENV_EXAMPLE_FILE="$env_example"
+    ENV_FILE="$env_file"
+    BASE_DIR="$TEMP_DIR"
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    VM_REPAIR_MODE=false
+
+    awk '
+      /^HOST_IP=/ { print "HOST_IP=\"127.0.0.1\""; next }
+      /^VM_IP=/ { print "VM_IP=\"192.168.64.2\""; next }
+      /^VM_USER=/ { print "VM_USER=\"tester\""; next }
+      /^VM_USER_PATH=/ { print "VM_USER_PATH=\"/Users/tester\""; next }
+      /^VM_HOST=/ { print "VM_HOST=\"tester@192.168.64.2\""; next }
+      /^VM_RUNTIME_PATH=/ { print "VM_RUNTIME_PATH=\"/Users/tester/ClawBox\""; next }
+      /^VM_MACHINE_NAME=/ { print "VM_MACHINE_NAME=\"ClawVM\""; next }
+      /^LLAMA_BIN=/ { print "LLAMA_BIN=\"/Users/tester/bin/llama-server\""; next }
+      /^LLAMA_HOST=/ { print "LLAMA_HOST=\"0.0.0.0\""; next }
+      /^LLAMA_PORT=/ { print "LLAMA_PORT=\"11801\""; next }
+      /^LLAMA_CTX=/ { print "LLAMA_CTX=\"32768\""; next }
+      /^LLAMA_BASE_URL=/ { print "LLAMA_BASE_URL=\"http://127.0.0.1:11801/v1\""; next }
+      /^MODEL_PATH=/ { print "MODEL_PATH=\"/Users/tester/models/alpha.gguf\""; next }
+      /^FIREWALL_SHARED_SUBNET=/ { print "FIREWALL_SHARED_SUBNET=\"192.168.64.0/24\""; next }
+      /^OPENCLAW_PROVIDER_NAME=/ { print "OPENCLAW_PROVIDER_NAME=\"clawbox\""; next }
+      /^OPENCLAW_DEFAULT_MODEL=/ { print "OPENCLAW_DEFAULT_MODEL=\"alpha\""; next }
+      /^OPENCLAW_AUTOSTART=/ { print "OPENCLAW_AUTOSTART=\"true\""; next }
+      { print }
+    ' "$env_file" > "$temp_file"
+    mv "$temp_file" "$env_file"
+
+    run_prestart_llama_instance_flow() {
+      printf 'PRESTART_PORT=%s\n' "$2"
+      printf 'PRESTART_MODE=%s\n' "$3"
+      REPLY="$2"
+      LLAMA_USE_EXISTING_INSTANCE=false
+      return 0
+    }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'LLAMA_PORT=%s\n' "$LLAMA_PORT"
+    printf 'LLAMA_BASE_URL=%s\n' "$LLAMA_BASE_URL"
+  } 2>&1)"
+
+  assert_contains 'fast path checks the configured custom port' "$output" 'PRESTART_PORT=11801'
+  assert_contains 'fast path treats an existing custom port as selected' "$output" 'PRESTART_MODE=selected'
+  assert_contains 'fast path preserves the configured custom port' "$output" 'LLAMA_PORT=11801'
+  assert_contains 'fast path preserves the configured custom base url' "$output" 'LLAMA_BASE_URL=http://127.0.0.1:11801/v1'
 }
 
 test_setup_preserves_explicit_external_llama_base_url() {
@@ -1571,8 +1741,11 @@ test_vm_connectivity_repair_flow() {
     ssh_check() {
       return 1
     }
-    setup_vm_is_running() {
-      return 1
+    setup_selected_vm_runtime_state() {
+      REPLY='stopped'
+      VM_SELECTED_RUNTIME_STATE='stopped'
+      VM_RUNNING_STATE_CONFIDENCE='exact'
+      return 0
     }
 
     VM_MACHINE_NAME='RepairVM'
@@ -1609,7 +1782,14 @@ test_vm_running_without_ssh_flow() {
       return 0
     }
 
-    setup_vm_is_running() {
+    setup_selected_vm_is_running() {
+      VM_RUNNING_STATE_CONFIDENCE='exact'
+      return 0
+    }
+
+    setup_selected_vm_runtime_state() {
+      REPLY='running'
+      VM_SELECTED_RUNTIME_STATE='running'
       VM_RUNNING_STATE_CONFIDENCE='exact'
       return 0
     }
@@ -1667,6 +1847,11 @@ test_vm_connection_setup_reports_vm_settings_completion_without_progress_spinner
     fail 'vm connection setup does not leave two blank separators before settings saved'
   else
     pass 'vm connection setup does not leave two blank separators before settings saved'
+  fi
+  if [[ "$rendered_output" == *'VM settings saved.'$'\n\n\n'* ]]; then
+    fail 'vm connection setup does not leave two blank separators after settings saved'
+  else
+    pass 'vm connection setup does not leave two blank separators after settings saved'
   fi
 }
 
@@ -2071,6 +2256,10 @@ test_vm_startup_progress_flow() {
       return 0
     }
 
+    vm_startup_readiness_can_prompt() {
+      return 0
+    }
+
     detect_vm_state() {
       if [ "$runtime_checks" -eq 0 ]; then
         REPLY='stopped'
@@ -2083,7 +2272,7 @@ test_vm_startup_progress_flow() {
       return 0
     }
 
-    setup_vm_is_running() {
+    setup_selected_vm_is_running() {
       runtime_checks=$((runtime_checks + 1))
       return 0
     }
@@ -2151,6 +2340,10 @@ test_vm_startup_network_recovery_flow() {
       return 0
     }
 
+    vm_startup_readiness_can_prompt() {
+      return 0
+    }
+
     detect_vm_state() {
       if [ "$runtime_checks" -eq 0 ]; then
         REPLY='stopped'
@@ -2163,7 +2356,7 @@ test_vm_startup_network_recovery_flow() {
       return 0
     }
 
-    setup_vm_is_running() {
+    setup_selected_vm_is_running() {
       runtime_checks=$((runtime_checks + 1))
       return 0
     }
@@ -2207,11 +2400,11 @@ test_vm_startup_network_recovery_flow() {
   normalized_output="$(printf '%s' "$output" | perl -0pe 's/\\033\[[0-9;?]*[A-Za-z]//g; s/\e\[[0-9;?]*[A-Za-z]//g; s/\r[^\n]*//g')"
 
   assert_not_contains 'startup recovery flow does not duplicate the bounded network timeout line' "$normalized_output" $'VM network was not detected within the expected time window.\nVM network was not detected within the expected time window.'
-  assert_contains 'startup recovery flow offers retry network detection' "$normalized_output" '1) Retry VM network detection'
-  assert_contains 'startup recovery flow offers manual ip replacement' "$normalized_output" '2) Enter a different IP address'
-  assert_contains 'startup recovery flow offers vm ip discovery' "$normalized_output" '3) Attempt VM IP discovery'
-  assert_contains 'startup recovery flow offers continue waiting' "$normalized_output" '4) Continue waiting'
-  assert_contains 'startup recovery flow offers abort setup' "$normalized_output" '5) Abort setup'
+  assert_contains 'startup recovery flow offers retry waiting' "$normalized_output" '1) Try starting the selected VM again'
+  assert_contains 'startup recovery flow offers manual check again' "$normalized_output" '2) I started the VM manually; check again'
+  assert_contains 'startup recovery flow offers rediscovery' "$normalized_output" '3) Discover VM addresses again'
+  assert_contains 'startup recovery flow offers manual ssh instructions' "$normalized_output" '5) Show manual SSH guidance'
+  assert_contains 'startup recovery flow offers exit setup' "$normalized_output" '6) Exit setup'
 }
 
 test_vm_ip_discovery_recovery_flow() {
@@ -2261,7 +2454,12 @@ test_detect_vm_state() {
     return 0
   }
 
-  setup_vm_is_running() {
+  VM_HOST='vm-user@192.168.64.2'
+
+  setup_selected_vm_runtime_state() {
+    REPLY='unknown'
+    VM_SELECTED_RUNTIME_STATE='unknown'
+    VM_RUNNING_STATE_CONFIDENCE='unknown'
     return 1
   }
 
@@ -2278,20 +2476,23 @@ test_detect_vm_state() {
     return 1
   }
 
-  setup_vm_is_running() {
+  setup_selected_vm_is_running() {
     return 1
   }
 
   VM_RECENTLY_STARTED=false
   detect_vm_state
   state="$REPLY"
-  if [ "$state" = 'stopped' ]; then
-    pass 'vm state detects stopped when vm is not running'
+  if [ "$state" = 'unknown' ]; then
+    pass 'vm state keeps runtime unknown when selected-vm evidence is unavailable'
   else
-    fail 'vm state should detect stopped when vm is not running'
+    fail 'vm state should keep runtime unknown when selected-vm evidence is unavailable'
   fi
 
-  setup_vm_is_running() {
+  setup_selected_vm_runtime_state() {
+    REPLY='running'
+    VM_SELECTED_RUNTIME_STATE='running'
+    VM_RUNNING_STATE_CONFIDENCE='exact'
     return 0
   }
 
@@ -2975,7 +3176,9 @@ run_test test_model_selection_requires_explicit_file_path_when_directory_is_empt
 run_test test_model_selection_recovery_rescans_current_directory
 run_test test_ensure_env_bootstrap_auto_selects_single_model_without_selection_prompt
 run_test test_first_run_bootstrap_detects_cross_user_llama_before_binary_setup
+run_test test_first_run_bootstrap_honors_explicit_custom_llama_port
 run_test test_ensure_env_bootstrap_fast_path_rewrites_env_after_prestart_port_change
+run_test test_ensure_env_bootstrap_fast_path_preserves_configured_custom_port
 run_test test_setup_preserves_explicit_external_llama_base_url
 run_test test_ensure_env_bootstrap_repair_mode_skips_model_llama_and_openclaw_sections
 run_test test_ensure_env_bootstrap_requires_tty_when_setup_is_needed

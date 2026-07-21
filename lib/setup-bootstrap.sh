@@ -32,18 +32,24 @@ ensure_env_bootstrap() {
   local parsed_host_ip
   local derived_host_ip
   local fallback_host_ip
+  local llama_base_url_current
+  local llama_base_url_default
   local vm_ip_default
   local vm_user_default
   local vm_user_path_default
   local connectivity_status
   local llama_section_needed=false
   local llama_bin_default
+  local llama_port_discovery_mode='discover'
+  local openclaw_max_tokens_value
 
   if [ ! -f "$ENV_FILE" ]; then
     ENV_CREATED_FROM_EXAMPLE=true
   fi
 
   source_env_file
+
+  validate_openclaw_token_context_values "${LLAMA_CTX:-32768}" "${OPENCLAW_MAX_TOKENS:-8192}" '.env' || return $?
 
   if [ "$VM_REPAIR_MODE" = true ]; then
     required_keys='VM_IP VM_USER VM_USER_PATH VM_HOST VM_RUNTIME_PATH VM_MACHINE_NAME'
@@ -61,8 +67,13 @@ ensure_env_bootstrap() {
   if [ "$needs_setup" = false ]; then
     host_ip_value="${HOST_IP:-}"
     llama_port_value="${LLAMA_PORT:-11434}"
+    if [ "$llama_port_value" = '11434' ]; then
+      llama_port_discovery_mode='discover'
+    else
+      llama_port_discovery_mode='selected'
+    fi
 
-    llama_capture_status run_prestart_llama_instance_flow "$host_ip_value" "$llama_port_value"
+    llama_capture_status run_prestart_llama_instance_flow "$host_ip_value" "$llama_port_value" "$llama_port_discovery_mode"
     status=$LLAMA_LAST_STATUS
 
     if [ "$status" -eq "$LLAMA_EXIT_GRACEFUL" ]; then
@@ -146,9 +157,15 @@ ensure_env_bootstrap() {
   if [ "$llama_section_needed" = true ]; then
     prompt_resolved_value 'Port for llama-server' 'LLAMA_PORT' "${LLAMA_PORT:-}" '11434'
     llama_port_value="$REPLY"
+    if [ "${PROMPT_USED_DEFAULT:-false}" = true ]; then
+      llama_port_discovery_mode='discover'
+    else
+      llama_port_discovery_mode='selected'
+    fi
   else
     configured_or_default 'LLAMA_PORT' "${LLAMA_PORT:-}" '11434'
     llama_port_value="$REPLY"
+    llama_port_discovery_mode='selected'
   fi
   parse_host_ip_from_base_url "${LLAMA_BASE_URL:-}"
   parsed_host_ip="$REPLY"
@@ -166,7 +183,7 @@ ensure_env_bootstrap() {
     host_ip_value="$host_ip_default"
   fi
 
-  llama_capture_status run_prestart_llama_instance_flow "$host_ip_value" "$llama_port_value"
+  llama_capture_status run_prestart_llama_instance_flow "$host_ip_value" "$llama_port_value" "$llama_port_discovery_mode"
   status=$LLAMA_LAST_STATUS
 
   if [ "$status" -eq "$LLAMA_EXIT_GRACEFUL" ]; then
@@ -180,8 +197,11 @@ ensure_env_bootstrap() {
   llama_port_value="$REPLY"
 
   if [ "$LLAMA_USE_EXISTING_INSTANCE" = true ]; then
-    configured_or_default 'LLAMA_CTX' "${LLAMA_CTX:-}" '16384'
+    configured_or_default 'OPENCLAW_MAX_TOKENS' "${OPENCLAW_MAX_TOKENS:-}" '8192'
+    openclaw_max_tokens_value="$REPLY"
+    configured_or_default 'LLAMA_CTX' "${LLAMA_CTX:-}" '32768'
     llama_ctx_value="$REPLY"
+    validate_openclaw_token_context_values "$llama_ctx_value" "$openclaw_max_tokens_value" 'setup input' || return $?
     llama_bin_value="$llama_bin_default"
     if [ "${LLAMA_EXTERNAL:-false}" = true ] && [ -n "${LLAMA_BASE_URL:-}" ]; then
       llama_base_url_value="$LLAMA_BASE_URL"
@@ -189,7 +209,9 @@ ensure_env_bootstrap() {
       llama_base_url_value="$(build_llama_base_url "$host_ip_value" "$llama_port_value")"
     fi
   else
-    prompt_resolved_value 'Context size for llama-server' 'LLAMA_CTX' "${LLAMA_CTX:-}" '16384'
+    configured_or_default 'OPENCLAW_MAX_TOKENS' "${OPENCLAW_MAX_TOKENS:-}" '8192'
+    openclaw_max_tokens_value="$REPLY"
+    prompt_llama_context_for_openclaw "${LLAMA_CTX:-}" '32768' "$openclaw_max_tokens_value"
     llama_ctx_value="$REPLY"
 
     llama_bin_value="$llama_bin_default"
@@ -206,11 +228,16 @@ ensure_env_bootstrap() {
 
     llama_bin_value="$REPLY"
 
+    llama_base_url_default="$(build_llama_base_url "$host_ip_value" "$llama_port_value")"
+    llama_base_url_current="${LLAMA_BASE_URL:-}"
+    if value_needs_setup 'LLAMA_BASE_URL' "$llama_base_url_current"; then
+      llama_base_url_current=''
+    fi
     if [ "$llama_section_needed" = true ]; then
-      prompt_resolved_value 'Base URL for llama-server API' 'LLAMA_BASE_URL' "${LLAMA_BASE_URL:-}" "$(build_llama_base_url "$host_ip_value" "$llama_port_value")"
+      prompt_resolved_value 'Base URL for llama-server API' 'LLAMA_BASE_URL' "$llama_base_url_current" "$llama_base_url_default"
       llama_base_url_value="$REPLY"
     else
-      configured_or_default 'LLAMA_BASE_URL' "${LLAMA_BASE_URL:-}" "$(build_llama_base_url "$host_ip_value" "$llama_port_value")"
+      configured_or_default 'LLAMA_BASE_URL' "$llama_base_url_current" "$llama_base_url_default"
       llama_base_url_value="$REPLY"
     fi
   fi
@@ -221,8 +248,7 @@ ensure_env_bootstrap() {
   LLAMA_PORT="$llama_port_value"
   LLAMA_CTX="$llama_ctx_value"
   LLAMA_BASE_URL="$llama_base_url_value"
-  configured_or_default 'OPENCLAW_MAX_TOKENS' "${OPENCLAW_MAX_TOKENS:-}" '8192'
-  OPENCLAW_MAX_TOKENS="$REPLY"
+  OPENCLAW_MAX_TOKENS="$openclaw_max_tokens_value"
   write_env_from_template
   source_env_file || return $?
 

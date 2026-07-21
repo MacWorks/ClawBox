@@ -43,6 +43,7 @@ source "$BASE_DIR/lib/runtime.sh"
 source "$BASE_DIR/lib/setup-openclaw-recovery.sh"
 source "$BASE_DIR/lib/config.sh"
 source "$BASE_DIR/lib/deploy.sh"
+source "$BASE_DIR/lib/openclaw-webui.sh"
 source "$BASE_DIR/lib/qualify/qualify.sh"
 source "$BASE_DIR/lib/setup-deployment-flow.sh"
 

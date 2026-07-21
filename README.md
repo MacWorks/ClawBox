@@ -2,7 +2,9 @@
 
 ClawBox runs OpenClaw inside a macOS VM while keeping model inference on the host with `llama-server`. The repository provides a repeatable host setup flow, VM provisioning script, and documentation for the host, VM, and runtime boundaries.
 
-The host owns `.env`, config generation, SSH-based deployment, and host inference services. The VM owns OpenClaw installation and `openclaw gateway` execution.
+The host owns `.env`, config generation, SSH-based deployment, host inference
+services, and managed OpenClaw gateway startup. The VM owns OpenClaw
+installation and runtime execution under the service configured by host setup.
 
 ## Security Model
 
@@ -63,8 +65,8 @@ See `docs/setup/vm.md` for the full VM setup details.
 ## Architecture
 
 - Host: stores `.env`, runs `llama-server`, generates OpenClaw config, pushes runtime artifacts over SSH
-- VM: runs `vm-provision.sh` manually when needed, then runs `openclaw gateway`
-  directly or through the VM user launchd service configured by setup
+- VM: runs `vm-provision.sh` manually when needed; the host setup flow then
+  installs, starts, and verifies the intended OpenClaw launchd runtime
 - Network path: VM OpenClaw process calls the host `llama-server` endpoint through `LLAMA_BASE_URL`
 
 See `docs/architecture/overview.md` for the full architecture summary.
@@ -123,15 +125,21 @@ What to expect:
 - the script copies `vm-provision.sh` to `VM_RUNTIME_PATH` when needed
 - if OpenClaw is not installed, the script prints VM-local provisioning
   instructions and prompts `Provisioning completed inside the VM? [Y/n]:`
-- after you confirm provisioning completed, setup refreshes VM runtime state,
-  offers to run the interactive OpenClaw onboarding flow, and then continues
-  into launchd/runtime service setup
+- after you confirm provisioning completed, setup refreshes VM runtime state and
+  continues into launchd/runtime service setup; optional OpenClaw
+  personalization is shown only as a follow-up command after managed setup
+  succeeds
+- if the VM does not become SSH-ready after UTM is opened, setup offers a
+  bounded retry/check-again menu instead of forcing you to restart setup
+- managed setup persists OpenClaw gateway authentication without printing the
+  token, and can optionally open the Web UI through a host-loopback SSH tunnel
 - after an actual managed `llama-server` restart/update, setup may offer a
   default-no VM OpenClaw gateway restart only when the running, ClawBox-managed
   gateway cannot complete a VM-to-host inference probe; this does not rewrite
   VM OpenClaw configuration
 
-The default `llama-server` port for new setups is `11434`. Existing `.env` values are preserved.
+The default `llama-server` port for new setups is `11434`. New setups default
+`LLAMA_CTX` to `32768`. Existing `.env` values are preserved.
 
 Host-side tool requirements for `llama-server` setup:
 
@@ -148,16 +156,18 @@ cd "$VM_RUNTIME_PATH"
 ./vm-provision.sh
 ```
 
-Provisioning is one-time and safe to repeat. It installs Homebrew when needed, ensures Node is available, installs OpenClaw, and verifies that `openclaw` is present in PATH.
+Provisioning is one-time and safe to repeat. It installs Homebrew when needed,
+ensures Node is available, installs OpenClaw, and verifies that `openclaw` is
+present in PATH. It does not start `openclaw gateway`; return to the host setup
+process to finish managed configuration and runtime startup.
 
 ### Step 6: Continue host setup
 
 Return to the host terminal running `./clawbox setup` and answer yes when it
 asks whether provisioning completed inside the VM. Once it confirms OpenClaw is
-available, setup offers to run `openclaw onboard` interactively over SSH. You
-may decline and use the displayed command later. If onboarding opens the
-terminal agent chat, type `/exit` when finished so ClawBox setup can continue.
-Setup then continues with VM runtime launchd setup.
+available, setup continues with VM runtime launchd setup. After managed setup
+succeeds, it prints the optional `openclaw onboard` command for later
+personalization.
 
 ## Verification
 

@@ -16,7 +16,8 @@ keys, but they do not replace `~/.openclaw/openclaw.json`.
 - bootstraps `.env` values interactively when required
 - runs a VM platform check before network prompts so first-run users can confirm Apple Silicon, UTM, and detect existing `.utm` VMs before continuing
 - offers a distinct VM detection flow when macOS privacy settings block access to the sandboxed UTM documents directory, explains how to grant Full Disk Access to the app running setup, attempts to open the Full Disk Access settings pane, lets you continue with manual VM configuration, or exits gracefully
-- reports when the VM is running but SSH is not yet reachable instead of treating SSH failure as proof that the VM is stopped, including cases where another macOS user owns the running UTM process and `utmctl list` is not visible to the current setup user
+- reports when the selected VM is running but SSH is not yet reachable instead of treating SSH failure as proof that the VM is stopped
+- treats generic UTM or virtualization processes as advisory only; another virtualization process on the Mac is not proof that the selected VM is running
 - prompts for a `llama-server` install mode
 - checks for healthy reusable `llama-server` instances before host-side binary installability checks, including listeners discovered on alternate local ports
 - when the configured/default endpoint is unhealthy, continues scanning alternate listening ports, explicitly reports that the configured endpoint is unhealthy, and states when setup switches to a discovered healthy port before entering any binary install flow
@@ -30,7 +31,8 @@ keys, but they do not replace `~/.openclaw/openclaw.json`.
 - lets you reuse an already running `llama-server` instance, stop and replace it only when the current user owns it, choose a different port, or exit setup gracefully
 - detects Homebrew in common macOS locations even when it is missing from the current account `PATH`, temporarily uses the discovered installation for setup, and prints the exact shell commands needed to make the Homebrew path persistent for future sessions
 - caches Homebrew discovery during a setup run so repeated checks do not keep re-scanning the same installation state unless setup changes the active Homebrew path
-- classifies Homebrew install failures into actionable categories such as permissions, lock contention, missing Xcode Command Line Tools, missing brew, network failures, and unavailable formulae instead of collapsing them into a generic environment failure
+- classifies Homebrew install failures from the brew exit status and captured output into actionable categories such as permissions, Homebrew lock/process contention, missing Xcode Command Line Tools, missing brew, network failures, unavailable formulae, and successful brew runs that still leave `llama-server` unavailable
+- saves full Homebrew install output to a timestamped `logs/setup/homebrew-install-*.log` file and prints that path instead of dumping the full brew transcript into the terminal
 - if a shared Homebrew installation already contains `llama.cpp` but the current macOS account cannot modify it, explains that the existing installation may still be reusable from this account and points the user toward binary reuse, another port, or fixing Homebrew ownership
 - when the user chooses `Use existing llama-server binary`, attempts to discover reusable binaries in `PATH`, common Homebrew locations, `~/.local/bin`, and known local `llama.cpp` build outputs before falling back to a manual path prompt
 - installs the system-wide `llama-server` wrapper at `/usr/local/bin/clawbox-llama-wrapper.sh` when system mode is selected for an admin user
@@ -38,7 +40,9 @@ keys, but they do not replace `~/.openclaw/openclaw.json`.
 - installs the runtime env file for the selected mode
 - installs and starts the matching LaunchDaemon or LaunchAgent for the selected mode
 - can install `llama.cpp` through Homebrew or build it from source with HTTPS and `cmake` when `LLAMA_BIN` is missing and the user approves installation
+- presents recoverable Homebrew install failures as warnings when the local source-build fallback is available, and still asks before cloning/building the large llama.cpp source repository
 - validates the host `llama-server` startup in two phases after launch by waiting for the TCP port and then polling `http://HOST_IP:LLAMA_PORT/v1/models` for valid JSON, and offers retry, port change, log viewing, or graceful exit on failure
+- prints the managed llama-server stdout and stderr log paths before the startup readiness wait so model-load or launchd failures can be inspected after setup exits unexpectedly
 - validates host prerequisites before doing remote work
 - when an existing VM auto-start runtime service is already present, distinguishes between keeping that managed runtime service and skipping runtime-service management for the current setup run
 - when a chosen models directory contains no supported `.gguf` files, keeps setup in an explicit recovery menu that allows entering a different directory, entering a full model path manually, re-scanning the current directory, or exiting setup gracefully instead of silently collapsing into manual file mode
@@ -46,11 +50,13 @@ keys, but they do not replace `~/.openclaw/openclaw.json`.
 - detects whether OpenClaw is installed and running on the VM
 - installs an initial minimal OpenClaw config only when the VM has no `~/.openclaw/openclaw.json`
 - preserves an existing VM `~/.openclaw/openclaw.json` and updates only ClawBox-managed keys with `openclaw config set`
+- persists managed gateway authentication without printing the token
 - exposes `./clawbox openclaw reset` as the explicit, default-no full config replacement path
 - copies `vm-provision.sh` to the VM runtime path when missing
 - if OpenClaw is not installed yet, presents VM-local provisioning guidance and
   prompts for confirmation when provisioning has completed inside the VM
 - optionally starts OpenClaw as a VM user launchd service when `OPENCLAW_AUTOSTART=true`
+- after managed gateway verification, can optionally open the OpenClaw Web UI through a host-loopback SSH tunnel
 
 It does not install OpenClaw inside the VM or run `vm-provision.sh` remotely.
 Provisioning activity remains manual, VM-local, visible to the user, and
@@ -97,8 +103,8 @@ Important values:
 - `VM_MACHINE_NAME`: UTM VM name used for optional login auto-start
 - `LLAMA_BIN`: absolute path to the host `llama-server` binary
 - `MODEL_PATH`: absolute path to the model file used by `llama-server`
-- `LLAMA_HOST`, `LLAMA_PORT`, `LLAMA_CTX`, `LLAMA_BASE_URL`: host inference settings, with a default port of `11434` for new setups
-- `OPENCLAW_MAX_TOKENS`: output-token budget advertised for the managed OpenClaw local model; defaults to `8192` and is separate from `LLAMA_CTX`
+- `LLAMA_HOST`, `LLAMA_PORT`, `LLAMA_CTX`, `LLAMA_BASE_URL`: host inference settings, with a default port of `11434` and default requested context of `32768` for new setups
+- `OPENCLAW_MAX_TOKENS`: output-token budget advertised for the managed OpenClaw local model; defaults to `8192`, must be less than the effective llama-server context window, and is separate from the requested context window
 - `LLAMA_EXTERNAL`: whether setup explicitly accepted an externally managed `llama-server` instance for the configured endpoint
 - `LLAMA_EXTERNAL` remains `false` when setup reuses an existing current-user ClawBox-managed instance on the configured port
 - `FIREWALL_SHARED_SUBNET`: shared-network hint used by VM SSH recovery and VM IP discovery; the legacy variable name remains for compatibility
@@ -150,6 +156,11 @@ A successful run of `./clawbox setup` should:
 - report whether OpenClaw is missing, stopped, or already running
 
 When `OPENCLAW_AUTOSTART=true`, setup writes or refreshes a per-user OpenClaw launchd plist in the VM, starts it with `launchctl`, and waits for that service to become active before continuing.
+
+If you accept the Web UI prompt, ClawBox opens a local browser URL backed by an
+SSH tunnel from host loopback to the VM gateway. The gateway is not exposed on a
+non-loopback host interface. Declining the prompt leaves setup successful and
+creates no tunnel.
 
 If OpenClaw is not yet installed, setup guides the user through manual
 provisioning inside the VM. After confirmation, setup refreshes runtime state and

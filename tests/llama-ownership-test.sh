@@ -804,6 +804,74 @@ test_prestart_resolver_reports_unhealthy_primary_and_finds_healthy_alternate() {
   assert_contains 'prestart resolver returns the healthy alternate port' "$output" 'RESOLVED:11435'
 }
 
+test_prestart_resolver_keeps_explicit_selected_port() {
+  local output=''
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    llama_classify_runtime_health() {
+      LLAMA_INSTANCE_HEALTH='absent'
+      LLAMA_INSTANCE_HAS_PROCESS=false
+      LLAMA_INSTANCE_HAS_LISTENER=false
+      LLAMA_INSTANCE_HEALTHCHECK_OK=false
+      LLAMA_INSTANCE_LAUNCHD_LOADED=false
+      return 0
+    }
+
+    llama_discover_healthy_instance_port() {
+      printf 'UNEXPECTED_DISCOVERY:%s:%s\n' "$1" "$2"
+      REPLY='11434'
+      return 0
+    }
+
+    resolve_prestart_llama_port '127.0.0.1' '11801' 'selected'
+    printf 'RESOLVED:%s\n' "$REPLY"
+  } 2>&1)"
+
+  assert_contains 'explicit selected prestart port is preserved' "$output" 'RESOLVED:11801'
+  assert_not_contains 'explicit selected prestart port does not scan unrelated healthy listeners' "$output" 'UNEXPECTED_DISCOVERY'
+}
+
+test_prestart_flow_keeps_custom_port_when_default_port_has_other_user_service() {
+  local output=''
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    llama_classify_runtime_health() {
+      LLAMA_INSTANCE_HEALTH='absent'
+      LLAMA_INSTANCE_HAS_PROCESS=false
+      LLAMA_INSTANCE_HAS_LISTENER=false
+      LLAMA_INSTANCE_HEALTHCHECK_OK=false
+      LLAMA_INSTANCE_LAUNCHD_LOADED=false
+      return 0
+    }
+
+    llama_discover_healthy_instance_port() {
+      printf 'UNEXPECTED_DISCOVERY:%s:%s\n' "$1" "$2"
+      REPLY='11434'
+      return 0
+    }
+
+    handle_prestart_llama_instance_choice() {
+      printf 'CHOICE_PORT:%s\n' "$2"
+      REPLY="$2"
+      return 0
+    }
+
+    run_prestart_llama_instance_flow '192.168.64.1' '11801' 'selected'
+    printf 'RESOLVED:%s\n' "$REPLY"
+  } 2>&1)"
+
+  assert_contains 'explicit custom port is passed to the prestart choice flow' "$output" 'CHOICE_PORT:11801'
+  assert_contains 'explicit custom port remains the setup result' "$output" 'RESOLVED:11801'
+  assert_not_contains 'explicit custom port ignores unrelated discovered default service' "$output" 'UNEXPECTED_DISCOVERY'
+  assert_not_contains 'explicit custom port does not switch to the default port' "$output" 'CHOICE_PORT:11434'
+}
+
 test_prestart_flow_prefers_discovered_healthy_port_before_binary_setup() {
   local output=''
 
@@ -902,6 +970,8 @@ run_test test_runtime_health_classification_marks_healthy_only_with_listener_and
 run_test test_listening_port_parser_extracts_ports_without_gawk_match_captures
 run_test test_llama_api_health_probe_uses_bounded_timeouts
 run_test test_prestart_resolver_reports_unhealthy_primary_and_finds_healthy_alternate
+run_test test_prestart_resolver_keeps_explicit_selected_port
+run_test test_prestart_flow_keeps_custom_port_when_default_port_has_other_user_service
 run_test test_prestart_flow_prefers_discovered_healthy_port_before_binary_setup
 
 if [ "$FAILURES" -ne 0 ]; then

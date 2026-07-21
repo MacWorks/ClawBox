@@ -59,7 +59,12 @@ target OpenClaw memory search at the embeddings server with
 `remote.baseUrl=EMBEDDINGS_LLAMA_BASE_URL`, and `remote.apiKey=ollama-local`.
 Those targeted updates do not replace `~/.openclaw/openclaw.json`.
 
-New setups default `LLAMA_PORT` to `11434`. Existing `.env` values are kept as-is.
+New setups default `LLAMA_PORT` to `11434` and `LLAMA_CTX` to `32768`.
+Existing `.env` values are kept as-is. `OPENCLAW_MAX_TOKENS` is a separate
+OpenClaw output-token setting and must be lower than the effective context
+window. If llama-server reports that it capped the configured `LLAMA_CTX`, setup
+uses the reported effective value for OpenClaw `contextWindow` without rewriting
+the requested `.env` value.
 
 Before ClawBox starts or reconfigures any managed host service, setup checks `http://HOST_IP:LLAMA_PORT/v1/models` and requires the response to parse as valid JSON. After starting a managed service, setup first waits for the TCP port to open and then keeps polling that API until it responds or the 120 second timeout expires.
 
@@ -79,7 +84,10 @@ If `LLAMA_BIN` is missing, setup offers these explicit choices after user approv
 - HTTPS source build under `$HOME/ai/llama.cpp`, which requires `cmake`
 - manual binary path entry
 
-Setup does not automatically fall back between install methods.
+Setup does not silently fall back between install methods. If a Homebrew install
+fails and source-build prerequisites are available, setup preserves the brew
+output in `logs/setup/homebrew-install-*.log`, reports the concise failure
+category, and asks before cloning/building llama.cpp locally.
 
 If Homebrew is installed but not writable by the current user, setup warns and does not attempt to repair permissions automatically.
 
@@ -99,6 +107,7 @@ A healthy host inference service should satisfy all of the following:
 
 - the `llama-server` API responds at `http://HOST_IP:LLAMA_PORT/v1/models` with valid JSON
 - if startup validation fails after waiting for the TCP port and API readiness, setup offers retry, port change, log viewing, or graceful exit instead of silently continuing
+- setup prints the managed stdout and stderr log paths before the readiness wait so startup failures can be inspected after the fact
 - the VM can reach `LLAMA_BASE_URL`
 
 `./scripts/status.sh` treats an opted-in external instance as healthy when `LLAMA_EXTERNAL=true` and the configured API responds. If the API responds but that opt-in flag is not set, the script reports that the instance is not managed by this user and instructs the user to re-run setup and accept the external instance explicitly.

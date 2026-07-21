@@ -54,7 +54,10 @@ require_value "OPENCLAW_DEFAULT_MODEL"
 
 OPENCLAW_GATEWAY_MODE_VALUE="${OPENCLAW_GATEWAY_MODE:-local}"
 LLAMA_CONTEXT_WINDOW_VALUE="$LLAMA_CTX"
+LLAMA_CONTEXT_WINDOW_RAW_VALUE="$LLAMA_CTX"
+OPENCLAW_EFFECTIVE_CONTEXT_WINDOW_VALUE="${OPENCLAW_EFFECTIVE_CONTEXT_WINDOW:-}"
 OPENCLAW_MAX_TOKENS_VALUE="${OPENCLAW_MAX_TOKENS:-8192}"
+OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE="${OPENCLAW_GATEWAY_AUTH_TOKEN:-}"
 
 case "$OPENCLAW_GATEWAY_MODE_VALUE" in
   local|remote)
@@ -94,9 +97,49 @@ case "$OPENCLAW_MAX_TOKENS_VALUE" in
     ;;
 esac
 
+if [ -n "$OPENCLAW_EFFECTIVE_CONTEXT_WINDOW_VALUE" ]; then
+  case "$OPENCLAW_EFFECTIVE_CONTEXT_WINDOW_VALUE" in
+    *[!0-9]*)
+      echo "Invalid OPENCLAW_EFFECTIVE_CONTEXT_WINDOW value: $OPENCLAW_EFFECTIVE_CONTEXT_WINDOW_VALUE"
+      exit 1
+      ;;
+    *)
+      if [ "$OPENCLAW_EFFECTIVE_CONTEXT_WINDOW_VALUE" -lt 1 ]; then
+        echo "Invalid OPENCLAW_EFFECTIVE_CONTEXT_WINDOW value: $OPENCLAW_EFFECTIVE_CONTEXT_WINDOW_VALUE"
+        exit 1
+      fi
+      if [ "$OPENCLAW_EFFECTIVE_CONTEXT_WINDOW_VALUE" -lt "$LLAMA_CONTEXT_WINDOW_VALUE" ]; then
+        LLAMA_CONTEXT_WINDOW_VALUE="$OPENCLAW_EFFECTIVE_CONTEXT_WINDOW_VALUE"
+      fi
+      ;;
+  esac
+fi
+
+if [ -n "$OPENCLAW_EFFECTIVE_CONTEXT_WINDOW_VALUE" ]; then
+  if [ "$OPENCLAW_MAX_TOKENS_VALUE" -ge "$LLAMA_CONTEXT_WINDOW_VALUE" ]; then
+    echo "Invalid OpenClaw token configuration: OPENCLAW_MAX_TOKENS=$OPENCLAW_MAX_TOKENS_VALUE must be less than effective contextWindow=$LLAMA_CONTEXT_WINDOW_VALUE"
+    echo "Increase LLAMA_CTX or lower OPENCLAW_MAX_TOKENS, then rerun ./clawbox setup."
+    exit 1
+  fi
+else
+  if [ "$OPENCLAW_MAX_TOKENS_VALUE" -ge "$LLAMA_CONTEXT_WINDOW_RAW_VALUE" ]; then
+    echo "Invalid OpenClaw token configuration in .env: OPENCLAW_MAX_TOKENS=$OPENCLAW_MAX_TOKENS_VALUE must be less than LLAMA_CTX=$LLAMA_CONTEXT_WINDOW_RAW_VALUE"
+    echo "Increase LLAMA_CTX or lower OPENCLAW_MAX_TOKENS, then rerun ./clawbox setup."
+    exit 1
+  fi
+fi
+
 mkdir -p "$RUNTIME_DIR"
 
-export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE OPENCLAW_MAX_TOKENS_VALUE
+if [ -z "$OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE" ]; then
+  OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE="$(python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(32))
+PY
+)"
+fi
+
+export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE OPENCLAW_MAX_TOKENS_VALUE OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE
 
 python3 - "$CONFIG_PATH" <<'PY'
 import json
@@ -106,7 +149,10 @@ import sys
 provider = os.environ["OPENCLAW_PROVIDER_NAME"]
 model = os.environ["OPENCLAW_DEFAULT_MODEL"]
 config = {
-    "gateway": {"mode": os.environ["OPENCLAW_GATEWAY_MODE_VALUE"]},
+    "gateway": {
+        "mode": os.environ["OPENCLAW_GATEWAY_MODE_VALUE"],
+        "auth": {"token": os.environ["OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE"]},
+    },
     "agents": {"defaults": {"model": {"primary": f"{provider}/{model}"}}},
     "tools": {"deny": ["cron"]},
     "models": {"providers": {provider: {

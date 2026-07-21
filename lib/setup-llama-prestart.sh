@@ -40,6 +40,7 @@ stop_user_owned_llama_instance() {
 resolve_prestart_llama_port() {
   local host_ip_value="$1"
   local llama_port_value="$2"
+  local discovery_mode="${3:-discover}"
   local discovered_port=''
   local configured_endpoint_unhealthy=false
 
@@ -56,6 +57,11 @@ resolve_prestart_llama_port() {
     out "  Health endpoint: $LLAMA_INSTANCE_HEALTHCHECK_OK"
     out "  launchd loaded: $LLAMA_INSTANCE_LAUNCHD_LOADED"
     blank_line
+  fi
+
+  if [ "$discovery_mode" = 'selected' ]; then
+    REPLY="$llama_port_value"
+    return 0
   fi
 
   if llama_discover_healthy_instance_port "$host_ip_value" "$llama_port_value"; then
@@ -79,9 +85,10 @@ resolve_prestart_llama_port() {
 run_prestart_llama_instance_flow() {
   local host_ip_value="$1"
   local llama_port_value="$2"
+  local discovery_mode="${3:-discover}"
   local resolved_port=''
 
-  resolve_prestart_llama_port "$host_ip_value" "$llama_port_value"
+  resolve_prestart_llama_port "$host_ip_value" "$llama_port_value" "$discovery_mode"
   resolved_port="$REPLY"
 
   handle_prestart_llama_instance_choice "$host_ip_value" "$resolved_port"

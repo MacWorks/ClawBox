@@ -55,6 +55,10 @@ print_setup_completion_summary() {
       else
         out 'OpenClaw CLI path could not be resolved; verify the gateway with ./clawbox status.'
       fi
+      if [ "${OPENCLAW_RUNTIME_MANAGEMENT_STATE:-unknown}" != 'running manually' ] &&
+         command -v print_openclaw_personalization_next_step >/dev/null 2>&1; then
+        print_openclaw_personalization_next_step
+      fi
       ;;
   esac
 }
@@ -64,6 +68,10 @@ run_provisioning_and_deployment() {
 
   setup_host_inference_service_phase || return $?
   setup_embeddings_service_phase || return $?
+
+  if command -v llama_refresh_openclaw_effective_context_window >/dev/null 2>&1; then
+    llama_refresh_openclaw_effective_context_window || return $?
+  fi
 
   section "VM Onboarding"
   step "Checking SSH access to the VM."
@@ -101,6 +109,8 @@ run_provisioning_and_deployment() {
   offer_targeted_openclaw_config_restart || return $?
 
   offer_openclaw_restart_after_llama_update || return $?
+
+  offer_openclaw_webui || return $?
 
   print_setup_completion_summary
 }
