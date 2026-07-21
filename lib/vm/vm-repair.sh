@@ -1,3 +1,15 @@
+VM_RECOVERY_CONTINUE_SETUP='continue_setup'
+VM_RECOVERY_RETRY_RECOVERY='retry_recovery'
+VM_RECOVERY_SHOW_MANUAL_GUIDANCE='show_manual_guidance'
+VM_RECOVERY_USER_EXIT='user_exit'
+VM_RECOVERY_FATAL_FAILURE='fatal_failure'
+VM_RECOVERY_OUTCOME=''
+
+set_vm_recovery_outcome() {
+  VM_RECOVERY_OUTCOME="$1"
+  return 0
+}
+
 vm_should_offer_ssh_bootstrap() {
   local ssh_probe_state="$1"
   local running_confidence="${2:-unknown}"
@@ -11,6 +23,9 @@ vm_should_offer_ssh_bootstrap() {
       ;;
     unknown)
       if [ "$running_confidence" = 'exact' ]; then
+        return 1
+      fi
+      if [ "${VM_GUEST_NETWORK_STATE:-unknown}" != 'reachable' ]; then
         return 1
       fi
       return 0
@@ -39,6 +54,12 @@ offer_vm_ip_recovery() {
   local retry_option_number=0
   local abort_option_number=0
   local selected_option=''
+
+  if configured_vm_ip_is_network_reachable; then
+    warn "The configured VM address (${VM_IP:-}) is reachable; keeping it."
+    REPLY='reachable'
+    return 1
+  fi
 
   status_begin 'Attempting VM IP discovery...'
 
@@ -281,6 +302,8 @@ print_vm_ssh_probe_guidance() {
         warn 'VM is running but is not yet reachable via SSH.'
       elif [ "$running_confidence" = 'generic' ]; then
         warn 'A virtualization process is running on this Mac, but ClawBox could not confirm that it matches the configured VM.'
+      elif [ "${VM_GENERIC_VIRTUALIZATION_RUNNING:-false}" = true ]; then
+        warn "Another virtualization process is running, but the selected VM \"${VM_MACHINE_NAME:-configured VM}\" is not confirmed running."
       else
         warn 'Unable to connect to VM via SSH.'
       fi
@@ -546,6 +569,10 @@ offer_vm_startup_readiness_recovery() {
   local max_attempts="${CLAWBOX_VM_STARTUP_READINESS_MAX_ATTEMPTS:-3}"
   local selected_vm_running=false
   local discovery_confirmed=false
+  local selected_runtime_state='unknown'
+  local manual_start_acknowledged=false
+
+  set_vm_recovery_outcome "$VM_RECOVERY_RETRY_RECOVERY"
 
   print_vm_ssh_probe_guidance "$vm_state" "$running_confidence" "$probe_state"
 
@@ -554,17 +581,27 @@ offer_vm_startup_readiness_recovery() {
     print_utm_start_attempt_summary
     out 'Manual next step: start the selected VM in UTM, confirm Remote Login is enabled, then re-run setup.'
     REPLY="$probe_state"
+    set_vm_recovery_outcome "$VM_RECOVERY_FATAL_FAILURE"
     return "$LLAMA_EXIT_GRACEFUL"
   fi
 
   while [ "$attempts" -lt "$max_attempts" ]; do
-    if setup_selected_vm_is_running; then
+    selected_runtime_state='unknown'
+    if setup_selected_vm_runtime_state; then
+      selected_runtime_state="$REPLY"
+    fi
+
+    if [ "$selected_runtime_state" = 'running' ]; then
       selected_vm_running=true
       vm_state='booting'
       running_confidence='exact'
     else
       selected_vm_running=false
-      vm_state='stopped'
+      if [ "$selected_runtime_state" = 'stopped' ]; then
+        vm_state='stopped'
+      else
+        vm_state='unknown'
+      fi
       running_confidence='unknown'
       refresh_generic_virtualization_context >/dev/null 2>&1 || true
     fi
@@ -572,6 +609,8 @@ offer_vm_startup_readiness_recovery() {
     blank_line
     if [ "$selected_vm_running" = true ]; then
       out "The selected VM \"${VM_MACHINE_NAME:-configured VM}\" is running, but SSH is not ready yet."
+    elif [ "$selected_runtime_state" = 'stopped' ]; then
+      out "The selected VM \"${VM_MACHINE_NAME:-configured VM}\" is stopped."
     elif [ "${VM_GENERIC_VIRTUALIZATION_RUNNING:-false}" = true ]; then
       out "Another virtualization process is running, but the selected VM \"${VM_MACHINE_NAME:-configured VM}\" is not confirmed running."
     else
@@ -619,6 +658,7 @@ offer_vm_startup_readiness_recovery() {
           continue
         fi
         if wait_for_known_vm_ssh_readiness; then
+          set_vm_recovery_outcome "$VM_RECOVERY_CONTINUE_SETUP"
           return 0
         fi
         probe_state="$REPLY"
@@ -626,13 +666,16 @@ offer_vm_startup_readiness_recovery() {
         ;;
       2)
         attempts=$((attempts + 1))
+        manual_start_acknowledged=true
         if check_manual_vm_start_readiness; then
+          set_vm_recovery_outcome "$VM_RECOVERY_CONTINUE_SETUP"
           return 0
         fi
         probe_state="$REPLY"
         case "$probe_state" in
           ssh-refused|ssh-auth-required|ssh-hostkey-unknown|ssh-hostkey-changed|ssh-hostkey-strict)
             REPLY="$probe_state"
+            set_vm_recovery_outcome "$VM_RECOVERY_RETRY_RECOVERY"
             return 1
             ;;
         esac
@@ -640,7 +683,9 @@ offer_vm_startup_readiness_recovery() {
       3)
         attempts=$((attempts + 1))
         discovery_confirmed=false
-        if setup_selected_vm_is_running; then
+        if [ "$manual_start_acknowledged" = true ]; then
+          discovery_confirmed=true
+        elif setup_selected_vm_is_running; then
           discovery_confirmed=true
         else
           warn 'The selected VM is still not confirmed running.'
@@ -662,6 +707,7 @@ offer_vm_startup_readiness_recovery() {
         fi
 
         if wait_for_vm_ssh_after_network_ready; then
+          set_vm_recovery_outcome "$VM_RECOVERY_CONTINUE_SETUP"
           return 0
         fi
         probe_state="$REPLY"
@@ -674,6 +720,7 @@ offer_vm_startup_readiness_recovery() {
           continue
         fi
         if wait_for_vm_ssh_after_network_ready; then
+          set_vm_recovery_outcome "$VM_RECOVERY_CONTINUE_SETUP"
           return 0
         fi
         probe_state="$REPLY"
@@ -681,15 +728,18 @@ offer_vm_startup_readiness_recovery() {
         ;;
       5)
         print_manual_ssh_setup_instructions
+        set_vm_recovery_outcome "$VM_RECOVERY_SHOW_MANUAL_GUIDANCE"
         return "$LLAMA_EXIT_GRACEFUL"
         ;;
       6)
+        set_vm_recovery_outcome "$VM_RECOVERY_USER_EXIT"
         return "$LLAMA_EXIT_GRACEFUL"
         ;;
     esac
   done
 
   REPLY="$probe_state"
+  set_vm_recovery_outcome "$VM_RECOVERY_RETRY_RECOVERY"
   return 1
 }
 
@@ -909,6 +959,7 @@ ensure_vm_connectivity_or_repair() {
   detect_vm_state
   vm_state="$REPLY"
   running_confidence="${VM_RUNNING_STATE_CONFIDENCE:-unknown}"
+  ssh_probe_state="${VM_DETECTED_SSH_PROBE_STATE:-unknown}"
   status_end '' 'info'
 
   if [ "$vm_state" = 'ready' ]; then
@@ -1146,6 +1197,7 @@ ensure_vm_connectivity_or_repair() {
   esac
 
   if ! vm_should_offer_ssh_bootstrap "$ssh_probe_state" "$running_confidence"; then
+    print_vm_ssh_probe_guidance "$vm_state" "$running_confidence" "$ssh_probe_state"
     print_manual_ssh_setup_instructions
     return "$LLAMA_EXIT_GRACEFUL"
   fi

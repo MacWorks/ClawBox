@@ -106,6 +106,11 @@ resolve_ps_bin() {
 
 VM_RUNNING_STATE_CONFIDENCE='unknown'
 VM_GENERIC_VIRTUALIZATION_RUNNING=false
+VM_SELECTED_RUNTIME_STATE='unknown'
+VM_GUEST_NETWORK_STATE='unknown'
+VM_SSH_SERVICE_STATE='unknown'
+VM_UTM_AUTOMATION_STATE='unknown'
+VM_DETECTED_SSH_PROBE_STATE='unknown'
 
 normalize_vm_machine_name() {
   local vm_name="$1"
@@ -131,16 +136,50 @@ vm_process_line_indicates_virtualization() {
 }
 
 setup_vm_is_running_via_utmctl() {
+  setup_selected_vm_runtime_state_via_utmctl || return 1
+
+  [ "$REPLY" = 'running' ]
+}
+
+setup_selected_vm_runtime_state_via_utmctl() {
   local utmctl_bin=''
   local vm_name=''
   local line
+  local list_output=''
+  local list_status=0
+
+  REPLY='unknown'
+  VM_UTM_AUTOMATION_STATE='unknown'
 
   normalize_vm_machine_name "${VM_MACHINE_NAME:-}"
   vm_name="$REPLY"
   [ -n "$vm_name" ] || return 1
 
-  resolve_utmctl_bin || return 1
+  if ! resolve_utmctl_bin; then
+    VM_UTM_AUTOMATION_STATE='unavailable'
+    return 1
+  fi
   utmctl_bin="$REPLY"
+
+  list_output="$(run_vm_command_with_default_timeout "$utmctl_bin" list 2>&1)"
+  list_status=$?
+
+  if [ "$list_status" -eq 124 ]; then
+    VM_UTM_AUTOMATION_STATE='timed-out'
+    return 1
+  fi
+
+  if printf '%s\n' "$list_output" | grep -Eq '(^|[^0-9])-1743([^0-9]|$)|Not authorized to send Apple events'; then
+    VM_UTM_AUTOMATION_STATE='denied'
+    return 1
+  fi
+
+  if [ "$list_status" -ne 0 ]; then
+    VM_UTM_AUTOMATION_STATE='unavailable'
+    return 1
+  fi
+
+  VM_UTM_AUTOMATION_STATE='available'
 
   while IFS= read -r line; do
     case "$line" in
@@ -148,22 +187,40 @@ setup_vm_is_running_via_utmctl() {
         case "$line" in
           *running*|*started*)
             VM_RUNNING_STATE_CONFIDENCE='exact'
+            REPLY='running'
+            return 0
+            ;;
+          *stopped*|*suspended*|*paused*)
+            VM_RUNNING_STATE_CONFIDENCE='exact'
+            REPLY='stopped'
+            return 0
+            ;;
+          *)
+            VM_RUNNING_STATE_CONFIDENCE='exact'
+            REPLY='unknown'
             return 0
             ;;
         esac
         ;;
     esac
   done <<EOF
-$(run_vm_command_with_default_timeout "$utmctl_bin" list 2>/dev/null || true)
+$list_output
 EOF
 
+  REPLY='unknown'
   return 1
+}
+
+setup_selected_vm_runtime_state() {
+  VM_RUNNING_STATE_CONFIDENCE='unknown'
+
+  setup_selected_vm_runtime_state_via_utmctl || return 1
 }
 
 setup_selected_vm_is_running() {
   VM_RUNNING_STATE_CONFIDENCE='unknown'
 
-  if setup_vm_is_running_via_utmctl; then
+  if setup_selected_vm_runtime_state && [ "$REPLY" = 'running' ]; then
     return 0
   fi
 
@@ -207,15 +264,104 @@ refresh_generic_virtualization_context() {
 }
 
 detect_vm_state() {
-  if ssh_check "echo ok" >/dev/null 2>&1; then
+  local ssh_probe_state='unknown'
+  local selected_runtime_state='unknown'
+
+  VM_SELECTED_RUNTIME_STATE='unknown'
+  VM_GUEST_NETWORK_STATE='unknown'
+  VM_SSH_SERVICE_STATE='unknown'
+  VM_RUNNING_STATE_CONFIDENCE='unknown'
+  VM_DETECTED_SSH_PROBE_STATE='unknown'
+
+  if [ -n "${VM_HOST:-}" ] && ssh_check "echo ok" >/dev/null 2>&1; then
     VM_RUNNING_STATE_CONFIDENCE='exact'
+    VM_SELECTED_RUNTIME_STATE='running'
+    VM_GUEST_NETWORK_STATE='reachable'
+    VM_SSH_SERVICE_STATE='ready'
     REPLY='ready'
     return 0
   fi
 
+  if [ -n "${VM_HOST:-}" ] && command -v classify_vm_ssh_connectivity >/dev/null 2>&1; then
+    classify_vm_ssh_connectivity
+    ssh_probe_state="$REPLY"
+    VM_DETECTED_SSH_PROBE_STATE="$ssh_probe_state"
+
+    case "$ssh_probe_state" in
+      ready)
+        VM_SELECTED_RUNTIME_STATE='running'
+        VM_GUEST_NETWORK_STATE='reachable'
+        VM_SSH_SERVICE_STATE='ready'
+        VM_RUNNING_STATE_CONFIDENCE='exact'
+        REPLY='ready'
+        return 0
+        ;;
+      ssh-refused)
+        VM_GUEST_NETWORK_STATE='reachable'
+        VM_SSH_SERVICE_STATE='refused'
+        if setup_selected_vm_runtime_state >/dev/null 2>&1 && [ "$REPLY" = 'running' ]; then
+          VM_SELECTED_RUNTIME_STATE='running'
+          VM_RUNNING_STATE_CONFIDENCE='exact'
+        fi
+        REPLY='running-no-ssh'
+        return 0
+        ;;
+      ssh-auth-required)
+        VM_GUEST_NETWORK_STATE='reachable'
+        VM_SSH_SERVICE_STATE='auth-required'
+        if setup_selected_vm_runtime_state >/dev/null 2>&1 && [ "$REPLY" = 'running' ]; then
+          VM_SELECTED_RUNTIME_STATE='running'
+          VM_RUNNING_STATE_CONFIDENCE='exact'
+        fi
+        REPLY='running-no-ssh'
+        return 0
+        ;;
+      ssh-hostkey-unknown|ssh-hostkey-changed|ssh-hostkey-strict)
+        VM_GUEST_NETWORK_STATE='reachable'
+        VM_SSH_SERVICE_STATE='hostkey-blocked'
+        if setup_selected_vm_runtime_state >/dev/null 2>&1 && [ "$REPLY" = 'running' ]; then
+          VM_SELECTED_RUNTIME_STATE='running'
+          VM_RUNNING_STATE_CONFIDENCE='exact'
+        fi
+        REPLY='running-no-ssh'
+        return 0
+        ;;
+      ssh-remote-command-failed)
+        VM_GUEST_NETWORK_STATE='reachable'
+        VM_SSH_SERVICE_STATE='auth-failed'
+        if setup_selected_vm_runtime_state >/dev/null 2>&1 && [ "$REPLY" = 'running' ]; then
+          VM_SELECTED_RUNTIME_STATE='running'
+          VM_RUNNING_STATE_CONFIDENCE='exact'
+        fi
+        REPLY='running-no-ssh'
+        return 0
+        ;;
+      ssh-timeout)
+        VM_GUEST_NETWORK_STATE='unknown'
+        VM_SSH_SERVICE_STATE='timed-out'
+        ;;
+      invalid-target|unreachable)
+        VM_GUEST_NETWORK_STATE='unreachable'
+        VM_SSH_SERVICE_STATE='unreachable'
+        ;;
+      *)
+        VM_GUEST_NETWORK_STATE='unknown'
+        VM_SSH_SERVICE_STATE='unknown'
+        ;;
+    esac
+  fi
+
   refresh_generic_virtualization_context >/dev/null 2>&1 || true
 
-  if setup_selected_vm_is_running; then
+  if setup_selected_vm_runtime_state; then
+    selected_runtime_state="$REPLY"
+    VM_SELECTED_RUNTIME_STATE="$selected_runtime_state"
+  else
+    selected_runtime_state='unknown'
+    VM_SELECTED_RUNTIME_STATE='unknown'
+  fi
+
+  if [ "$selected_runtime_state" = 'running' ]; then
     if [ "${VM_RECENTLY_STARTED:-false}" = true ]; then
       REPLY='booting'
     else
@@ -225,6 +371,11 @@ detect_vm_state() {
     return 0
   fi
 
-  REPLY='stopped'
+  if [ "$selected_runtime_state" = 'stopped' ]; then
+    REPLY='stopped'
+    return 0
+  fi
+
+  REPLY='unknown'
   return 0
 }

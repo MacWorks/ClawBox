@@ -239,8 +239,8 @@ test_manual_vm_configuration_uses_running_vm_repair_flow() {
   assert_contains 'manual vm path keeps the selected vm name for later detection' "$output" 'Enter VM name [FallbackVM]:'
   assert_contains 'manual vm path reports advisory generic virtualization without claiming selected vm runtime' "$output" 'Another virtualization process is running, but the selected VM "Shared VM" is not confirmed running.'
   assert_not_contains 'manual vm path does not use the unsupported probable-running wording' "$output" 'VM appears to already be running but is not yet reachable via SSH.'
-  assert_contains 'manual vm path reports selected vm stopped until authoritative running evidence exists' "$output" 'VM is not running.'
-  assert_contains 'manual vm path offers startup for the selected vm' "$output" 'Start the VM now?'
+  assert_not_contains 'manual vm path does not report selected vm stopped without authoritative stopped evidence' "$output" 'VM is not running.'
+  assert_not_contains 'manual vm path does not offer startup from generic virtualization evidence alone' "$output" 'Start the VM now?'
   assert_not_contains 'manual vm path does not report failed startup in the cross-user scenario' "$output" 'Failed to start VM.'
 }
 

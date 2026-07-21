@@ -1741,8 +1741,11 @@ test_vm_connectivity_repair_flow() {
     ssh_check() {
       return 1
     }
-    setup_selected_vm_is_running() {
-      return 1
+    setup_selected_vm_runtime_state() {
+      REPLY='stopped'
+      VM_SELECTED_RUNTIME_STATE='stopped'
+      VM_RUNNING_STATE_CONFIDENCE='exact'
+      return 0
     }
 
     VM_MACHINE_NAME='RepairVM'
@@ -1780,6 +1783,13 @@ test_vm_running_without_ssh_flow() {
     }
 
     setup_selected_vm_is_running() {
+      VM_RUNNING_STATE_CONFIDENCE='exact'
+      return 0
+    }
+
+    setup_selected_vm_runtime_state() {
+      REPLY='running'
+      VM_SELECTED_RUNTIME_STATE='running'
       VM_RUNNING_STATE_CONFIDENCE='exact'
       return 0
     }
@@ -2439,7 +2449,12 @@ test_detect_vm_state() {
     return 0
   }
 
-  setup_selected_vm_is_running() {
+  VM_HOST='vm-user@192.168.64.2'
+
+  setup_selected_vm_runtime_state() {
+    REPLY='unknown'
+    VM_SELECTED_RUNTIME_STATE='unknown'
+    VM_RUNNING_STATE_CONFIDENCE='unknown'
     return 1
   }
 
@@ -2463,13 +2478,16 @@ test_detect_vm_state() {
   VM_RECENTLY_STARTED=false
   detect_vm_state
   state="$REPLY"
-  if [ "$state" = 'stopped' ]; then
-    pass 'vm state detects stopped when vm is not running'
+  if [ "$state" = 'unknown' ]; then
+    pass 'vm state keeps runtime unknown when selected-vm evidence is unavailable'
   else
-    fail 'vm state should detect stopped when vm is not running'
+    fail 'vm state should keep runtime unknown when selected-vm evidence is unavailable'
   fi
 
-  setup_selected_vm_is_running() {
+  setup_selected_vm_runtime_state() {
+    REPLY='running'
+    VM_SELECTED_RUNTIME_STATE='running'
+    VM_RUNNING_STATE_CONFIDENCE='exact'
     return 0
   }
 

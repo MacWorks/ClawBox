@@ -878,9 +878,10 @@ test_detect_vm_state_keeps_generic_virtualization_advisory_only() {
 
   VM_RECENTLY_STARTED=false
   detect_vm_state
-  assert_equals 'detect_vm_state reports stopped when only a generic virtualization process exists' "$REPLY" 'stopped'
+  assert_equals 'detect_vm_state reports unknown when only a generic virtualization process exists' "$REPLY" 'unknown'
   assert_equals 'detect_vm_state does not mark generic virtualization as selected-vm confidence' "$VM_RUNNING_STATE_CONFIDENCE" 'unknown'
   assert_equals 'detect_vm_state records generic virtualization as advisory context' "$VM_GENERIC_VIRTUALIZATION_RUNNING" 'true'
+  assert_equals 'detect_vm_state keeps selected runtime unknown without selected-vm evidence' "$VM_SELECTED_RUNTIME_STATE" 'unknown'
 }
 
 test_detect_vm_state_distinguishes_running_from_stopped() {
@@ -895,11 +896,15 @@ test_detect_vm_state_distinguishes_running_from_stopped() {
 
   VM_RECENTLY_STARTED=false
   detect_vm_state
-  assert_equals 'detect_vm_state reports stopped when only generic virtualization exists' "$REPLY" 'stopped'
+  assert_equals 'detect_vm_state reports unknown when only generic virtualization exists' "$REPLY" 'unknown'
 
   : > "$CLAWBOX_TEST_PROCESS_LIST_FILE"
   detect_vm_state
-  assert_equals 'detect_vm_state reports stopped when no selected-vm runtime is detected' "$REPLY" 'stopped'
+  assert_equals 'detect_vm_state reports unknown when no selected-vm runtime is detected' "$REPLY" 'unknown'
+
+  printf 'Shared VM stopped\n' > "$CLAWBOX_TEST_UTMCTL_LIST_FILE"
+  detect_vm_state
+  assert_equals 'detect_vm_state reports stopped only when selected-vm evidence says stopped' "$REPLY" 'stopped'
 }
 
 test_detect_vm_state_does_not_treat_open_utm_app_as_running() {
@@ -914,7 +919,7 @@ test_detect_vm_state_does_not_treat_open_utm_app_as_running() {
 
   VM_RECENTLY_STARTED=false
   detect_vm_state
-  assert_equals 'detect_vm_state does not treat the UTM app process alone as proof that the vm is running' "$REPLY" 'stopped'
+  assert_equals 'detect_vm_state does not treat the UTM app process alone as proof that the vm is running' "$REPLY" 'unknown'
 }
 
 test_ensure_vm_connectivity_reports_running_without_ssh() {
@@ -934,8 +939,8 @@ test_ensure_vm_connectivity_reports_running_without_ssh() {
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
   assert_contains 'connectivity repair warns that the configured VM could not be confirmed from generic virtualization evidence' "$output" 'Another virtualization process is running, but the selected VM "Shared VM" is not confirmed running.'
-  assert_contains 'connectivity repair offers selected-vm startup instead of ssh bootstrap' "$output" 'Start the VM now?'
-  assert_contains 'connectivity repair correctly reports the selected vm is stopped' "$output" 'VM is not running.'
+  assert_not_contains 'connectivity repair does not offer selected-vm startup without stopped evidence' "$output" 'Start the VM now?'
+  assert_not_contains 'connectivity repair does not report stopped without selected-vm evidence' "$output" 'VM is not running.'
   assert_not_contains 'connectivity repair does not offer SSH bootstrap for generic virtualization evidence' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
   assert_not_contains 'connectivity repair does not print failed startup when another user already has the VM running' "$output" 'Failed to start VM.'
   assert_not_contains 'connectivity repair does not use the unsupported probable-running wording' "$output" 'VM appears to already be running but is not yet reachable via SSH.'
@@ -1068,7 +1073,7 @@ test_ensure_vm_connectivity_treats_batch_auth_success_as_ready() {
     fail 'batch auth success should be treated as ready and continue without bootstrap'
   fi
 
-  assert_contains 'batch auth success reports that key auth is already configured' "$output" 'SSH key-based authentication is already configured.'
+  assert_not_contains 'batch auth success does not run later bootstrap reporting after initial readiness' "$output" 'SSH key-based authentication is already configured.'
   assert_not_contains 'batch auth success does not prompt for bootstrap' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
   assert_not_contains 'batch auth success does not claim passwordless auth is unconfirmed' "$output" 'Passwordless SSH authentication could not be confirmed yet.'
 }
@@ -1179,6 +1184,87 @@ test_ensure_vm_connectivity_retries_ssh_after_remote_login_confirmation() {
   assert_contains 'remote login retry flow continues into ssh bootstrap after confirmation' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
   assert_not_contains 'remote login retry flow does not emit contradictory generic ssh failure messaging after readiness succeeds' "$output" 'VM is running but is not yet reachable via SSH.'
   assert_not_contains 'remote login retry flow does not dump manual setup after a successful retry confirmation' "$output" ' > Manual SSH Setup'
+}
+
+test_remote_login_recovery_continues_to_model_configuration() {
+  local output
+  local classify_calls=0
+  local start_calls=0
+  local discovery_calls=0
+  local model_configured=false
+  local output_file="$TEMP_DIR/remote-login-bootstrap-output.txt"
+
+  prepare_vm_state_mocks
+
+  load_setup_functions
+  install_prompt_stubs
+  queue_prompt_answers 'y'
+
+  VM_REPAIR_MODE=false
+  VM_MACHINE_NAME='Shared VM'
+  VM_IP='192.168.64.6'
+  VM_USER='vm-user'
+  VM_USER_PATH='/Users/vm-user'
+  VM_HOST='vm-user@192.168.64.6'
+  VM_RUNTIME_PATH='/Users/vm-user/ClawBox'
+
+  setup_selected_vm_runtime_state() {
+    REPLY='unknown'
+    VM_SELECTED_RUNTIME_STATE='unknown'
+    VM_RUNNING_STATE_CONFIDENCE='unknown'
+    return 1
+  }
+
+  start_vm_with_utm() {
+    start_calls=$((start_calls + 1))
+    return 1
+  }
+
+  offer_vm_ip_recovery() {
+    discovery_calls=$((discovery_calls + 1))
+    return 1
+  }
+
+  classify_vm_ssh_connectivity() {
+    classify_calls=$((classify_calls + 1))
+    if [ "$classify_calls" -eq 1 ]; then
+      REPLY='ssh-refused'
+    else
+      REPLY='ready'
+    fi
+    return 0
+  }
+
+  wait_for_vm_ssh_service() {
+    REPLY='ready'
+    return 0
+  }
+
+  setup_configure_model_selection() {
+    model_configured=true
+    out 'MODEL_CONFIG_SENTINEL'
+    return 0
+  }
+
+  set +e
+  {
+    if ensure_vm_connectivity_or_repair; then
+      setup_configure_model_selection
+    fi
+  } > "$output_file" 2>&1
+  set -e
+  output="$(cat "$output_file")"
+
+  assert_contains 'remote-login recovery reaches model configuration after ssh readiness' "$output" 'MODEL_CONFIG_SENTINEL'
+  assert_not_contains 'remote-login recovery does not falsely report the VM stopped' "$output" 'VM is not running.'
+  assert_not_contains 'remote-login recovery does not enter automatic startup' "$output" 'Start the VM now?'
+  assert_equals 'remote-login recovery does not call automatic VM startup' "$start_calls" '0'
+  assert_equals 'remote-login recovery does not call IP discovery for reachable refused ssh' "$discovery_calls" '0'
+  if [ "$model_configured" = true ]; then
+    pass 'remote-login recovery continues normal fresh setup instead of returning to shell'
+  else
+    fail 'remote-login recovery should continue normal fresh setup instead of returning to shell'
+  fi
 }
 
 test_remote_login_confirmation_allows_one_bounded_refusal_retry() {
@@ -2080,6 +2166,90 @@ test_discover_vm_ip_candidates_excludes_host_api_address() {
   assert_equals 'vm ip discovery excludes the configured host-side api address' "$REPLY" '192.168.64.9'
 }
 
+test_discover_vm_ip_candidates_excludes_local_interface_addresses() {
+  prepare_vm_state_mocks
+
+  write_mock_command ifconfig '#!/bin/bash
+cat <<EOF
+bridge100: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST>
+	inet 192.168.64.1 netmask 0xffffff00 broadcast 192.168.64.255
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST>
+	inet 10.0.0.7 netmask 0xffffff00 broadcast 10.0.0.255
+EOF'
+
+  CLAWBOX_IFCONFIG_BIN="$MOCK_BIN_DIR/ifconfig"
+  export CLAWBOX_IFCONFIG_BIN
+
+  load_setup_functions
+
+  VM_MACHINE_NAME='Shared VM'
+  VM_USER='vm-user'
+  VM_IP='192.168.64.7'
+  FIREWALL_SHARED_SUBNET='192.168.64.0/24'
+  printf '192.168.64.1\n192.168.64.9\n' > "$CLAWBOX_TEST_UTMCTL_IP_FILE"
+
+  probe_ssh_target_endpoint() {
+    case "$1" in
+      vm-user@192.168.64.1)
+        fail 'vm ip discovery should not probe a local host interface address as a guest candidate'
+        REPLY='ssh-auth-required'
+        ;;
+      vm-user@192.168.64.9)
+        REPLY='ssh-auth-required'
+        ;;
+      *)
+        REPLY='unreachable'
+        ;;
+    esac
+    return 0
+  }
+
+  if discover_vm_ip_candidates; then
+    pass 'vm ip discovery succeeds after excluding local host interface addresses'
+  else
+    fail 'vm ip discovery should find a guest after excluding local host interface addresses'
+  fi
+
+  assert_equals 'vm ip discovery excludes local host interfaces even before HOST_IP is configured' "$REPLY" '192.168.64.9'
+}
+
+test_offer_vm_ip_recovery_keeps_reachable_configured_ip() {
+  local output
+  local output_file="$TEMP_DIR/reachable-ip-recovery-output.txt"
+  local discovery_calls=0
+  local recovery_reply=''
+
+  prepare_vm_state_mocks
+
+  load_setup_functions
+  install_prompt_stubs
+
+  VM_IP='192.168.64.6'
+  VM_USER='vm-user'
+  VM_HOST='vm-user@192.168.64.6'
+
+  probe_vm_network_endpoint() {
+    REPLY='ssh-refused'
+    return 0
+  }
+
+  discover_vm_ip_candidates() {
+    discovery_calls=$((discovery_calls + 1))
+    REPLY='192.168.64.9'
+    return 0
+  }
+
+  set +e
+  offer_vm_ip_recovery > "$output_file" 2>&1
+  set -e
+  recovery_reply="$REPLY"
+  output="$(cat "$output_file")"
+
+  assert_contains 'ip recovery keeps a configured address when network reachability is proven' "$output" 'The configured VM address (192.168.64.6) is reachable; keeping it.'
+  assert_equals 'ip recovery does not run discovery for a reachable configured vm ip' "$discovery_calls" '0'
+  assert_equals 'ip recovery reports reachable state to caller' "$recovery_reply" 'reachable'
+}
+
 printf 'Running VM state tests\n'
 
 test_setup_vm_is_running_uses_resolved_utmctl
@@ -2112,6 +2282,7 @@ test_ensure_vm_connectivity_classifies_missing_key_auth_without_failure_framing
 test_ensure_vm_connectivity_skips_bootstrap_when_key_auth_is_ready
 test_ensure_vm_connectivity_emits_single_ssh_bootstrap_success_line
 test_ensure_vm_connectivity_retries_ssh_after_remote_login_confirmation
+test_remote_login_recovery_continues_to_model_configuration
 test_remote_login_confirmation_allows_one_bounded_refusal_retry
 test_remote_login_retry_hostkey_failure_prints_known_hosts_remediation
 test_ssh_classifier_distinguishes_first_contact_from_changed_host_key
@@ -2135,6 +2306,8 @@ test_vm_onboarding_wait_defaults_increase_spinner_cadence
 test_wait_for_known_vm_ssh_readiness_distinguishes_network_ready_from_ssh_auth_failure
 test_discover_vm_ip_candidates_prefers_utmctl_guest_ip_metadata
 test_discover_vm_ip_candidates_excludes_host_api_address
+test_discover_vm_ip_candidates_excludes_local_interface_addresses
+test_offer_vm_ip_recovery_keeps_reachable_configured_ip
 test_discover_vm_ip_candidates_excludes_ips_already_proven_unreachable
 
 if [ "$FAILURES" -eq 0 ]; then
