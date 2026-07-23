@@ -1030,11 +1030,11 @@ test_deploy_module() {
   last_ssh_exec=''
   openclaw_config_remote_set 'models.providers.clawbox.models' "$desired_models" >/dev/null || true
   if [[ "$last_ssh_exec" == *'OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json'* ]] \
-    && [[ "$last_ssh_exec" == *'openclaw\ config\ set\ models.providers.clawbox.models'* ]] \
+    && [[ "$last_ssh_exec" == *'openclaw\ config\ set\ --replace\ models.providers.clawbox.models'* ]] \
     && [[ "$last_ssh_exec" != *'--merge'* ]]; then
-    pass "OpenClaw config set pins the CLI to the authoritative VM config path"
+    pass "OpenClaw provider model config set pins the CLI and uses explicit replacement"
   else
-    fail "OpenClaw config set should pin the CLI to the authoritative VM config path"
+    fail "OpenClaw provider model config set should pin the CLI and use explicit replacement"
   fi
 
   reordered_models='[{"cost":{"input":0,"output":0},"compat":{"unsupportedToolSchemaKeywords":["additionalProperties","pattern"],"supportsDeveloperRole":false},"maxTokens":8192,"contextWindow":32768,"api":"openai-completions","name":"local","id":"local"}]'
@@ -1413,26 +1413,35 @@ PY
 
   openclaw_config_remote_set() {
     local key="$1" value="$2"
-    ssh_exec "openclaw config set $key $value"
+    case "$key" in
+      models.providers.*.models)
+        ssh_exec "openclaw config set --replace $key $value"
+        ;;
+      *)
+        ssh_exec "openclaw config set $key $value"
+        ;;
+    esac
   }
   set_log=''
 
   last_ssh_exec=''
   openclaw_config_remote_set 'tools.deny' "$cron_deny"
   if [[ "$last_ssh_exec" != *'--merge'* ]] \
+    && [[ "$last_ssh_exec" != *'--replace'* ]] \
     && [[ "$last_ssh_exec" == *'tools.deny'* ]]; then
-    pass "OpenClaw tools deny updates avoid object merge mode"
+    pass "OpenClaw tools deny updates avoid merge and replace modes"
   else
-    fail "OpenClaw tools deny updates should avoid object merge mode"
+    fail "OpenClaw tools deny updates should avoid merge and replace modes"
   fi
 
   last_ssh_exec=''
   openclaw_config_remote_set 'models.providers.clawbox.models' "$desired_models"
-  if [[ "$last_ssh_exec" != *'--merge'* ]] \
+  if [[ "$last_ssh_exec" == *'--replace'* ]] \
+    && [[ "$last_ssh_exec" != *'--merge'* ]] \
     && [[ "$last_ssh_exec" == *'models.providers.clawbox.models'* ]]; then
-    pass "OpenClaw provider model updates replace the provider model array exactly"
+    pass "OpenClaw provider model updates acknowledge exact provider-array replacement"
   else
-    fail "OpenClaw provider model updates should replace the provider model array exactly"
+    fail "OpenClaw provider model updates should acknowledge exact provider-array replacement"
   fi
 
   openclaw_config_desired_entries_for_scope() {
@@ -1644,6 +1653,44 @@ PY
   else
     fail "deploy logic should fail targeted sync when post-update verification still differs"
   fi
+
+  rm -f "$prompt_marker" "$upload_marker" "$mkdir_marker"
+  remote_exists=true
+  CONFIG_OVERWRITTEN=false
+  CONFIG_TARGETED_UPDATED=false
+  set_log=''
+
+  openclaw_config_remote_get() {
+    case "$1" in
+      models.providers.clawbox.models) printf '%s\n' "$wrong_max_tokens_model" ;;
+      tools.deny) printf '%s\n' "$managed_tools_deny" ;;
+      models.providers.clawbox.baseUrl) printf '%s\n' "$managed_base_url" ;;
+      gateway.auth.token) printf '%s\n' '__OPENCLAW_REDACTED__' ;;
+      *) return 1 ;;
+    esac
+  }
+
+  openclaw_config_remote_set() {
+    set_log="${set_log}$1=$2\n"
+    printf '%s\n' 'Error: Refusing to replace models.providers.clawbox.models; it would remove existing entries: Fixture-Legacy-Model.gguf.' >&2
+    printf '%s\n' 'Use --merge to merge by id or --replace to replace intentionally.' >&2
+    return 1
+  }
+
+  set +e
+  sync_output="$(sync_openclaw_config 2>&1)"
+  sync_status=$?
+  set -e
+  if [ "$sync_status" -ne 0 ] \
+    && [[ "$sync_output" == *'OpenClaw config update failed for models.providers.clawbox.models.'* ]] \
+    && [[ "$sync_output" == *'Refusing to replace models.providers.clawbox.models'* ]] \
+    && [[ "$sync_output" == *'OpenClaw config was not replaced.'* ]] \
+    && [[ "$sync_output" != *'Targeted ClawBox OpenClaw settings updated.'* ]] \
+    && [ "$CONFIG_TARGETED_UPDATED" = false ]; then
+    pass "deploy logic propagates rejected OpenClaw provider-array replacement"
+  else
+    fail "deploy logic should propagate rejected OpenClaw provider-array replacement"
+  fi
   unset OPENCLAW_MAX_TOKENS
   LLAMA_CTX=32768
 
@@ -1847,6 +1894,7 @@ PY
   if [ "$(cat "$active_set_count_file")" = '1' ] \
     && [ "$(cat "$staged_upload_count_file")" = '0' ] \
     && cmp -s "$desired_models_file" "$staged_models_file" \
+    && grep -Fq -- '--replace' "$set_log" \
     && ! grep -Fq -- '--merge' "$set_log"; then
     pass "setup deployment path updates active config without replacing staged config"
   else

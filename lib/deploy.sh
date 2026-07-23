@@ -10,21 +10,26 @@ openclaw_config_remote_get() {
 
 openclaw_config_persist_value_for_key() {
   local key="$1" value="$2"
+  local remote_command=''
 
   case "$key" in
     models.providers.*.models)
-      # Provider model arrays are normalized before persistence; use exact path
-      # assignment so stale legacy concrete entries are removed instead of merged.
+      # Provider model arrays are normalized before persistence; use the CLI's
+      # explicit replacement acknowledgement so stale legacy concrete entries
+      # can be removed from the complete preserved array for this provider.
+      remote_command="OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set --replace $(printf '%q' "$key") $(printf '%q' "$value")"
       ;;
     tools.deny)
       # tools.deny is normalized to a union before persistence.
+      remote_command="OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")"
       ;;
     *)
       # Other managed settings are scalar/object leaves owned by their key policy.
+      remote_command="OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")"
       ;;
   esac
 
-  ssh_exec "zsh -lc $(printf '%q' "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")")" >/dev/null
+  ssh_exec "zsh -lc $(printf '%q' "$remote_command")" >/dev/null
 }
 
 openclaw_config_remote_set() {
