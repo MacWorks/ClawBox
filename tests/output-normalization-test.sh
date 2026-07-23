@@ -818,6 +818,74 @@ test_ensure_env_bootstrap_fast_path_preserves_configured_custom_port() {
   assert_contains 'fast path preserves the configured custom base url' "$output" 'LLAMA_BASE_URL=http://127.0.0.1:11801/v1'
 }
 
+test_ensure_env_bootstrap_fast_path_retry_stays_in_setup() {
+  local output
+
+  output="$({
+    load_setup_functions
+
+    local env_example="$TEMP_DIR/.env.example"
+    local env_file="$TEMP_DIR/.env"
+    local temp_file="$TEMP_DIR/env.tmp"
+    local prestart_count=0
+
+    cp "$ROOT_DIR/.env.example" "$env_example"
+    cp "$env_example" "$env_file"
+
+    ENV_EXAMPLE_FILE="$env_example"
+    ENV_FILE="$env_file"
+    BASE_DIR="$TEMP_DIR"
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    VM_REPAIR_MODE=false
+
+    awk '
+      /^HOST_IP=/ { print "HOST_IP=\"127.0.0.1\""; next }
+      /^VM_IP=/ { print "VM_IP=\"192.168.64.2\""; next }
+      /^VM_USER=/ { print "VM_USER=\"tester\""; next }
+      /^VM_USER_PATH=/ { print "VM_USER_PATH=\"/Users/tester\""; next }
+      /^VM_HOST=/ { print "VM_HOST=\"tester@192.168.64.2\""; next }
+      /^VM_RUNTIME_PATH=/ { print "VM_RUNTIME_PATH=\"/Users/tester/ClawBox\""; next }
+      /^VM_MACHINE_NAME=/ { print "VM_MACHINE_NAME=\"ClawVM\""; next }
+      /^LLAMA_BIN=/ { print "LLAMA_BIN=\"/Users/tester/bin/llama-server\""; next }
+      /^LLAMA_HOST=/ { print "LLAMA_HOST=\"0.0.0.0\""; next }
+      /^LLAMA_PORT=/ { print "LLAMA_PORT=\"11434\""; next }
+      /^LLAMA_CTX=/ { print "LLAMA_CTX=\"32768\""; next }
+      /^LLAMA_BASE_URL=/ { print "LLAMA_BASE_URL=\"http://127.0.0.1:11434/v1\""; next }
+      /^MODEL_PATH=/ { print "MODEL_PATH=\"/Users/tester/models/alpha.gguf\""; next }
+      /^FIREWALL_SHARED_SUBNET=/ { print "FIREWALL_SHARED_SUBNET=\"192.168.64.0/24\""; next }
+      /^OPENCLAW_PROVIDER_NAME=/ { print "OPENCLAW_PROVIDER_NAME=\"clawbox\""; next }
+      /^OPENCLAW_DEFAULT_MODEL=/ { print "OPENCLAW_DEFAULT_MODEL=\"alpha\""; next }
+      /^OPENCLAW_AUTOSTART=/ { print "OPENCLAW_AUTOSTART=\"true\""; next }
+      { print }
+    ' "$env_file" > "$temp_file"
+    mv "$temp_file" "$env_file"
+
+    run_prestart_llama_instance_flow() {
+      prestart_count=$((prestart_count + 1))
+      printf 'PRESTART_ATTEMPT=%s\n' "$prestart_count"
+      if [ "$prestart_count" -eq 1 ]; then
+        return "$LLAMA_EXIT_RETRY"
+      fi
+      REPLY='11434'
+      LLAMA_USE_EXISTING_INSTANCE=false
+      return 0
+    }
+
+    status=0
+    ensure_env_bootstrap < <(printf '') || status=$?
+    printf 'STATUS=%s\n' "$status"
+    printf 'ENV_BOOTSTRAPPED=%s\n' "$ENV_BOOTSTRAPPED"
+  } 2>&1)"
+
+  assert_contains 'fast path retry performs first prestart attempt' "$output" 'PRESTART_ATTEMPT=1'
+  assert_contains 'fast path retry stays in setup for second prestart attempt' "$output" 'PRESTART_ATTEMPT=2'
+  assert_contains 'fast path retry completes setup after successful retry' "$output" 'STATUS=0'
+  assert_contains 'fast path retry bootstraps env after successful retry' "$output" 'ENV_BOOTSTRAPPED=true'
+}
+
 test_setup_preserves_explicit_external_llama_base_url() {
   local output
   local configured_base_url='http://host.internal:19090/custom/v1'
@@ -3179,6 +3247,7 @@ run_test test_first_run_bootstrap_detects_cross_user_llama_before_binary_setup
 run_test test_first_run_bootstrap_honors_explicit_custom_llama_port
 run_test test_ensure_env_bootstrap_fast_path_rewrites_env_after_prestart_port_change
 run_test test_ensure_env_bootstrap_fast_path_preserves_configured_custom_port
+run_test test_ensure_env_bootstrap_fast_path_retry_stays_in_setup
 run_test test_setup_preserves_explicit_external_llama_base_url
 run_test test_ensure_env_bootstrap_repair_mode_skips_model_llama_and_openclaw_sections
 run_test test_ensure_env_bootstrap_requires_tty_when_setup_is_needed
