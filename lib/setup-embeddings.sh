@@ -136,9 +136,13 @@ setup_existing_embeddings_service_phase() {
     choice="${REPLY:-1}"
     case "$choice" in
       1)
-        EMBEDDINGS_ENABLED=true
-        out 'Using existing embeddings llama-server.'
-        return 0
+        if embeddings_llama_verify_configured_endpoint; then
+          EMBEDDINGS_ENABLED=true
+          out 'Using existing embeddings llama-server.'
+          return 0
+        fi
+        warn 'Existing embeddings llama-server is not healthy at the configured endpoint.'
+        out 'Choose restart/update or reconfigure embeddings to repair it.'
         ;;
       2)
         restart_existing_embeddings_service

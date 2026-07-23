@@ -1502,6 +1502,76 @@ EOF
   assert_contains 'status embeddings model summary keeps embeddings endpoint distinct' "$output" 'API: http://127.0.0.1:18081/v1'
 }
 
+test_status_reports_embeddings_loopback_only_as_unhealthy() {
+  local output
+  local status=0
+  local curl_log="$TEMP_DIR/status-embeddings-loopback-curl.log"
+
+  prepare_status_test_home
+  setup_status_test_mocks
+
+  cat > "$ENV_FILE" <<'EOF'
+HOST_IP="192.168.64.1"
+VM_HOST="vm-user@192.168.64.2"
+LLAMA_PORT="18080"
+LLAMA_BASE_URL="http://192.168.64.1:18080/v1"
+MODEL_PATH="/Users/vm-user/models/model.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+LLAMA_EXTERNAL="false"
+EMBEDDINGS_ENABLED="true"
+EMBEDDINGS_MODEL_PATH="/Users/vm-user/models/bge-large-en-v1.5-f16.gguf"
+EMBEDDINGS_LLAMA_PORT="18081"
+EMBEDDINGS_LLAMA_BASE_URL="http://192.168.64.1:18081/v1"
+EOF
+  cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
+MODEL_PATH="/Users/vm-user/models/model.gguf"
+EOF
+  cat > "$HOME/Library/Application Support/ClawBox/clawbox-embeddings.env" <<'EOF'
+EMBEDDINGS_MODEL_PATH="/Users/vm-user/models/bge-large-en-v1.5-f16.gguf"
+EOF
+  : > "$HOME/Library/LaunchAgents/com.clawbox.llama.embeddings.plist"
+
+  write_mock_command curl '#!/bin/bash
+if [ -n "${CLAWBOX_TEST_STATUS_CURL_LOG:-}" ]; then
+  printf "%s\n" "$*" >> "$CLAWBOX_TEST_STATUS_CURL_LOG"
+fi
+case "$*" in
+  *"http://192.168.64.1:18081/v1/models"*)
+    exit 1
+    ;;
+esac
+exit 0
+'
+
+  export CLAWBOX_TEST_STATUS_CURL_LOG="$curl_log"
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT='/opt/homebrew/bin/llama-server -m /Users/vm-user/models/model.gguf --host 0.0.0.0 --port 18080 --ctx-size 32768'
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_EMBEDDINGS_OUTPUT='/opt/homebrew/bin/llama-server -m /Users/vm-user/models/bge-large-en-v1.5-f16.gguf --host 0.0.0.0 --port 18081 --ctx-size 8192 --embedding'
+  export CLAWBOX_TEST_SSH_OPENCLAW_MEMORY_MODEL='bge-large-en-v1.5-f16.gguf'
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/embeddings-loopback-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/embeddings-loopback-system.err.log"
+
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG" "$curl_log"
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status embeddings loopback-only path exits unhealthy' "$status" '1'
+  assert_contains 'status embeddings loopback-only path fails configured endpoint' "$output" 'FAIL: Embeddings llama-server is not responding at http://192.168.64.1:18081/v1'
+  assert_contains 'status embeddings loopback-only path reports loopback diagnostic' "$output" 'Loopback responds at http://127.0.0.1:18081/v1, but the configured VM-facing endpoint does not.'
+  assert_contains 'status embeddings loopback-only path probes configured endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://192.168.64.1:18081/v1/models'
+  assert_contains 'status embeddings loopback-only path probes loopback only for diagnosis' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://127.0.0.1:18081/v1/models'
+}
+
 test_status_marks_embeddings_memory_model_unavailable_only_when_read_fails() {
   local output
   local status=0
@@ -2074,6 +2144,7 @@ run_test test_status_managed_local_host_probe_ignores_custom_llama_base_url_when
 run_test test_status_displays_primary_model_summary
 run_test test_status_detects_primary_model_mismatch
 run_test test_status_displays_embeddings_model_summary_when_enabled
+run_test test_status_reports_embeddings_loopback_only_as_unhealthy
 run_test test_status_marks_embeddings_memory_model_unavailable_only_when_read_fails
 run_test test_status_detects_embeddings_model_mismatch_when_enabled
 run_test test_status_omits_embeddings_model_summary_when_disabled_or_absent

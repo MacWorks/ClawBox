@@ -510,7 +510,18 @@ if [ "${EMBEDDINGS_ENABLED:-false}" = true ]; then
   if launchctl print "$EMBEDDINGS_TARGET" >/dev/null 2>&1; then pass 'Embeddings LaunchAgent/LaunchDaemon is loaded'; else fail 'Embeddings LaunchAgent/LaunchDaemon not loaded'; fi
   if [ -f "$EMBEDDINGS_PLIST_PATH" ]; then pass 'Embeddings plist exists'; else fail 'Embeddings plist missing'; fi
   if [ -f "$EMBEDDINGS_ENV_PATH" ]; then pass 'Embeddings runtime env exists'; else fail 'Embeddings runtime env missing'; fi
-  if status_curl "${EMBEDDINGS_URL%/}/models" >/dev/null 2>&1; then pass "Embeddings llama-server is responding at $EMBEDDINGS_URL"; else fail "Embeddings llama-server is not responding at $EMBEDDINGS_URL"; fi
+  if status_curl "${EMBEDDINGS_URL%/}/models" >/dev/null 2>&1; then
+    pass "Embeddings llama-server is responding at $EMBEDDINGS_URL"
+  else
+    fail "Embeddings llama-server is not responding at $EMBEDDINGS_URL"
+    EMBEDDINGS_LOOPBACK_URL="http://127.0.0.1:${EMBEDDINGS_LLAMA_PORT:-11435}/v1"
+    if [ "$EMBEDDINGS_LOOPBACK_URL" != "$EMBEDDINGS_URL" ] \
+      && status_curl "${EMBEDDINGS_LOOPBACK_URL%/}/models" >/dev/null 2>&1
+    then
+      out "  Loopback responds at $EMBEDDINGS_LOOPBACK_URL, but the configured VM-facing endpoint does not."
+      out '  Restart/update embeddings setup so the runtime binds to the configured host interface.'
+    fi
+  fi
 fi
 
 # --- SSH ---
