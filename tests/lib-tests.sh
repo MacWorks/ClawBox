@@ -711,6 +711,7 @@ test_runtime_handle_module() {
   local saved_warn=''
   local saved_native_gateway_check=''
   local saved_manual_process_check=''
+  local runtime_prompt_answer='y'
 
   # shellcheck source=/dev/null
   . "$ROOT_DIR/lib/runtime.sh"
@@ -719,6 +720,7 @@ test_runtime_handle_module() {
   saved_out="$(declare -f out)"
   saved_warn="$(declare -f warn)"
   saved_native_gateway_check="$(declare -f openclaw_runtime_has_running_native_gateway_service)"
+  saved_native_gateway_stop="$(declare -f openclaw_runtime_stop_native_gateway_service)"
   saved_manual_process_check="$(declare -f openclaw_runtime_has_manual_process)"
 
   start_openclaw() {
@@ -729,6 +731,11 @@ test_runtime_handle_module() {
 
   stop_openclaw() {
     stop_attempts=$((stop_attempts + 1))
+    return 0
+  }
+
+  openclaw_runtime_stop_native_gateway_service() {
+    native_stop_attempts=$((native_stop_attempts + 1))
     return 0
   }
 
@@ -747,7 +754,7 @@ test_runtime_handle_module() {
   prompt_yes_no() {
     manual_prompt_count=$((manual_prompt_count + 1))
     printf 'prompt:%s [%s]\n' "$1" "$2" >> "$output_log"
-    REPLY='y'
+    REPLY="$runtime_prompt_answer"
   }
 
   is_yes() {
@@ -808,17 +815,60 @@ test_runtime_handle_module() {
   : > "$output_log"
   start_attempts=0
   stop_attempts=0
+  native_stop_attempts=0
+  runtime_prompt_answer='n'
   CONFIG_OVERWRITTEN=true
   IS_RUNNING=true
   OPENCLAW_AUTOSTART=true
   if handle_openclaw_runtime_state >/dev/null 2>&1 \
     && [ "$start_attempts" -eq 0 ] \
     && [ "$stop_attempts" -eq 0 ] \
+    && [ "$native_stop_attempts" -eq 0 ] \
     && grep -Fq 'native OpenClaw LaunchAgent' "$output_log" \
-    && grep -Fq 'will not stop or replace the native gateway automatically' "$output_log"; then
+    && grep -Fq 'Replace the native OpenClaw runtime with ClawBox management?' "$output_log" \
+    && grep -Fq 'OpenClaw remains managed by the native OpenClaw LaunchAgent.' "$output_log"; then
     pass "runtime handler preserves a running native OpenClaw gateway during config updates"
   else
     fail "runtime handler should not start ClawBox OpenClaw into a native gateway port"
+  fi
+
+  : > "$output_log"
+  start_attempts=0
+  stop_attempts=0
+  native_stop_attempts=0
+  runtime_prompt_answer='y'
+  CONFIG_OVERWRITTEN=true
+  IS_RUNNING=true
+  OPENCLAW_AUTOSTART=true
+  mock_start_exit=0
+  mock_start_state='bootstrapped'
+  if handle_openclaw_runtime_state >/dev/null 2>&1 \
+    && [ "$start_attempts" -eq 1 ] \
+    && [ "$stop_attempts" -eq 1 ] \
+    && [ "$native_stop_attempts" -eq 1 ] \
+    && grep -Fq 'Replace the native OpenClaw runtime with ClawBox management?' "$output_log" \
+    && grep -Fq 'OpenClaw runtime: managed by VM launchd.' "$output_log"; then
+    pass "runtime handler migrates native OpenClaw gateway to ClawBox management when confirmed"
+  else
+    fail "runtime handler should migrate native OpenClaw gateway to ClawBox management when confirmed"
+  fi
+
+  : > "$output_log"
+  start_attempts=0
+  stop_attempts=0
+  native_stop_attempts=0
+  runtime_prompt_answer='y'
+  CONFIG_OVERWRITTEN=true
+  IS_RUNNING=true
+  OPENCLAW_AUTOSTART=true
+  mock_start_exit=1
+  mock_start_state='bootstrapped'
+  if handle_openclaw_runtime_state >/dev/null 2>&1; then
+    fail "runtime handler should fail when confirmed native migration cannot start ClawBox gateway"
+  elif [ "$stop_attempts" -eq 1 ] && [ "$start_attempts" -eq 1 ] && [ "$native_stop_attempts" -eq 1 ]; then
+    pass "runtime handler fails confirmed native migration when ClawBox gateway ownership is not established"
+  else
+    fail "runtime handler should attempt stop and start during failed native migration"
   fi
   eval "$saved_native_gateway_check"
 
@@ -830,6 +880,7 @@ test_runtime_handle_module() {
   start_attempts=0
   stop_attempts=0
   manual_prompt_count=0
+  runtime_prompt_answer='y'
   CONFIG_OVERWRITTEN=false
   IS_RUNNING=true
   OPENCLAW_AUTOSTART=true
@@ -849,6 +900,7 @@ test_runtime_handle_module() {
 
   unset -f start_openclaw
   unset -f stop_openclaw
+  eval "$saved_native_gateway_stop"
   unset -f prompt_yes_no
   unset -f is_yes
   eval "$saved_manual_process_check"

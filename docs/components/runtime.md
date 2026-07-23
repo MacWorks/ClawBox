@@ -129,8 +129,9 @@ An active `com.clawbox.openclaw` launchd service is still inspected as supportin
 
 Stale artifacts alone do not count. A leftover plist, dead prior session, stale PID-like state, or other non-running residue must not be reported as an active runtime.
 When the native OpenClaw LaunchAgent owns the gateway, setup and status report
-that ownership and do not automatically stop it, replace it, or start the
-ClawBox-managed service into its port.
+that ownership. If setup is managing OpenClaw autostart, it asks before
+replacing the native service with the ClawBox-managed VM LaunchAgent; declining
+keeps the native runtime in place.
 
 ## Restart behavior
 
