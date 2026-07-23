@@ -108,6 +108,44 @@ test_runtime_env_writes_empty_extra_args_for_fresh_users() {
   assert_contains 'fresh embeddings runtime env includes empty EMBEDDINGS_LLAMA_EXTRA_ARGS' "$output" 'EMBEDDINGS_LLAMA_EXTRA_ARGS=""'
 }
 
+test_configured_endpoint_is_authoritative_for_setup() {
+  local output=''
+  local status=0
+  local curl_log="$TEMP_DIR/embeddings-curl.log"
+  local curl_output=''
+
+  output="$({
+    export BASE_DIR="$ROOT_DIR"
+    export CLAWBOX_EMBEDDINGS_CURL_LOG="$curl_log"
+    export EMBEDDINGS_LLAMA_PORT=11435
+    export EMBEDDINGS_LLAMA_BASE_URL='http://192.168.64.1:11435/v1'
+    curl() {
+      printf '%s\n' "$*" >> "$CLAWBOX_EMBEDDINGS_CURL_LOG"
+      if [[ "$*" == *'http://192.168.64.1:11435/v1/models'* ]]; then
+        return 1
+      fi
+      if [[ "$*" == *'http://127.0.0.1:11435/v1/models'* ]]; then
+        return 0
+      fi
+      printf 'UNEXPECTED_CURL:%s\n' "$*"
+      return 2
+    }
+    . "$ROOT_DIR/lib/llama.sh"
+    set +e
+    embeddings_llama_verify_configured_endpoint
+    status=$?
+    set -e
+    printf 'STATUS=%s\n' "$status"
+  } 2>&1)"
+
+  assert_contains 'embeddings setup fails when only loopback responds' "$output" 'STATUS=1'
+  assert_contains 'embeddings setup reports configured VM-facing endpoint failure' "$output" 'Embeddings llama-server responds on loopback but not at the configured VM-facing endpoint: http://192.168.64.1:11435/v1'
+  curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
+  assert_contains 'embeddings setup probes the configured /v1/models endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'
+  assert_contains 'embeddings setup probes loopback only as diagnostic' "$curl_output" 'http://127.0.0.1:11435/v1/models'
+  assert_not_contains 'embeddings setup does not probe legacy root models path' "$curl_output" 'http://192.168.64.1:11435/models'
+}
+
 test_disabled_status_and_model_preservation_contract() {
   local status_source model_source embeddings_source
   status_source="$(cat "$ROOT_DIR/scripts/status.sh")"; model_source="$(cat "$ROOT_DIR/scripts/model.sh")"; embeddings_source="$(cat "$ROOT_DIR/lib/setup-embeddings.sh")"
@@ -211,6 +249,7 @@ test_setup_rerun_preserves_existing_embeddings_service() {
     EMBEDDINGS_LLAMA_PORT=11435
     EMBEDDINGS_LLAMA_BASE_URL=http://127.0.0.1:11435/v1
     embeddings_llama_service_loaded() { [ "$1" = user ]; }
+    embeddings_llama_verify_configured_endpoint() { return 0; }
     llama_port_in_use() { return 0; }
     write_env_from_template() { printf 'WRITE_ENV_UNEXPECTED\n'; }
     source_env_file() { :; }
@@ -247,6 +286,7 @@ test_setup_rerun_stopped_embeddings_offers_repair_not_fresh_enable() {
     EMBEDDINGS_LLAMA_PORT=11435
     EMBEDDINGS_LLAMA_BASE_URL=http://127.0.0.1:11435/v1
     embeddings_llama_service_loaded() { return 1; }
+    embeddings_llama_verify_configured_endpoint() { return 1; }
     llama_port_in_use() { return 1; }
     setup_embeddings_service_phase
   } 2>&1)"
@@ -286,6 +326,7 @@ test_disabled_embeddings_keeps_fresh_enable_prompt() {
 run_test test_runtime_artifacts_are_distinct
 run_test test_wrapper_arguments_are_profile_specific
 run_test test_runtime_env_writes_empty_extra_args_for_fresh_users
+run_test test_configured_endpoint_is_authoritative_for_setup
 run_test test_disabled_status_and_model_preservation_contract
 run_test test_port_selection_contract
 run_test test_setup_rerun_preserves_existing_embeddings_service

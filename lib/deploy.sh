@@ -5,19 +5,35 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/output.sh"
 
 openclaw_config_remote_get() {
   local key="$1"
-  ssh_exec "zsh -lc $(printf '%q' "openclaw config get $(printf '%q' "$key")")"
+  ssh_exec "zsh -lc $(printf '%q' "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config get $(printf '%q' "$key")")"
+}
+
+openclaw_config_persist_value_for_key() {
+  local key="$1" value="$2"
+  local remote_command=''
+
+  case "$key" in
+    models.providers.*.models)
+      # Provider model arrays are normalized before persistence; use the CLI's
+      # explicit replacement acknowledgement so stale legacy concrete entries
+      # can be removed from the complete preserved array for this provider.
+      remote_command="OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set --replace $(printf '%q' "$key") $(printf '%q' "$value")"
+      ;;
+    tools.deny)
+      # tools.deny is normalized to a union before persistence.
+      remote_command="OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")"
+      ;;
+    *)
+      # Other managed settings are scalar/object leaves owned by their key policy.
+      remote_command="OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")"
+      ;;
+  esac
+
+  ssh_exec "zsh -lc $(printf '%q' "$remote_command")" >/dev/null
 }
 
 openclaw_config_remote_set() {
-  local key="$1" value="$2"
-  case "$key" in
-    models.providers.*.models)
-      ssh_exec "zsh -lc $(printf '%q' "openclaw config set --merge $(printf '%q' "$key") $(printf '%q' "$value")")"
-      ;;
-    *)
-      ssh_exec "zsh -lc $(printf '%q' "openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")")"
-      ;;
-  esac
+  openclaw_config_persist_value_for_key "$@"
 }
 
 openclaw_generate_gateway_auth_token() {
@@ -122,6 +138,43 @@ required_unsupported = required_compat.get("unsupportedToolSchemaKeywords", [])
 if not isinstance(required_unsupported, list):
     required_unsupported = []
 
+def is_legacy_concrete_model(model):
+    if not isinstance(model, dict):
+        return False
+    allowed_keys = {"id", "name", "api", "contextWindow", "maxTokens", "compat", "reasoning", "input", "cost"}
+    if any(key not in allowed_keys for key in model):
+        return False
+    model_id = model.get("id")
+    if (
+        not isinstance(model_id, str)
+        or model_id == required_id
+        or not model_id.endswith(".gguf")
+        or model.get("name") != model_id
+        or model.get("api") != required_api
+    ):
+        return False
+    compat = model.get("compat", {})
+    if not isinstance(compat, dict):
+        return False
+    unsupported = compat.get("unsupportedToolSchemaKeywords", [])
+    if unsupported is not None and (
+        not isinstance(unsupported, list)
+        or any(not isinstance(keyword, str) for keyword in unsupported)
+    ):
+        return False
+    for numeric_key in ("contextWindow", "maxTokens"):
+        try:
+            int(model.get(numeric_key))
+        except Exception:
+            return False
+    if "reasoning" in model and not isinstance(model.get("reasoning"), bool):
+        return False
+    if "input" in model and not isinstance(model.get("input"), list):
+        return False
+    if "cost" in model and not isinstance(model.get("cost"), dict):
+        return False
+    return compat.get("supportsDeveloperRole") == required_developer_role
+
 def managed_fields_match(model, require_local_identity):
     if not isinstance(model, dict):
         return False
@@ -158,21 +211,15 @@ local_entries = [
     model for model in current
     if isinstance(model, dict) and model.get("id") == required_id
 ]
+legacy_entries = [model for model in current if is_legacy_concrete_model(model)]
 
 if local_entries:
     for model in local_entries:
         if managed_fields_match(model, True):
+            if legacy_entries:
+                raise SystemExit(1)
             raise SystemExit(0)
     raise SystemExit(1)
-
-# Older ClawBox/OpenClaw configs may contain only a filename-derived provider
-# model entry while agents.defaults.model.primary already points at
-# clawbox/local. Treat a compatible legacy entry as acceptable metadata instead
-# of forcing a replacement during ordinary model switching. The explicit reset
-# command remains the full-replacement path.
-for model in current:
-    if managed_fields_match(model, False):
-        raise SystemExit(0)
 
 raise SystemExit(1)
 PY
@@ -198,7 +245,7 @@ openclaw_config_value_matches_for_key() {
   openclaw_config_value_matches "$current" "$desired"
 }
 
-openclaw_config_value_for_remote_set() {
+openclaw_config_normalize_value_for_key() {
   local key="$1" current="$2" desired="$3"
 
   case "$key" in
@@ -255,6 +302,56 @@ current_by_id = {
     for model in current
     if isinstance(model, dict) and model.get("id") is not None
 }
+desired_ids = {
+    model.get("id")
+    for model in desired
+    if isinstance(model, dict) and model.get("id") is not None
+}
+
+required = next((model for model in desired if isinstance(model, dict)), {})
+required_id = required.get("id")
+required_api = required.get("api")
+required_compat = required.get("compat", {})
+if not isinstance(required_compat, dict):
+    required_compat = {}
+required_developer_role = required_compat.get("supportsDeveloperRole")
+
+def is_legacy_concrete_model(model):
+    if not isinstance(model, dict):
+        return False
+    allowed_keys = {"id", "name", "api", "contextWindow", "maxTokens", "compat", "reasoning", "input", "cost"}
+    if any(key not in allowed_keys for key in model):
+        return False
+    model_id = model.get("id")
+    if (
+        not isinstance(model_id, str)
+        or model_id == required_id
+        or not model_id.endswith(".gguf")
+        or model.get("name") != model_id
+        or model.get("api") != required_api
+    ):
+        return False
+    compat = model.get("compat", {})
+    if not isinstance(compat, dict):
+        return False
+    unsupported = compat.get("unsupportedToolSchemaKeywords", [])
+    if unsupported is not None and (
+        not isinstance(unsupported, list)
+        or any(not isinstance(keyword, str) for keyword in unsupported)
+    ):
+        return False
+    for numeric_key in ("contextWindow", "maxTokens"):
+        try:
+            int(model.get(numeric_key))
+        except Exception:
+            return False
+    if "reasoning" in model and not isinstance(model.get("reasoning"), bool):
+        return False
+    if "input" in model and not isinstance(model.get("input"), list):
+        return False
+    if "cost" in model and not isinstance(model.get("cost"), dict):
+        return False
+    return compat.get("supportsDeveloperRole") == required_developer_role
 
 merged = []
 for required in desired:
@@ -297,6 +394,16 @@ for required in desired:
     output["compat"] = merged_compat
     merged.append(output)
 
+for model in current:
+    if not isinstance(model, dict):
+        continue
+    model_id = model.get("id")
+    if model_id in desired_ids:
+        continue
+    if is_legacy_concrete_model(model):
+        continue
+    merged.append(model)
+
 print(json.dumps(merged, separators=(",", ":")))
 PY
       ;;
@@ -304,6 +411,10 @@ PY
       printf '%s\n' "$desired"
       ;;
   esac
+}
+
+openclaw_config_value_for_remote_set() {
+  openclaw_config_normalize_value_for_key "$@"
 }
 
 openclaw_config_model_array() {
@@ -424,7 +535,7 @@ EOF
     [ -n "$key" ] || continue
     current="$(openclaw_config_remote_get "$key" 2>/dev/null || true)"
     openclaw_config_value_matches_for_key "$key" "$current" "$desired" && continue
-    desired="$(openclaw_config_value_for_remote_set "$key" "$current" "$desired")" || return 1
+    desired="$(openclaw_config_normalize_value_for_key "$key" "$current" "$desired")" || return 1
     if ! openclaw_config_remote_set "$key" "$desired"; then
       error "OpenClaw config update failed for $key."
       out 'OpenClaw config was not replaced.'
@@ -434,6 +545,8 @@ EOF
     current="$(openclaw_config_remote_get "$key" 2>/dev/null || true)"
     if ! openclaw_config_value_matches_for_key "$key" "$current" "$desired"; then
       error "OpenClaw config verification failed for $key."
+      out 'OpenClaw config was not replaced.'
+      out 'Run ./clawbox setup to retry targeted config sync, or ./clawbox openclaw reset for an explicit full reset.'
       return 1
     fi
     CONFIG_TARGETED_UPDATED=true
@@ -461,8 +574,8 @@ sync_openclaw_config() {
     return 0
   fi
 
-  apply_targeted_openclaw_config_updates all
-  ensure_openclaw_gateway_auth_config
+  apply_targeted_openclaw_config_updates all || return $?
+  ensure_openclaw_gateway_auth_config || return $?
 }
 
 sync_openclaw_config_targeted_only() {

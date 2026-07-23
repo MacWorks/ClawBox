@@ -434,6 +434,49 @@ EOF
 
 embeddings_llama_service_loaded() { launchctl print "$(embeddings_llama_mode_target "$1")" >/dev/null 2>&1; }
 
+embeddings_llama_configured_base_url() {
+  printf '%s\n' "${EMBEDDINGS_LLAMA_BASE_URL:-http://${HOST_IP}:${EMBEDDINGS_LLAMA_PORT:-11435}/v1}"
+}
+
+embeddings_llama_loopback_base_url() {
+  printf 'http://127.0.0.1:%s/v1\n' "${EMBEDDINGS_LLAMA_PORT:-11435}"
+}
+
+embeddings_llama_models_url_for_base() {
+  local base_url="$1"
+  printf '%s/models\n' "${base_url%/}"
+}
+
+embeddings_llama_endpoint_responding() {
+  local base_url="$1"
+  local models_url=''
+
+  models_url="$(embeddings_llama_models_url_for_base "$base_url")"
+  curl -sS --fail --connect-timeout 1 --max-time 2 "$models_url" >/dev/null 2>&1
+}
+
+embeddings_llama_verify_configured_endpoint() {
+  local configured_base=''
+  local loopback_base=''
+
+  configured_base="$(embeddings_llama_configured_base_url)"
+  if embeddings_llama_endpoint_responding "$configured_base"; then
+    return 0
+  fi
+
+  loopback_base="$(embeddings_llama_loopback_base_url)"
+  if [ "$configured_base" != "$loopback_base" ] \
+    && embeddings_llama_endpoint_responding "$loopback_base"
+  then
+    llama_fail "Embeddings llama-server responds on loopback but not at the configured VM-facing endpoint: $configured_base"
+    out 'Restart/update the embeddings runtime so it binds to the configured host interface, then rerun setup.'
+    return 1
+  fi
+
+  llama_fail "Embeddings llama-server did not respond at $configured_base"
+  return 1
+}
+
 setup_embeddings_llama_service_for_mode() {
   local mode="$1" wrapper_src wrapper_dest env_dest plist_dest stdout_path stderr_path env_temp plist_temp target wrapper_matches=false env_matches=false plist_matches=false service_loaded=false
   wrapper_src="$(embeddings_llama_wrapper_src)"; wrapper_dest="$(embeddings_llama_mode_wrapper_dest "$mode")"; env_dest="$(embeddings_llama_mode_env_dest "$mode")"; plist_dest="$(embeddings_llama_mode_plist_dest "$mode")"; stdout_path="$(embeddings_llama_mode_stdout_log "$mode")"; stderr_path="$(embeddings_llama_mode_stderr_log "$mode")"; target="$(embeddings_llama_mode_target "$mode")"
@@ -457,11 +500,11 @@ setup_embeddings_llama_service_for_mode() {
   llama_maybe_sudo "$mode" launchctl bootstrap "$(llama_mode_domain "$mode")" "$plist_dest" || return 1
   llama_maybe_sudo "$mode" launchctl kickstart -k "$target" >/dev/null 2>&1 || true
   fi
-  local attempt=1 url="${EMBEDDINGS_LLAMA_BASE_URL%/v1}/models"
+  local attempt=1
   while [ "$attempt" -le 30 ]; do
-    if curl -sS --fail --connect-timeout 1 --max-time 2 "$url" >/dev/null 2>&1; then return 0; fi
+    if embeddings_llama_verify_configured_endpoint >/dev/null 2>&1; then return 0; fi
     attempt=$((attempt + 1)); sleep 1
   done
-  llama_fail "Embeddings llama-server did not respond at $url"
+  embeddings_llama_verify_configured_endpoint
   return 1
 }

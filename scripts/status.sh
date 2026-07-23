@@ -57,6 +57,7 @@ LLAMA_USER_ERR_LOG="${CLAWBOX_LLAMA_USER_ERR_LOG:-$(clawbox_llama_user_stderr_lo
 
 fail_count=0
 wait_count=0
+warn_count=0
 
 fail() {
   out "FAIL: $1"
@@ -66,6 +67,11 @@ fail() {
 wait_status() {
   out "WAIT: $1"
   wait_count=$((wait_count + 1))
+}
+
+warn_status() {
+  out "WARN: $1"
+  warn_count=$((warn_count + 1))
 }
 
 pass() {
@@ -161,6 +167,91 @@ vm_openclaw_config_get() {
       vm_ssh_exec "zsh -lc 'openclaw config get $key'"
       ;;
   esac
+}
+
+vm_openclaw_provider_models_get() {
+  local provider="$1"
+
+  vm_ssh_exec "jq -cer --arg provider \"$provider\" '.models.providers[\$provider].models // []' ~/.openclaw/openclaw.json"
+}
+
+status_openclaw_provider_models_report() {
+  local models="$1"
+  local default_model="${2:-local}"
+
+  python3 - "$models" "$default_model" <<'PY'
+import json, sys
+
+try:
+    models = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+
+default_model = sys.argv[2] or "local"
+if not isinstance(models, list):
+    raise SystemExit(1)
+
+local_entries = [
+    model for model in models
+    if isinstance(model, dict) and model.get("id") == default_model
+]
+if len(local_entries) == 1:
+    print("pass\tOpenClaw stable alias model entry is configured")
+elif len(local_entries) > 1:
+    print(f"warn\tOpenClaw provider has duplicate stable alias model entries: {len(local_entries)}")
+else:
+    print("warn\tOpenClaw stable alias model entry is missing")
+
+def is_legacy_concrete_model(model):
+    if not isinstance(model, dict):
+        return False
+    allowed_keys = {"id", "name", "api", "contextWindow", "maxTokens", "compat", "reasoning", "input", "cost"}
+    if any(key not in allowed_keys for key in model):
+        return False
+    model_id = model.get("id")
+    if (
+        not isinstance(model_id, str)
+        or model_id == default_model
+        or not model_id.endswith(".gguf")
+        or model.get("name") != model_id
+        or model.get("api") != "openai-completions"
+    ):
+        return False
+    compat = model.get("compat", {})
+    if not isinstance(compat, dict):
+        return False
+    unsupported = compat.get("unsupportedToolSchemaKeywords", [])
+    if unsupported is not None and (
+        not isinstance(unsupported, list)
+        or any(not isinstance(keyword, str) for keyword in unsupported)
+    ):
+        return False
+    for numeric_key in ("contextWindow", "maxTokens"):
+        try:
+            int(model.get(numeric_key))
+        except Exception:
+            return False
+    if "reasoning" in model and not isinstance(model.get("reasoning"), bool):
+        return False
+    if "input" in model and not isinstance(model.get("input"), list):
+        return False
+    if "cost" in model and not isinstance(model.get("cost"), dict):
+        return False
+    return compat.get("supportsDeveloperRole") is False
+
+for model in models:
+    if not isinstance(model, dict):
+        continue
+    model_id = model.get("id")
+    if not isinstance(model_id, str) or model_id == default_model:
+        continue
+    if not model_id.endswith(".gguf"):
+        continue
+    if is_legacy_concrete_model(model):
+        print(f"warn\tOpenClaw provider has obsolete concrete model entry: {model_id}")
+    elif model.get("name") != model_id:
+        print(f"warn\tOpenClaw provider has conflicting concrete model entry: {model_id}")
+PY
 }
 
 llama_process_running() {
@@ -510,7 +601,18 @@ if [ "${EMBEDDINGS_ENABLED:-false}" = true ]; then
   if launchctl print "$EMBEDDINGS_TARGET" >/dev/null 2>&1; then pass 'Embeddings LaunchAgent/LaunchDaemon is loaded'; else fail 'Embeddings LaunchAgent/LaunchDaemon not loaded'; fi
   if [ -f "$EMBEDDINGS_PLIST_PATH" ]; then pass 'Embeddings plist exists'; else fail 'Embeddings plist missing'; fi
   if [ -f "$EMBEDDINGS_ENV_PATH" ]; then pass 'Embeddings runtime env exists'; else fail 'Embeddings runtime env missing'; fi
-  if status_curl "${EMBEDDINGS_URL%/}/models" >/dev/null 2>&1; then pass "Embeddings llama-server is responding at $EMBEDDINGS_URL"; else fail "Embeddings llama-server is not responding at $EMBEDDINGS_URL"; fi
+  if status_curl "${EMBEDDINGS_URL%/}/models" >/dev/null 2>&1; then
+    pass "Embeddings llama-server is responding at $EMBEDDINGS_URL"
+  else
+    fail "Embeddings llama-server is not responding at $EMBEDDINGS_URL"
+    EMBEDDINGS_LOOPBACK_URL="http://127.0.0.1:${EMBEDDINGS_LLAMA_PORT:-11435}/v1"
+    if [ "$EMBEDDINGS_LOOPBACK_URL" != "$EMBEDDINGS_URL" ] \
+      && status_curl "${EMBEDDINGS_LOOPBACK_URL%/}/models" >/dev/null 2>&1
+    then
+      out "  Loopback responds at $EMBEDDINGS_LOOPBACK_URL, but the configured VM-facing endpoint does not."
+      out '  Restart/update embeddings setup so the runtime binds to the configured host interface.'
+    fi
+  fi
 fi
 
 # --- SSH ---
@@ -548,6 +650,23 @@ if vm_ssh_exec "jq -e --arg provider \"$OPENCLAW_PROVIDER_NAME\" '.models.provid
 else
   fail "OpenClaw config invalid or unreadable"
 fi
+if OPENCLAW_PROVIDER_MODELS="$(vm_openclaw_provider_models_get "$OPENCLAW_PROVIDER_NAME" 2>/dev/null)"; then
+  while IFS=$'\t' read -r status_kind status_message; do
+    [ -n "$status_kind" ] || continue
+    case "$status_kind" in
+      pass)
+        pass "$status_message"
+        ;;
+      warn)
+        warn_status "$status_message"
+        ;;
+    esac
+  done <<EOF
+$(status_openclaw_provider_models_report "$OPENCLAW_PROVIDER_MODELS" "${OPENCLAW_DEFAULT_MODEL:-local}" 2>/dev/null || true)
+EOF
+else
+  warn_status "OpenClaw provider model array is unavailable"
+fi
 
 section "VM → Host LLaMA (API)"
 if vm_ssh_exec "curl $VM_STATUS_CURL_ARGS $VM_LLAMA_BASE_URL/models" >/dev/null 2>&1; then
@@ -582,8 +701,10 @@ fi
 # --- Summary ---
 blank_line
 out "========================================="
-if [ "$fail_count" -eq 0 ] && [ "$wait_count" -eq 0 ]; then
+if [ "$fail_count" -eq 0 ] && [ "$wait_count" -eq 0 ] && [ "$warn_count" -eq 0 ]; then
   out "RESULT: HEALTHY"
+elif [ "$fail_count" -eq 0 ] && [ "$wait_count" -eq 0 ]; then
+  out "RESULT: HEALTHY WITH WARNINGS ($warn_count warnings)"
 elif [ "$fail_count" -eq 0 ]; then
   out "RESULT: WAITING ($wait_count temporary issues)"
 else

@@ -73,8 +73,16 @@ ensure_env_bootstrap() {
       llama_port_discovery_mode='selected'
     fi
 
-    llama_capture_status run_prestart_llama_instance_flow "$host_ip_value" "$llama_port_value" "$llama_port_discovery_mode"
-    status=$LLAMA_LAST_STATUS
+    while true; do
+      llama_capture_status run_prestart_llama_instance_flow "$host_ip_value" "$llama_port_value" "$llama_port_discovery_mode"
+      status=$LLAMA_LAST_STATUS
+
+      if [ "$status" -eq "$LLAMA_EXIT_RETRY" ]; then
+        continue
+      fi
+
+      break
+    done
 
     if [ "$status" -eq "$LLAMA_EXIT_GRACEFUL" ]; then
       return "$LLAMA_EXIT_GRACEFUL"
@@ -183,8 +191,16 @@ ensure_env_bootstrap() {
     host_ip_value="$host_ip_default"
   fi
 
-  llama_capture_status run_prestart_llama_instance_flow "$host_ip_value" "$llama_port_value" "$llama_port_discovery_mode"
-  status=$LLAMA_LAST_STATUS
+  while true; do
+    llama_capture_status run_prestart_llama_instance_flow "$host_ip_value" "$llama_port_value" "$llama_port_discovery_mode"
+    status=$LLAMA_LAST_STATUS
+
+    if [ "$status" -eq "$LLAMA_EXIT_RETRY" ]; then
+      continue
+    fi
+
+    break
+  done
 
   if [ "$status" -eq "$LLAMA_EXIT_GRACEFUL" ]; then
     return "$LLAMA_EXIT_GRACEFUL"

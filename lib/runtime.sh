@@ -119,6 +119,24 @@ if command -v lsof >/dev/null 2>&1; then
 fi"
 }
 
+openclaw_runtime_stop_native_gateway_service() {
+  local label=''
+
+  command -v ssh_exec_zsh >/dev/null 2>&1 || return 0
+
+  label="$(openclaw_runtime_native_service_label)"
+  openclaw_runtime_launchctl_domain_command
+  ssh_exec_zsh \
+    "label=$(printf '%q' "$label")
+plist=\"\$HOME/Library/LaunchAgents/\$label.plist\"
+$(printf '%s\n' "$REPLY")
+if [ -f \"\$plist\" ]; then
+  launchctl bootout \"\$domain\" \"\$plist\" >/dev/null 2>&1 || true
+fi
+launchctl bootout \"\$domain/\$label\" >/dev/null 2>&1 || true" \
+    >/dev/null 2>&1 || true
+}
+
 openclaw_runtime_has_launchd_gateway() {
   openclaw_runtime_has_running_gateway_service
 }
@@ -142,6 +160,25 @@ openclaw_runtime_report_start() {
       ;;
   esac
   out 'OpenClaw runtime: managed by VM launchd.'
+}
+
+openclaw_runtime_migrate_native_gateway() {
+  warn 'OpenClaw is already running under the native OpenClaw LaunchAgent.'
+  out 'ClawBox can stop the native gateway and restart it with the ClawBox-managed VM LaunchAgent.'
+  blank_line
+  prompt_yes_no 'Replace the native OpenClaw runtime with ClawBox management?' 'n'
+  if ! is_yes "$REPLY"; then
+    out 'OpenClaw remains managed by the native OpenClaw LaunchAgent.'
+    OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by native OpenClaw LaunchAgent'
+    return 0
+  fi
+
+  openclaw_runtime_stop_native_gateway_service
+  stop_openclaw || return 1
+  if ! start_openclaw; then
+    return 1
+  fi
+  openclaw_runtime_report_start
 }
 
 openclaw_runtime_is_active() {
@@ -189,10 +226,15 @@ handle_openclaw_runtime_state() {
 
   if [ "$CONFIG_OVERWRITTEN" = true ] && openclaw_runtime_has_running_native_gateway_service; then
     success 'Config updated.'
-    warn 'OpenClaw is already running under the native OpenClaw LaunchAgent.'
-    out 'ClawBox will not stop or replace the native gateway automatically.'
-    OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by native OpenClaw LaunchAgent'
-    return 0
+    if [ "${OPENCLAW_AUTOSTART:-false}" = "true" ]; then
+      openclaw_runtime_migrate_native_gateway
+      return $?
+    else
+      warn 'OpenClaw is already running under the native OpenClaw LaunchAgent.'
+      out 'ClawBox will not stop or replace the native gateway automatically.'
+      OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by native OpenClaw LaunchAgent'
+      return 0
+    fi
   fi
 
   if [ "$CONFIG_OVERWRITTEN" = true ]; then
@@ -215,6 +257,12 @@ handle_openclaw_runtime_state() {
     fi
     openclaw_runtime_report_start
   elif [ "$IS_RUNNING" = true ]; then
+    if [ "${OPENCLAW_AUTOSTART:-false}" = "true" ] \
+      && [ "${OPENCLAW_RUNTIME_MANAGEMENT_STATE:-}" = 'managed by native OpenClaw LaunchAgent' ]; then
+      openclaw_runtime_migrate_native_gateway
+      return $?
+    fi
+
     if [ "${OPENCLAW_AUTOSTART:-false}" = "true" ] && openclaw_runtime_has_manual_process; then
       warn 'OpenClaw is already running in the VM outside the ClawBox launchd service.'
       out 'ClawBox can stop the foreground/manual gateway and restart it as a VM user launchd service.'

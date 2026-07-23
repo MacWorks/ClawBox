@@ -58,6 +58,9 @@ target OpenClaw memory search at the embeddings server with
 `provider=openai-compatible`, the embeddings model filename as `model`,
 `remote.baseUrl=EMBEDDINGS_LLAMA_BASE_URL`, and `remote.apiKey=ollama-local`.
 Those targeted updates do not replace `~/.openclaw/openclaw.json`.
+The configured embeddings base URL is authoritative. A server that responds on
+host loopback but not at `EMBEDDINGS_LLAMA_BASE_URL` is reported as unhealthy,
+because the VM and OpenClaw use the configured host-facing endpoint.
 
 New setups default `LLAMA_PORT` to `11434` and `LLAMA_CTX` to `32768`.
 Existing `.env` values are kept as-is. `OPENCLAW_MAX_TOKENS` is a separate

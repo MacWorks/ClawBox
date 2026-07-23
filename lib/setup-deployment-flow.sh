@@ -90,7 +90,7 @@ run_provisioning_and_deployment() {
 
   # Existing VM config is user/OpenClaw-owned. Normal setup makes only
   # targeted OpenClaw CLI updates; the generator is used only for bootstrap.
-  sync_openclaw_config
+  sync_openclaw_config || return $?
 
   section "Deployment"
   step "Deploying to VM..."

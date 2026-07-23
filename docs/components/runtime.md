@@ -40,6 +40,10 @@ Normal setup never replaces an existing VM config. It reads and updates only
 ClawBox-managed provider, primary-model, local tool-deny, gateway-auth, and
 optional embeddings memory-search keys through `openclaw config get` and
 `openclaw config set`. All other OpenClaw settings remain user/OpenClaw-owned.
+Those targeted CLI calls explicitly set `OPENCLAW_CONFIG_PATH` to
+`$HOME/.openclaw/openclaw.json` on the VM, so VM shell startup files cannot
+redirect comparison or update operations to the staged `VM_RUNTIME_PATH`
+payload.
 
 The managed primary keys are:
 
@@ -90,6 +94,13 @@ entries. The remaining coding tools stay enabled; this is a managed-local
 compatibility policy and may be removable after upstream OpenClaw or llama.cpp
 schema compatibility improves.
 
+Older ClawBox releases could leave filename-derived concrete GGUF model entries
+beside the stable `clawbox/local` alias. Targeted setup normalizes those
+ClawBox-owned legacy entries when they can be identified safely, while
+preserving unrelated provider entries and unrelated OpenClaw settings. Status
+reports the effective stable alias separately from any obsolete or conflicting
+concrete model entries that remain.
+
 When embeddings are enabled, the managed memory-search keys are:
 
 - `agents.defaults.memorySearch.enabled`
@@ -125,8 +136,9 @@ An active `com.clawbox.openclaw` launchd service is still inspected as supportin
 
 Stale artifacts alone do not count. A leftover plist, dead prior session, stale PID-like state, or other non-running residue must not be reported as an active runtime.
 When the native OpenClaw LaunchAgent owns the gateway, setup and status report
-that ownership and do not automatically stop it, replace it, or start the
-ClawBox-managed service into its port.
+that ownership. If setup is managing OpenClaw autostart, it asks before
+replacing the native service with the ClawBox-managed VM LaunchAgent; declining
+keeps the native runtime in place.
 
 ## Restart behavior
 
