@@ -226,6 +226,10 @@ shift || true
     if [ -n "${CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE:-}" ]; then
       translated_command="$remote_command"
       translated_command="${translated_command//\~\/\.openclaw\/openclaw\.json/$CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE}"
+      if printf "%s\n" "$translated_command" | grep -Fq ".models.providers[\$provider].models // []"; then
+        /bin/bash -c "$translated_command"
+        exit $?
+      fi
       /bin/bash -c "$translated_command" >/dev/null 2>&1
       exit $?
     fi
@@ -1395,6 +1399,90 @@ EOF
   assert_not_contains 'status primary model summary ignores legacy provider model arrays' "$output" 'models.providers.clawbox.models'
 }
 
+test_status_warns_about_obsolete_openclaw_concrete_model_entries() {
+  local output
+  local status=0
+  local active_config="$TEMP_DIR/status-openclaw-legacy-model.json"
+
+  prepare_status_test_home
+  setup_status_test_mocks
+
+  cat > "$ENV_FILE" <<'EOF'
+HOST_IP="127.0.0.1"
+VM_HOST="vm-user@192.168.64.2"
+LLAMA_PORT="18080"
+LLAMA_BASE_URL="http://127.0.0.1:18080/v1"
+MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+LLAMA_EXTERNAL="false"
+EOF
+  cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
+MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+EOF
+  cat > "$active_config" <<'EOF'
+{
+  "models": {
+    "providers": {
+      "clawbox": {
+        "baseUrl": "http://127.0.0.1:18080/v1",
+        "models": [
+          {
+            "id": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
+            "name": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
+            "api": "openai-completions",
+            "contextWindow": 32768,
+            "maxTokens": 2048,
+            "compat": {
+              "supportsDeveloperRole": false,
+              "unsupportedToolSchemaKeywords": ["pattern", "additionalProperties"]
+            }
+          },
+          {
+            "id": "local",
+            "name": "local",
+            "api": "openai-completions",
+            "contextWindow": 65536,
+            "maxTokens": 8192,
+            "compat": {
+              "supportsDeveloperRole": false,
+              "unsupportedToolSchemaKeywords": ["pattern", "additionalProperties"]
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+EOF
+
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT='/opt/homebrew/bin/llama-server -m /Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --host 0.0.0.0 --port 18080 --ctx-size 65536'
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE="$active_config"
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/primary-legacy-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/primary-legacy-system.err.log"
+
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG"
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status obsolete concrete OpenClaw model warning exits zero' "$status" '0'
+  assert_contains 'status reports stable OpenClaw alias entry separately' "$output" 'PASS: OpenClaw stable alias model entry is configured'
+  assert_contains 'status warns about obsolete concrete OpenClaw model entry' "$output" 'WARN: OpenClaw provider has obsolete concrete model entry: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
+  assert_contains 'status reports warnings summary for obsolete concrete OpenClaw model entry' "$output" 'RESULT: HEALTHY WITH WARNINGS (1 warnings)'
+  assert_not_contains 'status does not report stable alias stale because legacy entry is stale' "$output" 'FAIL: OpenClaw stable alias'
+}
+
 test_status_detects_primary_model_mismatch() {
   local output
   local status=0
@@ -2110,9 +2198,9 @@ test_status_uses_bounded_noninteractive_ssh_for_all_vm_checks() {
   set -e
 
   assert_equals 'status bounded ssh path stays healthy when all probes succeed' "$status" '0'
-  assert_equals 'status bounded ssh path issues seven SSH calls' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '7'
-  assert_equals 'status bounded ssh path applies BatchMode to every SSH call' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '7'
-  assert_equals 'status bounded ssh path applies ConnectTimeout to every SSH call' "$(/usr/bin/grep -Fc -- '-o ConnectTimeout=3' "$ssh_log")" '7'
+  assert_equals 'status bounded ssh path issues eight SSH calls' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '8'
+  assert_equals 'status bounded ssh path applies BatchMode to every SSH call' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '8'
+  assert_equals 'status bounded ssh path applies ConnectTimeout to every SSH call' "$(/usr/bin/grep -Fc -- '-o ConnectTimeout=3' "$ssh_log")" '8'
   assert_contains 'status bounded ssh path reports a healthy summary' "$output" 'RESULT: HEALTHY'
 }
 
@@ -2142,6 +2230,7 @@ run_test test_status_rejects_stale_launchd_openclaw_service_without_running_job
 run_test test_status_rejects_generic_non_gateway_openclaw_process
 run_test test_status_managed_local_host_probe_ignores_custom_llama_base_url_when_external_is_false
 run_test test_status_displays_primary_model_summary
+run_test test_status_warns_about_obsolete_openclaw_concrete_model_entries
 run_test test_status_detects_primary_model_mismatch
 run_test test_status_displays_embeddings_model_summary_when_enabled
 run_test test_status_reports_embeddings_loopback_only_as_unhealthy

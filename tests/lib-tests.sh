@@ -993,6 +993,8 @@ test_deploy_module() {
   local reordered_models=''
   local extra_models=''
   local legacy_only_models=''
+  local local_plus_stale_legacy_models=''
+  local local_plus_unrelated_model=''
   local missing_pattern_model=''
   local missing_additional_properties_model=''
   local preserved_keyword_model=''
@@ -1034,6 +1036,8 @@ test_deploy_module() {
   reordered_models='[{"cost":{"input":0,"output":0},"compat":{"unsupportedToolSchemaKeywords":["additionalProperties","pattern"],"supportsDeveloperRole":false},"maxTokens":8192,"contextWindow":32768,"api":"openai-completions","name":"local","id":"local"}]'
   extra_models='[{"id":"legacy","name":"legacy","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false}},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format","additionalProperties","pattern"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
   legacy_only_models='[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
+  local_plus_stale_legacy_models='[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false}]'
+  local_plus_unrelated_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false},{"id":"custom-alias","name":"custom-alias","api":"openai-completions","contextWindow":8192,"maxTokens":1024,"compat":{"supportsDeveloperRole":true}}]'
   missing_pattern_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["additionalProperties"]}}]'
   missing_additional_properties_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern"]}}]'
   preserved_keyword_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format"],"futureCompat":true},"reasoning":false}]'
@@ -1131,9 +1135,21 @@ PY
   fi
 
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$legacy_only_models" "$desired_models"; then
-    pass "OpenClaw provider model comparison accepts compatible legacy-only model arrays"
+    fail "OpenClaw provider model comparison should upgrade legacy-only model arrays to the stable alias"
   else
-    fail "OpenClaw provider model comparison should accept compatible legacy-only model arrays"
+    pass "OpenClaw provider model comparison upgrades legacy-only model arrays to the stable alias"
+  fi
+
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$local_plus_stale_legacy_models" "$desired_models"; then
+    fail "OpenClaw provider model comparison should detect obsolete concrete model entries beside the stable alias"
+  else
+    pass "OpenClaw provider model comparison detects obsolete concrete model entries beside the stable alias"
+  fi
+
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$local_plus_unrelated_model" "$desired_models"; then
+    pass "OpenClaw provider model comparison preserves unrelated non-concrete provider model entries"
+  else
+    fail "OpenClaw provider model comparison should preserve unrelated non-concrete provider model entries"
   fi
 
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$missing_pattern_model" "$desired_models"; then
@@ -1214,6 +1230,41 @@ PY
     pass "OpenClaw provider model update refreshes maxTokens while preserving metadata"
   else
     fail "OpenClaw provider model update should refresh maxTokens while preserving metadata"
+  fi
+
+  merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$local_plus_stale_legacy_models" "$desired_models")"
+  if python3 - "$merged_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+ids = [model.get("id") for model in models]
+assert ids == ["local"]
+assert models[0]["maxTokens"] == 8192
+assert models[0]["contextWindow"] == 32768
+PY
+  then
+    pass "OpenClaw provider model update removes obsolete concrete model entries"
+  else
+    fail "OpenClaw provider model update should remove obsolete concrete model entries"
+  fi
+
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$merged_models" "$desired_models"; then
+    pass "OpenClaw provider model update is idempotent after obsolete concrete entry cleanup"
+  else
+    fail "OpenClaw provider model update should be idempotent after obsolete concrete entry cleanup"
+  fi
+
+  merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$local_plus_unrelated_model" "$desired_models")"
+  if python3 - "$merged_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+ids = [model.get("id") for model in models]
+assert ids == ["local", "custom-alias"]
+assert models[1]["compat"]["supportsDeveloperRole"] is True
+PY
+  then
+    pass "OpenClaw provider model update preserves unrelated provider model entries"
+  else
+    fail "OpenClaw provider model update should preserve unrelated provider model entries"
   fi
 
   if openclaw_config_value_matches_for_key 'tools.deny' "$existing_deny" "$cron_deny"; then
@@ -1669,7 +1720,7 @@ test_setup_deployment_flow_updates_active_openclaw_config() {
   printf '%s\n' "$desired_models" > "$desired_models_file"
   printf '%s\n' "$desired_models" > "$staged_models_file"
   printf '{"models":{"providers":{"clawbox":{"models":%s}}}}\n' "$desired_models" > "$CONFIG_PATH"
-  printf '%s\n' '[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"tools":{"profile":"coding"},"reasoning":false}]' > "$active_models_file"
+  printf '%s\n' '[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false},{"id":"local","name":"local","api":"openai-completions","contextWindow":65536,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"tools":{"profile":"coding"},"reasoning":false}]' > "$active_models_file"
   printf '%s\n' '0' > "$active_set_count_file"
   printf '%s\n' '0' > "$staged_upload_count_file"
   : > "$get_log"
@@ -1698,15 +1749,17 @@ test_setup_deployment_flow_updates_active_openclaw_config() {
   if python3 - "$active_models_file" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as handle:
-    model = json.load(handle)[0]
+    models = json.load(handle)
+model = models[0]
 assert model["contextWindow"] == 65536
 assert model["maxTokens"] == 8192
 assert model["tools"]["profile"] == "coding"
+assert len(models) == 1
 PY
   then
-    pass "setup deployment path updates active OpenClaw config while preserving unmanaged model fields"
+    pass "setup deployment path removes obsolete concrete model entry while preserving unmanaged stable-alias fields"
   else
-    fail "setup deployment path should update active OpenClaw config while preserving unmanaged model fields"
+    fail "setup deployment path should remove obsolete concrete model entry while preserving unmanaged stable-alias fields"
   fi
 
   if [ "$(cat "$active_set_count_file")" = '1' ] \

@@ -94,6 +94,13 @@ entries. The remaining coding tools stay enabled; this is a managed-local
 compatibility policy and may be removable after upstream OpenClaw or llama.cpp
 schema compatibility improves.
 
+Older ClawBox releases could leave filename-derived concrete GGUF model entries
+beside the stable `clawbox/local` alias. Targeted setup normalizes those
+ClawBox-owned legacy entries when they can be identified safely, while
+preserving unrelated provider entries and unrelated OpenClaw settings. Status
+reports the effective stable alias separately from any obsolete or conflicting
+concrete model entries that remain.
+
 When embeddings are enabled, the managed memory-search keys are:
 
 - `agents.defaults.memorySearch.enabled`

@@ -57,6 +57,7 @@ LLAMA_USER_ERR_LOG="${CLAWBOX_LLAMA_USER_ERR_LOG:-$(clawbox_llama_user_stderr_lo
 
 fail_count=0
 wait_count=0
+warn_count=0
 
 fail() {
   out "FAIL: $1"
@@ -66,6 +67,11 @@ fail() {
 wait_status() {
   out "WAIT: $1"
   wait_count=$((wait_count + 1))
+}
+
+warn_status() {
+  out "WARN: $1"
+  warn_count=$((warn_count + 1))
 }
 
 pass() {
@@ -161,6 +167,54 @@ vm_openclaw_config_get() {
       vm_ssh_exec "zsh -lc 'openclaw config get $key'"
       ;;
   esac
+}
+
+vm_openclaw_provider_models_get() {
+  local provider="$1"
+
+  vm_ssh_exec "jq -cer --arg provider \"$provider\" '.models.providers[\$provider].models // []' ~/.openclaw/openclaw.json"
+}
+
+status_openclaw_provider_models_report() {
+  local models="$1"
+  local default_model="${2:-local}"
+
+  python3 - "$models" "$default_model" <<'PY'
+import json, sys
+
+try:
+    models = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+
+default_model = sys.argv[2] or "local"
+if not isinstance(models, list):
+    raise SystemExit(1)
+
+local_entries = [
+    model for model in models
+    if isinstance(model, dict) and model.get("id") == default_model
+]
+if len(local_entries) == 1:
+    print("pass\tOpenClaw stable alias model entry is configured")
+elif len(local_entries) > 1:
+    print(f"warn\tOpenClaw provider has duplicate stable alias model entries: {len(local_entries)}")
+else:
+    print("warn\tOpenClaw stable alias model entry is missing")
+
+for model in models:
+    if not isinstance(model, dict):
+        continue
+    model_id = model.get("id")
+    if not isinstance(model_id, str) or model_id == default_model:
+        continue
+    if not model_id.endswith(".gguf"):
+        continue
+    if model.get("name") == model_id:
+        print(f"warn\tOpenClaw provider has obsolete concrete model entry: {model_id}")
+    else:
+        print(f"warn\tOpenClaw provider has conflicting concrete model entry: {model_id}")
+PY
 }
 
 llama_process_running() {
@@ -559,6 +613,23 @@ if vm_ssh_exec "jq -e --arg provider \"$OPENCLAW_PROVIDER_NAME\" '.models.provid
 else
   fail "OpenClaw config invalid or unreadable"
 fi
+if OPENCLAW_PROVIDER_MODELS="$(vm_openclaw_provider_models_get "$OPENCLAW_PROVIDER_NAME" 2>/dev/null)"; then
+  while IFS=$'\t' read -r status_kind status_message; do
+    [ -n "$status_kind" ] || continue
+    case "$status_kind" in
+      pass)
+        pass "$status_message"
+        ;;
+      warn)
+        warn_status "$status_message"
+        ;;
+    esac
+  done <<EOF
+$(status_openclaw_provider_models_report "$OPENCLAW_PROVIDER_MODELS" "${OPENCLAW_DEFAULT_MODEL:-local}" 2>/dev/null || true)
+EOF
+else
+  warn_status "OpenClaw provider model array is unavailable"
+fi
 
 section "VM → Host LLaMA (API)"
 if vm_ssh_exec "curl $VM_STATUS_CURL_ARGS $VM_LLAMA_BASE_URL/models" >/dev/null 2>&1; then
@@ -593,8 +664,10 @@ fi
 # --- Summary ---
 blank_line
 out "========================================="
-if [ "$fail_count" -eq 0 ] && [ "$wait_count" -eq 0 ]; then
+if [ "$fail_count" -eq 0 ] && [ "$wait_count" -eq 0 ] && [ "$warn_count" -eq 0 ]; then
   out "RESULT: HEALTHY"
+elif [ "$fail_count" -eq 0 ] && [ "$wait_count" -eq 0 ]; then
+  out "RESULT: HEALTHY WITH WARNINGS ($warn_count warnings)"
 elif [ "$fail_count" -eq 0 ]; then
   out "RESULT: WAITING ($wait_count temporary issues)"
 else

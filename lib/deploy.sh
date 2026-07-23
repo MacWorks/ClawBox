@@ -122,6 +122,23 @@ required_unsupported = required_compat.get("unsupportedToolSchemaKeywords", [])
 if not isinstance(required_unsupported, list):
     required_unsupported = []
 
+def is_legacy_concrete_model(model):
+    if not isinstance(model, dict):
+        return False
+    model_id = model.get("id")
+    if (
+        not isinstance(model_id, str)
+        or model_id == required_id
+        or not model_id.endswith(".gguf")
+        or model.get("name") != model_id
+        or model.get("api") != required_api
+    ):
+        return False
+    compat = model.get("compat", {})
+    if not isinstance(compat, dict):
+        return False
+    return compat.get("supportsDeveloperRole") == required_developer_role
+
 def managed_fields_match(model, require_local_identity):
     if not isinstance(model, dict):
         return False
@@ -158,21 +175,15 @@ local_entries = [
     model for model in current
     if isinstance(model, dict) and model.get("id") == required_id
 ]
+legacy_entries = [model for model in current if is_legacy_concrete_model(model)]
 
 if local_entries:
     for model in local_entries:
         if managed_fields_match(model, True):
+            if legacy_entries:
+                raise SystemExit(1)
             raise SystemExit(0)
     raise SystemExit(1)
-
-# Older ClawBox/OpenClaw configs may contain only a filename-derived provider
-# model entry while agents.defaults.model.primary already points at
-# clawbox/local. Treat a compatible legacy entry as acceptable metadata instead
-# of forcing a replacement during ordinary model switching. The explicit reset
-# command remains the full-replacement path.
-for model in current:
-    if managed_fields_match(model, False):
-        raise SystemExit(0)
 
 raise SystemExit(1)
 PY
@@ -255,6 +266,36 @@ current_by_id = {
     for model in current
     if isinstance(model, dict) and model.get("id") is not None
 }
+desired_ids = {
+    model.get("id")
+    for model in desired
+    if isinstance(model, dict) and model.get("id") is not None
+}
+
+required = next((model for model in desired if isinstance(model, dict)), {})
+required_id = required.get("id")
+required_api = required.get("api")
+required_compat = required.get("compat", {})
+if not isinstance(required_compat, dict):
+    required_compat = {}
+required_developer_role = required_compat.get("supportsDeveloperRole")
+
+def is_legacy_concrete_model(model):
+    if not isinstance(model, dict):
+        return False
+    model_id = model.get("id")
+    if (
+        not isinstance(model_id, str)
+        or model_id == required_id
+        or not model_id.endswith(".gguf")
+        or model.get("name") != model_id
+        or model.get("api") != required_api
+    ):
+        return False
+    compat = model.get("compat", {})
+    if not isinstance(compat, dict):
+        return False
+    return compat.get("supportsDeveloperRole") == required_developer_role
 
 merged = []
 for required in desired:
@@ -296,6 +337,16 @@ for required in desired:
 
     output["compat"] = merged_compat
     merged.append(output)
+
+for model in current:
+    if not isinstance(model, dict):
+        continue
+    model_id = model.get("id")
+    if model_id in desired_ids:
+        continue
+    if is_legacy_concrete_model(model):
+        continue
+    merged.append(model)
 
 print(json.dumps(merged, separators=(",", ":")))
 PY
