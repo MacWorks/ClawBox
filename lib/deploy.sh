@@ -8,16 +8,27 @@ openclaw_config_remote_get() {
   ssh_exec "zsh -lc $(printf '%q' "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config get $(printf '%q' "$key")")"
 }
 
-openclaw_config_remote_set() {
+openclaw_config_persist_value_for_key() {
   local key="$1" value="$2"
+
   case "$key" in
     models.providers.*.models)
-      ssh_exec "zsh -lc $(printf '%q' "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set --merge $(printf '%q' "$key") $(printf '%q' "$value")")"
+      # Provider model arrays are normalized before persistence; use exact path
+      # assignment so stale legacy concrete entries are removed instead of merged.
+      ;;
+    tools.deny)
+      # tools.deny is normalized to a union before persistence.
       ;;
     *)
-      ssh_exec "zsh -lc $(printf '%q' "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")")"
+      # Other managed settings are scalar/object leaves owned by their key policy.
       ;;
   esac
+
+  ssh_exec "zsh -lc $(printf '%q' "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")")" >/dev/null
+}
+
+openclaw_config_remote_set() {
+  openclaw_config_persist_value_for_key "$@"
 }
 
 openclaw_generate_gateway_auth_token() {
@@ -125,6 +136,9 @@ if not isinstance(required_unsupported, list):
 def is_legacy_concrete_model(model):
     if not isinstance(model, dict):
         return False
+    allowed_keys = {"id", "name", "api", "contextWindow", "maxTokens", "compat", "reasoning", "input", "cost"}
+    if any(key not in allowed_keys for key in model):
+        return False
     model_id = model.get("id")
     if (
         not isinstance(model_id, str)
@@ -136,6 +150,23 @@ def is_legacy_concrete_model(model):
         return False
     compat = model.get("compat", {})
     if not isinstance(compat, dict):
+        return False
+    unsupported = compat.get("unsupportedToolSchemaKeywords", [])
+    if unsupported is not None and (
+        not isinstance(unsupported, list)
+        or any(not isinstance(keyword, str) for keyword in unsupported)
+    ):
+        return False
+    for numeric_key in ("contextWindow", "maxTokens"):
+        try:
+            int(model.get(numeric_key))
+        except Exception:
+            return False
+    if "reasoning" in model and not isinstance(model.get("reasoning"), bool):
+        return False
+    if "input" in model and not isinstance(model.get("input"), list):
+        return False
+    if "cost" in model and not isinstance(model.get("cost"), dict):
         return False
     return compat.get("supportsDeveloperRole") == required_developer_role
 
@@ -209,7 +240,7 @@ openclaw_config_value_matches_for_key() {
   openclaw_config_value_matches "$current" "$desired"
 }
 
-openclaw_config_value_for_remote_set() {
+openclaw_config_normalize_value_for_key() {
   local key="$1" current="$2" desired="$3"
 
   case "$key" in
@@ -283,6 +314,9 @@ required_developer_role = required_compat.get("supportsDeveloperRole")
 def is_legacy_concrete_model(model):
     if not isinstance(model, dict):
         return False
+    allowed_keys = {"id", "name", "api", "contextWindow", "maxTokens", "compat", "reasoning", "input", "cost"}
+    if any(key not in allowed_keys for key in model):
+        return False
     model_id = model.get("id")
     if (
         not isinstance(model_id, str)
@@ -294,6 +328,23 @@ def is_legacy_concrete_model(model):
         return False
     compat = model.get("compat", {})
     if not isinstance(compat, dict):
+        return False
+    unsupported = compat.get("unsupportedToolSchemaKeywords", [])
+    if unsupported is not None and (
+        not isinstance(unsupported, list)
+        or any(not isinstance(keyword, str) for keyword in unsupported)
+    ):
+        return False
+    for numeric_key in ("contextWindow", "maxTokens"):
+        try:
+            int(model.get(numeric_key))
+        except Exception:
+            return False
+    if "reasoning" in model and not isinstance(model.get("reasoning"), bool):
+        return False
+    if "input" in model and not isinstance(model.get("input"), list):
+        return False
+    if "cost" in model and not isinstance(model.get("cost"), dict):
         return False
     return compat.get("supportsDeveloperRole") == required_developer_role
 
@@ -355,6 +406,10 @@ PY
       printf '%s\n' "$desired"
       ;;
   esac
+}
+
+openclaw_config_value_for_remote_set() {
+  openclaw_config_normalize_value_for_key "$@"
 }
 
 openclaw_config_model_array() {
@@ -475,7 +530,7 @@ EOF
     [ -n "$key" ] || continue
     current="$(openclaw_config_remote_get "$key" 2>/dev/null || true)"
     openclaw_config_value_matches_for_key "$key" "$current" "$desired" && continue
-    desired="$(openclaw_config_value_for_remote_set "$key" "$current" "$desired")" || return 1
+    desired="$(openclaw_config_normalize_value_for_key "$key" "$current" "$desired")" || return 1
     if ! openclaw_config_remote_set "$key" "$desired"; then
       error "OpenClaw config update failed for $key."
       out 'OpenClaw config was not replaced.'
@@ -485,6 +540,8 @@ EOF
     current="$(openclaw_config_remote_get "$key" 2>/dev/null || true)"
     if ! openclaw_config_value_matches_for_key "$key" "$current" "$desired"; then
       error "OpenClaw config verification failed for $key."
+      out 'OpenClaw config was not replaced.'
+      out 'Run ./clawbox setup to retry targeted config sync, or ./clawbox openclaw reset for an explicit full reset.'
       return 1
     fi
     CONFIG_TARGETED_UPDATED=true
@@ -512,8 +569,8 @@ sync_openclaw_config() {
     return 0
   fi
 
-  apply_targeted_openclaw_config_updates all
-  ensure_openclaw_gateway_auth_config
+  apply_targeted_openclaw_config_updates all || return $?
+  ensure_openclaw_gateway_auth_config || return $?
 }
 
 sync_openclaw_config_targeted_only() {

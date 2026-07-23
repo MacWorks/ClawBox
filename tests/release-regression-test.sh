@@ -1361,16 +1361,16 @@ HOST_IP="127.0.0.1"
 VM_HOST="vm-user@192.168.64.2"
 LLAMA_PORT="18080"
 LLAMA_BASE_URL="http://127.0.0.1:18080/v1"
-MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+MODEL_PATH="/Users/vm-user/models/Status-Legacy-14B-Q5_K_M.gguf"
 OPENCLAW_PROVIDER_NAME="clawbox"
 OPENCLAW_DEFAULT_MODEL="local"
 LLAMA_EXTERNAL="false"
 EOF
   cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
-MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+MODEL_PATH="/Users/vm-user/models/Status-Legacy-14B-Q5_K_M.gguf"
 EOF
 
-  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT='/opt/homebrew/bin/llama-server -m /Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --host 0.0.0.0 --port 18080 --ctx-size 32768'
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT='/opt/homebrew/bin/llama-server -m /Users/vm-user/models/Status-Legacy-14B-Q5_K_M.gguf --host 0.0.0.0 --port 18080 --ctx-size 32768'
   export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
@@ -1391,8 +1391,8 @@ EOF
 
   assert_equals 'status primary model summary exits healthy' "$status" '0'
   assert_contains 'status primary model summary shows section' "$output" 'Primary Model'
-  assert_contains 'status primary model summary shows configured path' "$output" 'Configured: /Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
-  assert_contains 'status primary model summary shows running basename' "$output" 'Running: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
+  assert_contains 'status primary model summary shows configured path' "$output" 'Configured: /Users/vm-user/models/Status-Legacy-14B-Q5_K_M.gguf'
+  assert_contains 'status primary model summary shows running basename' "$output" 'Running: Status-Legacy-14B-Q5_K_M.gguf'
   assert_contains 'status primary model summary shows stable OpenClaw reference' "$output" 'OpenClaw: clawbox/local'
   assert_contains 'status primary model summary shows API' "$output" 'API: http://127.0.0.1:18080/v1'
   assert_contains 'status primary model summary reports runtime match' "$output" 'PASS: primary model matches configured runtime'
@@ -1403,6 +1403,103 @@ test_status_warns_about_obsolete_openclaw_concrete_model_entries() {
   local output
   local status=0
   local active_config="$TEMP_DIR/status-openclaw-legacy-model.json"
+
+  prepare_status_test_home
+  setup_status_test_mocks
+
+  cat > "$ENV_FILE" <<'EOF'
+HOST_IP="127.0.0.1"
+VM_HOST="vm-user@192.168.64.2"
+LLAMA_PORT="18080"
+LLAMA_BASE_URL="http://127.0.0.1:18080/v1"
+MODEL_PATH="/Users/vm-user/models/Status-Legacy-14B-Q5_K_M.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+LLAMA_EXTERNAL="false"
+EOF
+  cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
+MODEL_PATH="/Users/vm-user/models/Status-Legacy-14B-Q5_K_M.gguf"
+EOF
+  cat > "$active_config" <<'EOF'
+{
+  "models": {
+    "providers": {
+      "clawbox": {
+        "baseUrl": "http://127.0.0.1:18080/v1",
+        "models": [
+          {
+            "id": "Status-Legacy-14B-Q5_K_M.gguf",
+            "name": "Status-Legacy-14B-Q5_K_M.gguf",
+            "api": "openai-completions",
+            "contextWindow": 32768,
+            "maxTokens": 2048,
+            "compat": {
+              "supportsDeveloperRole": false,
+              "unsupportedToolSchemaKeywords": ["pattern", "additionalProperties"]
+            }
+          },
+          {
+            "id": "local",
+            "name": "local",
+            "api": "openai-completions",
+            "contextWindow": 65536,
+            "maxTokens": 8192,
+            "compat": {
+              "supportsDeveloperRole": false,
+              "unsupportedToolSchemaKeywords": ["pattern", "additionalProperties"]
+            }
+          },
+          {
+            "id": "User-Provider-Sidecar-Q4.gguf",
+            "name": "User-Provider-Sidecar-Q4.gguf",
+            "api": "openai-completions",
+            "contextWindow": 32768,
+            "maxTokens": 2048,
+            "compat": {
+              "supportsDeveloperRole": false,
+              "unsupportedToolSchemaKeywords": ["pattern"]
+            },
+            "notes": "user-managed provider entry"
+          }
+        ]
+      }
+    }
+  }
+}
+EOF
+
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT='/opt/homebrew/bin/llama-server -m /Users/vm-user/models/Status-Legacy-14B-Q5_K_M.gguf --host 0.0.0.0 --port 18080 --ctx-size 65536'
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE="$active_config"
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/primary-legacy-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/primary-legacy-system.err.log"
+
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG"
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status obsolete concrete OpenClaw model warning exits zero' "$status" '0'
+  assert_contains 'status reports stable OpenClaw alias entry separately' "$output" 'PASS: OpenClaw stable alias model entry is configured'
+  assert_contains 'status warns about obsolete concrete OpenClaw model entry' "$output" 'WARN: OpenClaw provider has obsolete concrete model entry: Status-Legacy-14B-Q5_K_M.gguf'
+  assert_not_contains 'status preserves filename-derived user-managed OpenClaw model entries' "$output" 'WARN: OpenClaw provider has obsolete concrete model entry: User-Provider-Sidecar-Q4.gguf'
+  assert_contains 'status reports warnings summary for obsolete concrete OpenClaw model entry' "$output" 'RESULT: HEALTHY WITH WARNINGS (1 warnings)'
+  assert_not_contains 'status does not report stable alias stale because legacy entry is stale' "$output" 'FAIL: OpenClaw stable alias'
+}
+
+test_status_reports_normalized_openclaw_provider_models_healthy() {
+  local output
+  local status=0
+  local active_config="$TEMP_DIR/status-openclaw-normalized-model.json"
 
   prepare_status_test_home
   setup_status_test_mocks
@@ -1427,17 +1524,6 @@ EOF
       "clawbox": {
         "baseUrl": "http://127.0.0.1:18080/v1",
         "models": [
-          {
-            "id": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
-            "name": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
-            "api": "openai-completions",
-            "contextWindow": 32768,
-            "maxTokens": 2048,
-            "compat": {
-              "supportsDeveloperRole": false,
-              "unsupportedToolSchemaKeywords": ["pattern", "additionalProperties"]
-            }
-          },
           {
             "id": "local",
             "name": "local",
@@ -1466,8 +1552,8 @@ EOF
   export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE="$active_config"
   export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
-  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/primary-legacy-user.err.log"
-  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/primary-legacy-system.err.log"
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/primary-normalized-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/primary-normalized-system.err.log"
 
   rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG"
 
@@ -1476,11 +1562,11 @@ EOF
   status=$?
   set -e
 
-  assert_equals 'status obsolete concrete OpenClaw model warning exits zero' "$status" '0'
-  assert_contains 'status reports stable OpenClaw alias entry separately' "$output" 'PASS: OpenClaw stable alias model entry is configured'
-  assert_contains 'status warns about obsolete concrete OpenClaw model entry' "$output" 'WARN: OpenClaw provider has obsolete concrete model entry: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
-  assert_contains 'status reports warnings summary for obsolete concrete OpenClaw model entry' "$output" 'RESULT: HEALTHY WITH WARNINGS (1 warnings)'
-  assert_not_contains 'status does not report stable alias stale because legacy entry is stale' "$output" 'FAIL: OpenClaw stable alias'
+  assert_equals 'status normalized OpenClaw provider model exits healthy' "$status" '0'
+  assert_contains 'status normalized OpenClaw provider model reports stable alias' "$output" 'PASS: OpenClaw stable alias model entry is configured'
+  assert_contains 'status normalized OpenClaw provider model reports healthy summary' "$output" 'RESULT: HEALTHY'
+  assert_not_contains 'status normalized OpenClaw provider model has no obsolete concrete warning' "$output" 'WARN: OpenClaw provider has obsolete concrete model entry'
+  assert_not_contains 'status normalized OpenClaw provider model has no warnings summary' "$output" 'HEALTHY WITH WARNINGS'
 }
 
 test_status_detects_primary_model_mismatch() {
@@ -2231,6 +2317,7 @@ run_test test_status_rejects_generic_non_gateway_openclaw_process
 run_test test_status_managed_local_host_probe_ignores_custom_llama_base_url_when_external_is_false
 run_test test_status_displays_primary_model_summary
 run_test test_status_warns_about_obsolete_openclaw_concrete_model_entries
+run_test test_status_reports_normalized_openclaw_provider_models_healthy
 run_test test_status_detects_primary_model_mismatch
 run_test test_status_displays_embeddings_model_summary_when_enabled
 run_test test_status_reports_embeddings_loopback_only_as_unhealthy

@@ -202,6 +202,43 @@ elif len(local_entries) > 1:
 else:
     print("warn\tOpenClaw stable alias model entry is missing")
 
+def is_legacy_concrete_model(model):
+    if not isinstance(model, dict):
+        return False
+    allowed_keys = {"id", "name", "api", "contextWindow", "maxTokens", "compat", "reasoning", "input", "cost"}
+    if any(key not in allowed_keys for key in model):
+        return False
+    model_id = model.get("id")
+    if (
+        not isinstance(model_id, str)
+        or model_id == default_model
+        or not model_id.endswith(".gguf")
+        or model.get("name") != model_id
+        or model.get("api") != "openai-completions"
+    ):
+        return False
+    compat = model.get("compat", {})
+    if not isinstance(compat, dict):
+        return False
+    unsupported = compat.get("unsupportedToolSchemaKeywords", [])
+    if unsupported is not None and (
+        not isinstance(unsupported, list)
+        or any(not isinstance(keyword, str) for keyword in unsupported)
+    ):
+        return False
+    for numeric_key in ("contextWindow", "maxTokens"):
+        try:
+            int(model.get(numeric_key))
+        except Exception:
+            return False
+    if "reasoning" in model and not isinstance(model.get("reasoning"), bool):
+        return False
+    if "input" in model and not isinstance(model.get("input"), list):
+        return False
+    if "cost" in model and not isinstance(model.get("cost"), dict):
+        return False
+    return compat.get("supportsDeveloperRole") is False
+
 for model in models:
     if not isinstance(model, dict):
         continue
@@ -210,9 +247,9 @@ for model in models:
         continue
     if not model_id.endswith(".gguf"):
         continue
-    if model.get("name") == model_id:
+    if is_legacy_concrete_model(model):
         print(f"warn\tOpenClaw provider has obsolete concrete model entry: {model_id}")
-    else:
+    elif model.get("name") != model_id:
         print(f"warn\tOpenClaw provider has conflicting concrete model entry: {model_id}")
 PY
 }

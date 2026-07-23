@@ -975,6 +975,7 @@ test_deploy_module() {
 
   scp() {
     last_scp_target="${4:-}"
+    remote_exists=true
     : > "$upload_marker"
     return 0
   }
@@ -994,7 +995,9 @@ test_deploy_module() {
   local extra_models=''
   local legacy_only_models=''
   local local_plus_stale_legacy_models=''
+  local local_plus_two_stale_legacy_models=''
   local local_plus_unrelated_model=''
+  local local_plus_user_shaped_model=''
   local missing_pattern_model=''
   local missing_additional_properties_model=''
   local preserved_keyword_model=''
@@ -1027,7 +1030,8 @@ test_deploy_module() {
   last_ssh_exec=''
   openclaw_config_remote_set 'models.providers.clawbox.models' "$desired_models" >/dev/null || true
   if [[ "$last_ssh_exec" == *'OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json'* ]] \
-    && [[ "$last_ssh_exec" == *'openclaw\ config\ set\ --merge\ models.providers.clawbox.models'* ]]; then
+    && [[ "$last_ssh_exec" == *'openclaw\ config\ set\ models.providers.clawbox.models'* ]] \
+    && [[ "$last_ssh_exec" != *'--merge'* ]]; then
     pass "OpenClaw config set pins the CLI to the authoritative VM config path"
   else
     fail "OpenClaw config set should pin the CLI to the authoritative VM config path"
@@ -1035,9 +1039,11 @@ test_deploy_module() {
 
   reordered_models='[{"cost":{"input":0,"output":0},"compat":{"unsupportedToolSchemaKeywords":["additionalProperties","pattern"],"supportsDeveloperRole":false},"maxTokens":8192,"contextWindow":32768,"api":"openai-completions","name":"local","id":"local"}]'
   extra_models='[{"id":"legacy","name":"legacy","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false}},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format","additionalProperties","pattern"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
-  legacy_only_models='[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
-  local_plus_stale_legacy_models='[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false}]'
+  legacy_only_models='[{"id":"Alpha-Maintenance-77B-Q5_K_M.gguf","name":"Alpha-Maintenance-77B-Q5_K_M.gguf","api":"openai-completions","contextWindow":24576,"maxTokens":1536,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
+  local_plus_stale_legacy_models='[{"id":"Beta-Toolsmith-13B-Q8_0.gguf","name":"Beta-Toolsmith-13B-Q8_0.gguf","api":"openai-completions","contextWindow":49152,"maxTokens":3072,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false}]'
+  local_plus_two_stale_legacy_models='[{"id":"Gamma-Coder-9B-Q4_K_S.gguf","name":"Gamma-Coder-9B-Q4_K_S.gguf","api":"openai-completions","contextWindow":16384,"maxTokens":1024,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern"]},"reasoning":false},{"id":"Delta-Repair-22B-Q6_K.gguf","name":"Delta-Repair-22B-Q6_K.gguf","api":"openai-completions","contextWindow":65536,"maxTokens":4096,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["additionalProperties"]},"input":["text"]},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false}]'
   local_plus_unrelated_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false},{"id":"custom-alias","name":"custom-alias","api":"openai-completions","contextWindow":8192,"maxTokens":1024,"compat":{"supportsDeveloperRole":true}}]'
+  local_plus_user_shaped_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false},{"id":"User-Managed-Model-Q5.gguf","name":"User-Managed-Model-Q5.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern"]},"notes":"user-managed alias"}]'
   missing_pattern_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["additionalProperties"]}}]'
   missing_additional_properties_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern"]}}]'
   preserved_keyword_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format"],"futureCompat":true},"reasoning":false}]'
@@ -1152,6 +1158,12 @@ PY
     fail "OpenClaw provider model comparison should preserve unrelated non-concrete provider model entries"
   fi
 
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$local_plus_user_shaped_model" "$desired_models"; then
+    pass "OpenClaw provider model comparison preserves filename-derived entries with user-managed fields"
+  else
+    fail "OpenClaw provider model comparison should preserve filename-derived entries with user-managed fields"
+  fi
+
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$missing_pattern_model" "$desired_models"; then
     fail "OpenClaw provider model comparison should detect missing unsupported pattern keyword"
   else
@@ -1170,7 +1182,7 @@ PY
     pass "OpenClaw provider model comparison detects stale maxTokens"
   fi
 
-  pattern_only_merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$missing_additional_properties_model" "$desired_models")"
+  pattern_only_merged_models="$(openclaw_config_normalize_value_for_key 'models.providers.clawbox.models' "$missing_additional_properties_model" "$desired_models")"
   if python3 - "$pattern_only_merged_models" <<'PY'
 import json, sys
 models = json.loads(sys.argv[1])
@@ -1184,7 +1196,7 @@ PY
     fail "OpenClaw provider model update should upgrade pattern-only compatibility keywords"
   fi
 
-  additional_properties_only_merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$missing_pattern_model" "$desired_models")"
+  additional_properties_only_merged_models="$(openclaw_config_normalize_value_for_key 'models.providers.clawbox.models' "$missing_pattern_model" "$desired_models")"
   if python3 - "$additional_properties_only_merged_models" <<'PY'
 import json, sys
 models = json.loads(sys.argv[1])
@@ -1198,7 +1210,7 @@ PY
     fail "OpenClaw provider model update should upgrade additionalProperties-only compatibility keywords"
   fi
 
-  merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$preserved_keyword_model" "$desired_models")"
+  merged_models="$(openclaw_config_normalize_value_for_key 'models.providers.clawbox.models' "$preserved_keyword_model" "$desired_models")"
   if python3 - "$merged_models" <<'PY'
 import json, sys
 models = json.loads(sys.argv[1])
@@ -1216,7 +1228,7 @@ PY
     fail "OpenClaw provider model update should preserve existing compatibility keywords"
   fi
 
-  max_tokens_merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$wrong_max_tokens_model" "$desired_models")"
+  max_tokens_merged_models="$(openclaw_config_normalize_value_for_key 'models.providers.clawbox.models' "$wrong_max_tokens_model" "$desired_models")"
   if python3 - "$max_tokens_merged_models" <<'PY'
 import json, sys
 models = json.loads(sys.argv[1])
@@ -1232,7 +1244,7 @@ PY
     fail "OpenClaw provider model update should refresh maxTokens while preserving metadata"
   fi
 
-  merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$local_plus_stale_legacy_models" "$desired_models")"
+  merged_models="$(openclaw_config_normalize_value_for_key 'models.providers.clawbox.models' "$local_plus_stale_legacy_models" "$desired_models")"
   if python3 - "$merged_models" <<'PY'
 import json, sys
 models = json.loads(sys.argv[1])
@@ -1247,13 +1259,28 @@ PY
     fail "OpenClaw provider model update should remove obsolete concrete model entries"
   fi
 
+  merged_models="$(openclaw_config_normalize_value_for_key 'models.providers.clawbox.models' "$local_plus_two_stale_legacy_models" "$desired_models")"
+  if python3 - "$merged_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+ids = [model.get("id") for model in models]
+assert ids == ["local"], ids
+assert models[0]["maxTokens"] == 8192
+assert models[0]["contextWindow"] == 32768
+PY
+  then
+    pass "OpenClaw provider model normalization removes arbitrary legacy concrete model entries"
+  else
+    fail "OpenClaw provider model normalization should remove arbitrary legacy concrete model entries"
+  fi
+
   if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$merged_models" "$desired_models"; then
     pass "OpenClaw provider model update is idempotent after obsolete concrete entry cleanup"
   else
     fail "OpenClaw provider model update should be idempotent after obsolete concrete entry cleanup"
   fi
 
-  merged_models="$(openclaw_config_value_for_remote_set 'models.providers.clawbox.models' "$local_plus_unrelated_model" "$desired_models")"
+  merged_models="$(openclaw_config_normalize_value_for_key 'models.providers.clawbox.models' "$local_plus_unrelated_model" "$desired_models")"
   if python3 - "$merged_models" <<'PY'
 import json, sys
 models = json.loads(sys.argv[1])
@@ -1265,6 +1292,20 @@ PY
     pass "OpenClaw provider model update preserves unrelated provider model entries"
   else
     fail "OpenClaw provider model update should preserve unrelated provider model entries"
+  fi
+
+  merged_models="$(openclaw_config_normalize_value_for_key 'models.providers.clawbox.models' "$local_plus_user_shaped_model" "$desired_models")"
+  if python3 - "$merged_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+ids = [model.get("id") for model in models]
+assert ids == ["local", "User-Managed-Model-Q5.gguf"], ids
+assert models[1]["notes"] == "user-managed alias"
+PY
+  then
+    pass "OpenClaw provider model normalization preserves filename-derived user-managed entries"
+  else
+    fail "OpenClaw provider model normalization should preserve filename-derived user-managed entries"
   fi
 
   if openclaw_config_value_matches_for_key 'tools.deny' "$existing_deny" "$cron_deny"; then
@@ -1279,7 +1320,7 @@ PY
     pass "OpenClaw tools deny comparison detects missing cron deny"
   fi
 
-  merged_deny="$(openclaw_config_value_for_remote_set 'tools.deny' "$missing_cron_deny" "$cron_deny")"
+  merged_deny="$(openclaw_config_normalize_value_for_key 'tools.deny' "$missing_cron_deny" "$cron_deny")"
   if python3 - "$merged_deny" <<'PY'
 import json, sys
 denied = json.loads(sys.argv[1])
@@ -1372,14 +1413,7 @@ PY
 
   openclaw_config_remote_set() {
     local key="$1" value="$2"
-    case "$key" in
-      models.providers.*.models)
-        ssh_exec "openclaw config set --merge $key $value"
-        ;;
-      *)
-        ssh_exec "openclaw config set $key $value"
-        ;;
-    esac
+    ssh_exec "openclaw config set $key $value"
   }
   set_log=''
 
@@ -1394,11 +1428,11 @@ PY
 
   last_ssh_exec=''
   openclaw_config_remote_set 'models.providers.clawbox.models' "$desired_models"
-  if [[ "$last_ssh_exec" == *'--merge'* ]] \
+  if [[ "$last_ssh_exec" != *'--merge'* ]] \
     && [[ "$last_ssh_exec" == *'models.providers.clawbox.models'* ]]; then
-    pass "OpenClaw provider model updates use merge mode"
+    pass "OpenClaw provider model updates replace the provider model array exactly"
   else
-    fail "OpenClaw provider model updates should use merge mode"
+    fail "OpenClaw provider model updates should replace the provider model array exactly"
   fi
 
   openclaw_config_desired_entries_for_scope() {
@@ -1562,6 +1596,54 @@ PY
   else
     fail "deploy logic should upgrade stale OpenClaw model context and maxTokens without replacing config"
   fi
+
+  rm -f "$prompt_marker" "$upload_marker" "$mkdir_marker"
+  remote_exists=true
+  LLAMA_CTX=65536
+  OPENCLAW_MAX_TOKENS=8192
+  desired_models="$(openclaw_config_model_array)"
+  wrong_max_tokens_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false}]'
+  prompt_answer='y'
+  CONFIG_OVERWRITTEN=false
+  CONFIG_TARGETED_UPDATED=false
+  set_log=''
+  managed_tools_deny='["cron"]'
+  managed_base_url='http://127.0.0.1:11434/v1'
+
+  openclaw_config_desired_entries_for_scope() {
+    printf 'models.providers.clawbox.models\t%s\n' "$desired_models"
+    printf 'tools.deny\t["cron"]\n'
+    printf 'models.providers.clawbox.baseUrl\thttp://127.0.0.1:11434/v1\n'
+  }
+
+  openclaw_config_remote_get() {
+    case "$1" in
+      models.providers.clawbox.models) printf '%s\n' "$wrong_max_tokens_model" ;;
+      tools.deny) printf '%s\n' "$managed_tools_deny" ;;
+      models.providers.clawbox.baseUrl) printf '%s\n' "$managed_base_url" ;;
+      gateway.auth.token) printf '%s\n' '__OPENCLAW_REDACTED__' ;;
+      *) return 1 ;;
+    esac
+  }
+
+  openclaw_config_remote_set() {
+    set_log="${set_log}$1=$2\n"
+    return 0
+  }
+
+  set +e
+  sync_output="$(sync_openclaw_config 2>&1)"
+  sync_status=$?
+  set -e
+  if [ "$sync_status" -ne 0 ] \
+    && [[ "$sync_output" == *'OpenClaw config verification failed for models.providers.clawbox.models.'* ]] \
+    && [[ "$sync_output" == *'OpenClaw config was not replaced.'* ]] \
+    && [[ "$sync_output" != *'Targeted ClawBox OpenClaw settings updated.'* ]] \
+    && [ "$CONFIG_TARGETED_UPDATED" = false ]; then
+    pass "deploy logic fails targeted sync when post-update verification still differs"
+  else
+    fail "deploy logic should fail targeted sync when post-update verification still differs"
+  fi
   unset OPENCLAW_MAX_TOKENS
   LLAMA_CTX=32768
 
@@ -1683,7 +1765,7 @@ test_setup_deployment_flow_updates_active_openclaw_config() {
         ;;
       *set*"models.providers.clawbox.models"*)
         printf 'models:active:%s\n' "$command_text" >> "$set_log"
-        openclaw_config_value_for_remote_set \
+        openclaw_config_normalize_value_for_key \
           'models.providers.clawbox.models' \
           "$(cat "$active_models_file")" \
           "$(cat "$desired_models_file")" \
@@ -1720,7 +1802,7 @@ test_setup_deployment_flow_updates_active_openclaw_config() {
   printf '%s\n' "$desired_models" > "$desired_models_file"
   printf '%s\n' "$desired_models" > "$staged_models_file"
   printf '{"models":{"providers":{"clawbox":{"models":%s}}}}\n' "$desired_models" > "$CONFIG_PATH"
-  printf '%s\n' '[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false},{"id":"local","name":"local","api":"openai-completions","contextWindow":65536,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"tools":{"profile":"coding"},"reasoning":false}]' > "$active_models_file"
+  printf '%s\n' '[{"id":"Omega-Website-18B-Q4_K_M.gguf","name":"Omega-Website-18B-Q4_K_M.gguf","api":"openai-completions","contextWindow":24576,"maxTokens":1536,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false},{"id":"local","name":"local","api":"openai-completions","contextWindow":65536,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"tools":{"profile":"coding"},"reasoning":false}]' > "$active_models_file"
   printf '%s\n' '0' > "$active_set_count_file"
   printf '%s\n' '0' > "$staged_upload_count_file"
   : > "$get_log"
@@ -1764,7 +1846,8 @@ PY
 
   if [ "$(cat "$active_set_count_file")" = '1' ] \
     && [ "$(cat "$staged_upload_count_file")" = '0' ] \
-    && cmp -s "$desired_models_file" "$staged_models_file"; then
+    && cmp -s "$desired_models_file" "$staged_models_file" \
+    && ! grep -Fq -- '--merge' "$set_log"; then
     pass "setup deployment path updates active config without replacing staged config"
   else
     fail "setup deployment path should update active config without replacing staged config"
@@ -1776,6 +1859,48 @@ PY
     pass "setup deployment path reads and writes the authoritative VM OpenClaw config"
   else
     fail "setup deployment path should read and write the authoritative VM OpenClaw config"
+  fi
+}
+
+test_setup_deployment_flow_stops_on_openclaw_sync_failure() {
+  local output_file="$TEMP_DIR/setup-deployment-sync-failure.out"
+  local status=0
+
+  setup_host_inference_service_phase() { return 0; }
+  setup_embeddings_service_phase() { return 0; }
+  llama_refresh_openclaw_effective_context_window() { return 0; }
+  ensure_vm_connectivity_or_repair() { return 0; }
+  detect_openclaw_runtime_state() { return 0; }
+  sync_openclaw_config() {
+    error 'OpenClaw config verification failed for models.providers.clawbox.models.'
+    out 'OpenClaw config was not replaced.'
+    return 1
+  }
+  ensure_vm_provision_script() { printf 'UNEXPECTED_DEPLOYMENT\n'; return 0; }
+  ensure_openclaw_provisioned() { printf 'UNEXPECTED_PROVISIONING\n'; return 0; }
+  setup_launchagent() { printf 'UNEXPECTED_RUNTIME\n'; return 0; }
+  handle_openclaw_runtime_state() { printf 'UNEXPECTED_RUNTIME_HANDLER\n'; return 0; }
+  offer_targeted_openclaw_config_restart() { return 0; }
+  offer_openclaw_restart_after_llama_update() { return 0; }
+  offer_openclaw_webui() { return 0; }
+  print_setup_completion_summary() { printf 'UNEXPECTED_SETUP_COMPLETE\n'; return 0; }
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/setup-deployment-flow.sh"
+
+  set +e
+  run_provisioning_and_deployment > "$output_file" 2>&1
+  status=$?
+  set -e
+
+  if [ "$status" -ne 0 ] \
+    && grep -Fq 'OpenClaw config verification failed for models.providers.clawbox.models.' "$output_file" \
+    && ! grep -Fq 'UNEXPECTED_SETUP_COMPLETE' "$output_file" \
+    && ! grep -Fq 'UNEXPECTED_DEPLOYMENT' "$output_file" \
+    && ! grep -Fq 'UNEXPECTED_RUNTIME' "$output_file"; then
+    pass "setup deployment flow stops when OpenClaw targeted sync fails verification"
+  else
+    fail "setup deployment flow should stop when OpenClaw targeted sync fails verification"
   fi
 }
 
@@ -5413,6 +5538,7 @@ run_test test_runtime_module
 run_test test_runtime_handle_module
 run_test test_deploy_module
 run_test test_setup_deployment_flow_updates_active_openclaw_config
+run_test test_setup_deployment_flow_stops_on_openclaw_sync_failure
 run_test test_openclaw_webui_module
 run_test test_prompt_module
 run_test test_launchagent_module
