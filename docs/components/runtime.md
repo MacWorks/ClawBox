@@ -40,6 +40,10 @@ Normal setup never replaces an existing VM config. It reads and updates only
 ClawBox-managed provider, primary-model, local tool-deny, gateway-auth, and
 optional embeddings memory-search keys through `openclaw config get` and
 `openclaw config set`. All other OpenClaw settings remain user/OpenClaw-owned.
+Those targeted CLI calls explicitly set `OPENCLAW_CONFIG_PATH` to
+`$HOME/.openclaw/openclaw.json` on the VM, so VM shell startup files cannot
+redirect comparison or update operations to the staged `VM_RUNTIME_PATH`
+payload.
 
 The managed primary keys are:
 

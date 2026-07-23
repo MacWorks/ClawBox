@@ -5,17 +5,17 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/output.sh"
 
 openclaw_config_remote_get() {
   local key="$1"
-  ssh_exec "zsh -lc $(printf '%q' "openclaw config get $(printf '%q' "$key")")"
+  ssh_exec "zsh -lc $(printf '%q' "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config get $(printf '%q' "$key")")"
 }
 
 openclaw_config_remote_set() {
   local key="$1" value="$2"
   case "$key" in
     models.providers.*.models)
-      ssh_exec "zsh -lc $(printf '%q' "openclaw config set --merge $(printf '%q' "$key") $(printf '%q' "$value")")"
+      ssh_exec "zsh -lc $(printf '%q' "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set --merge $(printf '%q' "$key") $(printf '%q' "$value")")"
       ;;
     *)
-      ssh_exec "zsh -lc $(printf '%q' "openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")")"
+      ssh_exec "zsh -lc $(printf '%q' "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config set $(printf '%q' "$key") $(printf '%q' "$value")")"
       ;;
   esac
 }

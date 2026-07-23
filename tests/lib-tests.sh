@@ -960,6 +960,25 @@ test_deploy_module() {
   LLAMA_CTX=32768
   unset OPENCLAW_MAX_TOKENS
   desired_models="$(openclaw_config_model_array)"
+
+  last_ssh_exec=''
+  openclaw_config_remote_get 'models.providers.clawbox.models' >/dev/null || true
+  if [[ "$last_ssh_exec" == *'OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json'* ]] \
+    && [[ "$last_ssh_exec" == *'openclaw\ config\ get\ models.providers.clawbox.models'* ]]; then
+    pass "OpenClaw config get pins the CLI to the authoritative VM config path"
+  else
+    fail "OpenClaw config get should pin the CLI to the authoritative VM config path"
+  fi
+
+  last_ssh_exec=''
+  openclaw_config_remote_set 'models.providers.clawbox.models' "$desired_models" >/dev/null || true
+  if [[ "$last_ssh_exec" == *'OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json'* ]] \
+    && [[ "$last_ssh_exec" == *'openclaw\ config\ set\ --merge\ models.providers.clawbox.models'* ]]; then
+    pass "OpenClaw config set pins the CLI to the authoritative VM config path"
+  else
+    fail "OpenClaw config set should pin the CLI to the authoritative VM config path"
+  fi
+
   reordered_models='[{"cost":{"input":0,"output":0},"compat":{"unsupportedToolSchemaKeywords":["additionalProperties","pattern"],"supportsDeveloperRole":false},"maxTokens":8192,"contextWindow":32768,"api":"openai-completions","name":"local","id":"local"}]'
   extra_models='[{"id":"legacy","name":"legacy","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false}},{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["format","additionalProperties","pattern"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
   legacy_only_models='[{"id":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","name":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]'
@@ -1383,6 +1402,66 @@ PY
     fail "deploy logic should not upload an existing VM config file"
   fi
 
+  rm -f "$prompt_marker" "$upload_marker" "$mkdir_marker"
+  remote_exists=true
+  LLAMA_CTX=65536
+  unset OPENCLAW_EFFECTIVE_CONTEXT_WINDOW
+  OPENCLAW_MAX_TOKENS=8192
+  desired_models="$(openclaw_config_model_array)"
+  wrong_max_tokens_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"tools":{"profile":"coding"},"reasoning":false}]'
+  prompt_answer='y'
+  CONFIG_OVERWRITTEN=false
+  set_log=''
+  managed_tools_deny='["cron"]'
+  managed_base_url='http://127.0.0.1:11434/v1'
+
+  openclaw_config_desired_entries_for_scope() {
+    printf 'models.providers.clawbox.models\t%s\n' "$desired_models"
+    printf 'tools.deny\t["cron"]\n'
+    printf 'models.providers.clawbox.baseUrl\thttp://127.0.0.1:11434/v1\n'
+  }
+
+  openclaw_config_remote_get() {
+    case "$1" in
+      models.providers.clawbox.models) printf '%s\n' "$wrong_max_tokens_model" ;;
+      tools.deny) printf '%s\n' "$managed_tools_deny" ;;
+      models.providers.clawbox.baseUrl) printf '%s\n' "$managed_base_url" ;;
+      gateway.auth.token) printf '%s\n' '__OPENCLAW_REDACTED__' ;;
+      *) return 1 ;;
+    esac
+  }
+
+  openclaw_config_remote_set() {
+    set_log="${set_log}$1=$2\n"
+    case "$1" in
+      models.providers.clawbox.models) wrong_max_tokens_model="$2" ;;
+      tools.deny) managed_tools_deny="$2" ;;
+      models.providers.clawbox.baseUrl) managed_base_url="$2" ;;
+    esac
+  }
+
+  sync_openclaw_config
+  if [ -f "$prompt_marker" ] \
+    && [[ "$set_log" == *'models.providers.clawbox.models='* ]] \
+    && python3 - "$wrong_max_tokens_model" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+model = models[0]
+assert model["contextWindow"] == 65536
+assert model["maxTokens"] == 8192
+assert model["compat"]["supportsDeveloperRole"] is False
+assert model["compat"]["unsupportedToolSchemaKeywords"].count("pattern") == 1
+assert model["compat"]["unsupportedToolSchemaKeywords"].count("additionalProperties") == 1
+assert model["tools"]["profile"] == "coding"
+PY
+  then
+    pass "deploy logic upgrades stale OpenClaw model context and maxTokens without replacing config"
+  else
+    fail "deploy logic should upgrade stale OpenClaw model context and maxTokens without replacing config"
+  fi
+  unset OPENCLAW_MAX_TOKENS
+  LLAMA_CTX=32768
+
   rm -f "$upload_marker"
   remote_exists=false
   generate_openclaw_config() { : > "$CONFIG_PATH"; }
@@ -1401,6 +1480,197 @@ PY
     pass "targeted-only deploy sync does not bootstrap or replace missing VM config"
   else
     fail "targeted-only deploy sync should not bootstrap or replace missing VM config"
+  fi
+}
+
+test_setup_deployment_flow_updates_active_openclaw_config() {
+  local output_file="$TEMP_DIR/setup-deployment-active-config.out"
+  local prompt_marker="$TEMP_DIR/setup-deployment-prompt-called"
+  local active_models_file="$TEMP_DIR/setup-active-models.json"
+  local staged_models_file="$TEMP_DIR/setup-staged-models.json"
+  local desired_models_file="$TEMP_DIR/setup-desired-models.json"
+  local active_set_count_file="$TEMP_DIR/setup-active-set-count"
+  local staged_upload_count_file="$TEMP_DIR/setup-staged-upload-count"
+  local get_log="$TEMP_DIR/setup-active-get.log"
+  local set_log="$TEMP_DIR/setup-active-set.log"
+  local ssh_log="$TEMP_DIR/setup-active-ssh.log"
+  local desired_models=''
+  local status=0
+
+  setup_host_inference_service_phase() { return 0; }
+  setup_embeddings_service_phase() { return 0; }
+  ensure_vm_connectivity_or_repair() { return 0; }
+  detect_openclaw_runtime_state() {
+    NEEDS_PROVISIONING=false
+    IS_RUNNING=true
+    OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by VM launchd'
+    return 0
+  }
+  ensure_vm_provision_script() { return 0; }
+  ensure_openclaw_provisioned() { return 0; }
+  setup_launchagent() { return 0; }
+  handle_openclaw_runtime_state() { return 0; }
+  offer_targeted_openclaw_config_restart() { return 0; }
+  offer_openclaw_restart_after_llama_update() { return 0; }
+  offer_openclaw_webui() { return 0; }
+  print_setup_completion_summary() { return 0; }
+  llama_refresh_openclaw_effective_context_window() {
+    OPENCLAW_EFFECTIVE_CONTEXT_WINDOW=65536
+    export OPENCLAW_EFFECTIVE_CONTEXT_WINDOW
+    return 0
+  }
+  ssh_run_quiet() { return 0; }
+  scp() {
+    local count=''
+    count="$(cat "$staged_upload_count_file")"
+    printf '%s\n' "$((count + 1))" > "$staged_upload_count_file"
+    return 0
+  }
+  prompt_yes_no() {
+    : > "$prompt_marker"
+    REPLY='y'
+    return 0
+  }
+  is_yes() {
+    case "$1" in
+      y|Y|yes|YES|true|TRUE) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+  ssh_exec() {
+    local command_text="${1:-}"
+    local count=''
+
+    printf '%s\n' "$command_text" >> "$ssh_log"
+    case "$command_text" in
+      *"test -f ~/.openclaw/openclaw.json"*)
+        return 0
+        ;;
+      *"chmod 600 ~/.openclaw/openclaw.json"*)
+        return 0
+        ;;
+      *get*"models.providers.clawbox.models"*)
+        printf 'models:active:%s\n' "$command_text" >> "$get_log"
+        cat "$active_models_file"
+        return 0
+        ;;
+      *get*"tools.deny"*)
+        printf 'tools:active:%s\n' "$command_text" >> "$get_log"
+        printf '%s\n' '["cron"]'
+        return 0
+        ;;
+      *get*"models.providers.clawbox.baseUrl"*)
+        printf 'baseUrl:active:%s\n' "$command_text" >> "$get_log"
+        printf '%s\n' 'http://127.0.0.1:11434/v1'
+        return 0
+        ;;
+      *get*"models.providers.clawbox.api"*)
+        printf 'api:active:%s\n' "$command_text" >> "$get_log"
+        printf '%s\n' 'openai-completions'
+        return 0
+        ;;
+      *get*"agents.defaults.model.primary"*)
+        printf 'primary:active:%s\n' "$command_text" >> "$get_log"
+        printf '%s\n' 'clawbox/local'
+        return 0
+        ;;
+      *get*"gateway.auth.token"*)
+        printf '%s\n' '__OPENCLAW_REDACTED__'
+        return 0
+        ;;
+      *set*"models.providers.clawbox.models"*)
+        printf 'models:active:%s\n' "$command_text" >> "$set_log"
+        openclaw_config_value_for_remote_set \
+          'models.providers.clawbox.models' \
+          "$(cat "$active_models_file")" \
+          "$(cat "$desired_models_file")" \
+          > "$active_models_file.next"
+        mv "$active_models_file.next" "$active_models_file"
+        count="$(cat "$active_set_count_file")"
+        printf '%s\n' "$((count + 1))" > "$active_set_count_file"
+        return 0
+        ;;
+    esac
+    return 0
+  }
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/deploy.sh"
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/setup-deployment-flow.sh"
+
+  LLAMA_CTX=65536
+  OPENCLAW_EFFECTIVE_CONTEXT_WINDOW=65536
+  OPENCLAW_MAX_TOKENS=8192
+  OPENCLAW_PROVIDER_NAME='clawbox'
+  OPENCLAW_DEFAULT_MODEL='local'
+  LLAMA_BASE_URL='http://127.0.0.1:11434/v1'
+  VM_HOST='jimmy@192.168.64.8'
+  VM_RUNTIME_PATH='/Users/jimmy/ClawBox'
+  CONFIG_PATH="$TEMP_DIR/staged-openclaw.json"
+  REMOTE_CONFIG_DIR='~/.openclaw'
+  REMOTE_CONFIG_PATH='~/.openclaw/openclaw.json'
+  CONFIG_OVERWRITTEN=false
+  CONFIG_TARGETED_UPDATED=false
+
+  desired_models="$(openclaw_config_model_array)"
+  printf '%s\n' "$desired_models" > "$desired_models_file"
+  printf '%s\n' "$desired_models" > "$staged_models_file"
+  printf '{"models":{"providers":{"clawbox":{"models":%s}}}}\n' "$desired_models" > "$CONFIG_PATH"
+  printf '%s\n' '[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":2048,"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"tools":{"profile":"coding"},"reasoning":false}]' > "$active_models_file"
+  printf '%s\n' '0' > "$active_set_count_file"
+  printf '%s\n' '0' > "$staged_upload_count_file"
+  : > "$get_log"
+  : > "$set_log"
+  : > "$ssh_log"
+
+  set +e
+  run_provisioning_and_deployment > "$output_file" 2>&1
+  status=$?
+  set -e
+
+  if [ "$status" -eq 0 ]; then
+    pass "setup deployment path completes with active OpenClaw config drift"
+  else
+    fail "setup deployment path should complete with active OpenClaw config drift"
+  fi
+
+  if grep -Fq 'OpenClaw config differs only in ClawBox-managed settings:' "$output_file" \
+    && grep -Fq 'models.providers.clawbox.models' "$output_file" \
+    && ! grep -Fq 'OpenClaw config already matched; no OpenClaw changes were made.' "$output_file"; then
+    pass "setup deployment path detects stale active OpenClaw model settings"
+  else
+    fail "setup deployment path should detect stale active OpenClaw model settings"
+  fi
+
+  if python3 - "$active_models_file" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    model = json.load(handle)[0]
+assert model["contextWindow"] == 65536
+assert model["maxTokens"] == 8192
+assert model["tools"]["profile"] == "coding"
+PY
+  then
+    pass "setup deployment path updates active OpenClaw config while preserving unmanaged model fields"
+  else
+    fail "setup deployment path should update active OpenClaw config while preserving unmanaged model fields"
+  fi
+
+  if [ "$(cat "$active_set_count_file")" = '1' ] \
+    && [ "$(cat "$staged_upload_count_file")" = '0' ] \
+    && cmp -s "$desired_models_file" "$staged_models_file"; then
+    pass "setup deployment path updates active config without replacing staged config"
+  else
+    fail "setup deployment path should update active config without replacing staged config"
+  fi
+
+  if grep -Fq 'models:active:' "$get_log" \
+    && grep -Fq 'models:active:' "$set_log" \
+    && grep -Fq 'OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json' "$ssh_log"; then
+    pass "setup deployment path reads and writes the authoritative VM OpenClaw config"
+  else
+    fail "setup deployment path should read and write the authoritative VM OpenClaw config"
   fi
 }
 
@@ -5037,6 +5307,7 @@ run_test test_ssh_module
 run_test test_runtime_module
 run_test test_runtime_handle_module
 run_test test_deploy_module
+run_test test_setup_deployment_flow_updates_active_openclaw_config
 run_test test_openclaw_webui_module
 run_test test_prompt_module
 run_test test_launchagent_module
