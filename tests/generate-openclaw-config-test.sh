@@ -117,6 +117,12 @@ test_generate_openclaw_config_writes_expected_config() {
   json_query "$fixture_root" 'models.providers.clawbox.models.0.maxTokens'
   assert_equals 'generator writes the default managed OpenClaw maxTokens' "$REPLY" '8192'
 
+  json_query "$fixture_root" 'agents.defaults.compaction.reserveTokens'
+  assert_equals 'generator writes derived compaction reserveTokens' "$REPLY" '5000'
+
+  json_query "$fixture_root" 'agents.defaults.compaction.reserveTokensFloor'
+  assert_equals 'generator writes derived compaction reserveTokensFloor' "$REPLY" '5000'
+
   json_query "$fixture_root" 'models.providers.clawbox.api'
   assert_equals 'generator uses the OpenAI completions provider API' "$REPLY" 'openai-completions'
 
@@ -167,6 +173,9 @@ test_generate_openclaw_config_uses_effective_context_window_when_known() {
   assert_equals 'generator succeeds with an effective llama-server context window' "$GENERATOR_LAST_STATUS" '0'
   json_query "$fixture_root" 'models.providers.clawbox.models.0.contextWindow'
   assert_equals 'generator caps OpenClaw contextWindow to effective llama-server context' "$REPLY" '32768'
+
+  json_query "$fixture_root" 'agents.defaults.compaction.reserveTokens'
+  assert_equals 'generator derives compaction reserve from effective context' "$REPLY" '8192'
 }
 
 test_generate_openclaw_config_rejects_max_tokens_at_effective_context_window() {

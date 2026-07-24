@@ -4,6 +4,7 @@ set -euo pipefail
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$BASE_DIR/lib/output.sh"
 source "$BASE_DIR/lib/log-paths.sh"
+source "$BASE_DIR/lib/context-runtime.sh"
 source "$BASE_DIR/lib/llama/llama-runtime.sh"
 
 STATUS_DEBUG="${CLAWBOX_STATUS_DEBUG:-false}"
@@ -87,6 +88,86 @@ status_curl() {
   curl -s --connect-timeout "$STATUS_CURL_CONNECT_TIMEOUT" --max-time "$STATUS_CURL_MAX_TIME" "$@"
 }
 
+status_llama_runtime_json() {
+  local endpoint="$1"
+  local fixture_var=''
+  local fixture_path=''
+
+  case "$endpoint" in
+    props) fixture_var="${CLAWBOX_STATUS_LLAMA_PROPS_FILE:-}" ;;
+    slots) fixture_var="${CLAWBOX_STATUS_LLAMA_SLOTS_FILE:-}" ;;
+    *) return 1 ;;
+  esac
+
+  fixture_path="$fixture_var"
+  if [ -n "$fixture_path" ]; then
+    cat "$fixture_path"
+    return $?
+  fi
+
+  status_curl "$VM_LLAMA_SERVER_BASE_URL/$endpoint"
+}
+
+status_json_value() {
+  local json="$1"
+  local expression="$2"
+
+  python3 - "$json" "$expression" <<'PY'
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+
+expr = sys.argv[2]
+
+def first_number(paths):
+    for path in paths:
+        cur = data
+        try:
+            for part in path.split("."):
+                if isinstance(cur, list):
+                    cur = cur[int(part)]
+                else:
+                    cur = cur[part]
+            if isinstance(cur, bool):
+                continue
+            if isinstance(cur, (int, float)):
+                print(int(cur))
+                raise SystemExit(0)
+        except Exception:
+            continue
+    raise SystemExit(1)
+
+if expr == "runtime_context":
+    first_number(["default_generation_settings.n_ctx", "n_ctx", "context_size", "contextWindow"])
+elif expr == "total_slots":
+    first_number(["total_slots", "slots", "slot_count"])
+elif expr == "slot_context":
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                for key in ("n_ctx", "ctx_size", "context_size"):
+                    value = item.get(key)
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        print(int(value))
+                        raise SystemExit(0)
+    if isinstance(data, dict):
+        slots = data.get("slots")
+        if isinstance(slots, list):
+            for item in slots:
+                if isinstance(item, dict):
+                    for key in ("n_ctx", "ctx_size", "context_size"):
+                        value = item.get(key)
+                        if isinstance(value, (int, float)) and not isinstance(value, bool):
+                            print(int(value))
+                            raise SystemExit(0)
+    raise SystemExit(1)
+else:
+    raise SystemExit(1)
+PY
+}
+
 env_file_value() {
   local env_path="$1"
   local key="$2"
@@ -162,6 +243,12 @@ vm_openclaw_config_get() {
   case "$key" in
     agents.defaults.memorySearch.model)
       vm_ssh_exec "jq -er '.agents.defaults.memorySearch.model // empty' ~/.openclaw/openclaw.json"
+      ;;
+    agents.defaults.compaction.reserveTokens)
+      vm_ssh_exec "jq -er '.agents.defaults.compaction.reserveTokens // empty' ~/.openclaw/openclaw.json"
+      ;;
+    agents.defaults.compaction.reserveTokensFloor)
+      vm_ssh_exec "jq -er '.agents.defaults.compaction.reserveTokensFloor // empty' ~/.openclaw/openclaw.json"
       ;;
     *)
       vm_ssh_exec "zsh -lc 'openclaw config get $key'"
@@ -251,6 +338,30 @@ for model in models:
         print(f"warn\tOpenClaw provider has obsolete concrete model entry: {model_id}")
     elif model.get("name") != model_id:
         print(f"warn\tOpenClaw provider has conflicting concrete model entry: {model_id}")
+PY
+}
+
+status_openclaw_model_numeric_field() {
+  local models="$1"
+  local default_model="$2"
+  local field="$3"
+
+  python3 - "$models" "$default_model" "$field" <<'PY'
+import json, sys
+try:
+    models = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+default_model = sys.argv[2] or "local"
+field = sys.argv[3]
+for model in models if isinstance(models, list) else []:
+    if isinstance(model, dict) and model.get("id") == default_model:
+        value = model.get(field)
+        if isinstance(value, bool) or value is None:
+            raise SystemExit(1)
+        print(int(value))
+        raise SystemExit(0)
+raise SystemExit(1)
 PY
 }
 
@@ -666,6 +777,118 @@ $(status_openclaw_provider_models_report "$OPENCLAW_PROVIDER_MODELS" "${OPENCLAW
 EOF
 else
   warn_status "OpenClaw provider model array is unavailable"
+fi
+
+section "Context and Token Budget"
+STATUS_CONFIGURED_CONTEXT="${LLAMA_CTX:-}"
+STATUS_NATIVE_CONTEXT=''
+STATUS_PROPS_JSON=''
+STATUS_SLOTS_JSON=''
+STATUS_RUNTIME_CONTEXT=''
+STATUS_TOTAL_SLOTS=''
+STATUS_SLOT_COUNT=''
+STATUS_SLOT_CONTEXT=''
+STATUS_SLOT_CONTEXT_VALID=true
+STATUS_OPENCLAW_CONTEXT=''
+STATUS_OPENCLAW_MAX_TOKENS=''
+STATUS_RESERVE_TOKENS=''
+STATUS_RESERVE_TOKENS_FLOOR=''
+STATUS_PROMPT_BUDGET=''
+
+if [ -n "${MODEL_PATH:-}" ]; then
+  STATUS_NATIVE_CONTEXT="$(gguf_native_context_from_file "$MODEL_PATH" 2>/dev/null || true)"
+fi
+
+STATUS_PROPS_JSON="$(status_llama_runtime_json props 2>/dev/null || true)"
+STATUS_SLOTS_JSON="$(status_llama_runtime_json slots 2>/dev/null || true)"
+if [ -n "$STATUS_PROPS_JSON" ]; then
+  STATUS_RUNTIME_CONTEXT="$(status_json_value "$STATUS_PROPS_JSON" runtime_context 2>/dev/null || true)"
+  STATUS_TOTAL_SLOTS="$(status_json_value "$STATUS_PROPS_JSON" total_slots 2>/dev/null || true)"
+fi
+if [ -n "$STATUS_SLOTS_JSON" ]; then
+  STATUS_SLOT_COUNT="$(llama_runtime_slot_count_from_slots_json "$STATUS_SLOTS_JSON" 2>/dev/null || true)"
+  if ! STATUS_SLOT_CONTEXT="$(llama_runtime_slot_context_from_slots_json "$STATUS_SLOTS_JSON" 2>/dev/null)"; then
+    STATUS_SLOT_CONTEXT=''
+    STATUS_SLOT_CONTEXT_VALID=false
+  fi
+  [ -n "$STATUS_TOTAL_SLOTS" ] || STATUS_TOTAL_SLOTS="$STATUS_SLOT_COUNT"
+fi
+if [ -z "$STATUS_RUNTIME_CONTEXT" ]; then
+  STATUS_RUNTIME_CONTEXT="$STATUS_SLOT_CONTEXT"
+fi
+
+if [ -n "${OPENCLAW_PROVIDER_MODELS:-}" ]; then
+  STATUS_OPENCLAW_CONTEXT="$(status_openclaw_model_numeric_field "$OPENCLAW_PROVIDER_MODELS" "${OPENCLAW_DEFAULT_MODEL:-local}" contextWindow 2>/dev/null || true)"
+  STATUS_OPENCLAW_MAX_TOKENS="$(status_openclaw_model_numeric_field "$OPENCLAW_PROVIDER_MODELS" "${OPENCLAW_DEFAULT_MODEL:-local}" maxTokens 2>/dev/null || true)"
+fi
+STATUS_RESERVE_TOKENS="$(vm_openclaw_config_get 'agents.defaults.compaction.reserveTokens' 2>/dev/null || true)"
+STATUS_RESERVE_TOKENS_FLOOR="$(vm_openclaw_config_get 'agents.defaults.compaction.reserveTokensFloor' 2>/dev/null || true)"
+
+out "Model native context: ${STATUS_NATIVE_CONTEXT:-unknown}"
+out "Configured LLAMA_CTX: ${STATUS_CONFIGURED_CONTEXT:-unknown}"
+out "Runtime context: ${STATUS_RUNTIME_CONTEXT:-unknown}"
+out "Parallel slots: ${STATUS_TOTAL_SLOTS:-${LLAMA_PARALLEL:-unknown}}"
+out "Per-slot context: ${STATUS_SLOT_CONTEXT:-unknown}"
+out "OpenClaw contextWindow: ${STATUS_OPENCLAW_CONTEXT:-unknown}"
+out "OpenClaw maxTokens: ${STATUS_OPENCLAW_MAX_TOKENS:-${OPENCLAW_MAX_TOKENS:-unknown}}"
+out "Compaction reserveTokens: ${STATUS_RESERVE_TOKENS:-unknown}"
+out "Compaction reserveTokensFloor: ${STATUS_RESERVE_TOKENS_FLOOR:-unknown}"
+
+if clawbox_positive_integer "${STATUS_OPENCLAW_CONTEXT:-}" && clawbox_positive_integer "${STATUS_RESERVE_TOKENS:-}"; then
+  STATUS_PROMPT_BUDGET=$((STATUS_OPENCLAW_CONTEXT - STATUS_RESERVE_TOKENS))
+  out "Prompt budget before reserve: $STATUS_PROMPT_BUDGET"
+else
+  out "Prompt budget before reserve: unknown"
+fi
+
+if [ -n "${MODEL_PATH:-}" ] && [ -f "$MODEL_PATH" ] && [ -z "$STATUS_NATIVE_CONTEXT" ]; then
+  warn_status "GGUF native context metadata is unavailable"
+fi
+
+if clawbox_positive_integer "${STATUS_CONFIGURED_CONTEXT:-}" && clawbox_positive_integer "${STATUS_RUNTIME_CONTEXT:-}" \
+  && [ "$STATUS_CONFIGURED_CONTEXT" -ne "$STATUS_RUNTIME_CONTEXT" ]; then
+  fail "llama-server runtime context differs from configured LLAMA_CTX"
+elif clawbox_positive_integer "${STATUS_RUNTIME_CONTEXT:-}" && clawbox_positive_integer "${STATUS_OPENCLAW_CONTEXT:-}" \
+  && [ "$STATUS_OPENCLAW_CONTEXT" -ne "$STATUS_RUNTIME_CONTEXT" ]; then
+  fail "OpenClaw contextWindow differs from effective llama-server runtime context"
+elif clawbox_positive_integer "${STATUS_RUNTIME_CONTEXT:-}" && clawbox_positive_integer "${STATUS_OPENCLAW_CONTEXT:-}" \
+  && [ "$STATUS_OPENCLAW_CONTEXT" -eq "$STATUS_RUNTIME_CONTEXT" ]; then
+  pass "OpenClaw contextWindow matches effective llama-server runtime context"
+fi
+
+if clawbox_positive_integer "${LLAMA_PARALLEL:-}" && clawbox_positive_integer "${STATUS_TOTAL_SLOTS:-}" \
+  && [ "$LLAMA_PARALLEL" -ne "$STATUS_TOTAL_SLOTS" ]; then
+  fail "llama-server total_slots differs from configured LLAMA_PARALLEL"
+fi
+
+if [ -z "$STATUS_PROPS_JSON" ] || [ -z "$STATUS_SLOTS_JSON" ]; then
+  out "Runtime API validation: incomplete (/props or /slots unavailable)"
+elif [ "$STATUS_SLOT_CONTEXT_VALID" != true ]; then
+  fail "llama-server slot contexts are unavailable or inconsistent"
+elif clawbox_positive_integer "${STATUS_TOTAL_SLOTS:-}" && clawbox_positive_integer "${STATUS_SLOT_COUNT:-}" \
+  && [ "$STATUS_TOTAL_SLOTS" -ne "$STATUS_SLOT_COUNT" ]; then
+  fail "llama-server total_slots does not match returned slot count"
+elif clawbox_positive_integer "${STATUS_RUNTIME_CONTEXT:-}" && clawbox_positive_integer "${STATUS_SLOT_CONTEXT:-}" \
+  && [ "$STATUS_RUNTIME_CONTEXT" -ne "$STATUS_SLOT_CONTEXT" ]; then
+  fail "llama-server /props context does not match per-slot context"
+elif clawbox_positive_integer "${STATUS_CONFIGURED_CONTEXT:-}" && clawbox_positive_integer "${STATUS_SLOT_CONTEXT:-}" \
+  && [ "$STATUS_CONFIGURED_CONTEXT" -ne "$STATUS_SLOT_CONTEXT" ]; then
+  fail "llama-server slot context differs from configured LLAMA_CTX"
+else
+  pass "llama-server runtime context evidence is internally consistent"
+fi
+
+if clawbox_positive_integer "${STATUS_OPENCLAW_CONTEXT:-}" && clawbox_positive_integer "${STATUS_OPENCLAW_MAX_TOKENS:-}" \
+  && [ "$STATUS_OPENCLAW_MAX_TOKENS" -ge "$STATUS_OPENCLAW_CONTEXT" ]; then
+  fail "OpenClaw maxTokens is not less than contextWindow"
+fi
+if clawbox_positive_integer "${STATUS_OPENCLAW_CONTEXT:-}" && clawbox_positive_integer "${STATUS_RESERVE_TOKENS:-}" \
+  && [ "$STATUS_RESERVE_TOKENS" -ge "$STATUS_OPENCLAW_CONTEXT" ]; then
+  fail "OpenClaw reserveTokens is not less than contextWindow"
+fi
+if clawbox_positive_integer "${STATUS_OPENCLAW_CONTEXT:-}" && clawbox_positive_integer "${STATUS_RESERVE_TOKENS_FLOOR:-}" \
+  && [ "$STATUS_RESERVE_TOKENS_FLOOR" -ge "$STATUS_OPENCLAW_CONTEXT" ]; then
+  fail "OpenClaw reserveTokensFloor is not less than contextWindow"
 fi
 
 section "VM → Host LLaMA (API)"

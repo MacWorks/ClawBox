@@ -61,6 +61,8 @@ setup_status_test_mocks() {
   unset CLAWBOX_TEST_STATUS_LAUNCHCTL_PRINT_EXIT_CODE
   unset CLAWBOX_TEST_STATUS_LAUNCHCTL_LOG
   unset CLAWBOX_TEST_STATUS_CURL_LOG
+  unset CLAWBOX_TEST_STATUS_PROPS_JSON
+  unset CLAWBOX_TEST_STATUS_SLOTS_JSON
   unset CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT
   unset CLAWBOX_TEST_STATUS_PROCESS_ARGS_EMBEDDINGS_OUTPUT
   unset CLAWBOX_TEST_SSH_LOG
@@ -118,6 +120,18 @@ esac
 if [ -n "${CLAWBOX_TEST_STATUS_CURL_LOG:-}" ]; then
   printf "%s\n" "$*" >> "$CLAWBOX_TEST_STATUS_CURL_LOG"
 fi
+last_arg=""
+for arg in "$@"; do
+  last_arg="$arg"
+done
+case "$last_arg" in
+  */props)
+    [ -n "${CLAWBOX_TEST_STATUS_PROPS_JSON:-}" ] && printf "%s\n" "$CLAWBOX_TEST_STATUS_PROPS_JSON"
+    ;;
+  */slots)
+    [ -n "${CLAWBOX_TEST_STATUS_SLOTS_JSON:-}" ] && printf "%s\n" "$CLAWBOX_TEST_STATUS_SLOTS_JSON"
+    ;;
+esac
 exit "${CLAWBOX_TEST_STATUS_CURL_EXIT_CODE:-0}"
 '
 
@@ -227,6 +241,10 @@ shift || true
       translated_command="$remote_command"
       translated_command="${translated_command//\~\/\.openclaw\/openclaw\.json/$CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE}"
       if printf "%s\n" "$translated_command" | grep -Fq ".models.providers[\$provider].models // []"; then
+        /bin/bash -c "$translated_command"
+        exit $?
+      fi
+      if printf "%s\n" "$translated_command" | grep -Fq ".agents.defaults.compaction.reserveTokens"; then
         /bin/bash -c "$translated_command"
         exit $?
       fi
@@ -1005,6 +1023,14 @@ test_status_validates_vm_openclaw_config_with_configured_provider_name() {
   mkdir -p "$vm_config_dir"
   cat > "$vm_config_path" <<EOF
 {
+  "agents": {
+    "defaults": {
+      "compaction": {
+        "reserveTokens": 8192,
+        "reserveTokensFloor": 8192
+      }
+    }
+  },
   "models": {
     "providers": {
       "$provider_name": {
@@ -1031,6 +1057,8 @@ EOF
   export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROPS_JSON='{"default_generation_settings":{"n_ctx":65536},"total_slots":1}'
+  export CLAWBOX_TEST_STATUS_SLOTS_JSON='[{"id":0,"n_ctx":65536}]'
   export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
@@ -1422,6 +1450,14 @@ MODEL_PATH="/Users/vm-user/models/Status-Legacy-14B-Q5_K_M.gguf"
 EOF
   cat > "$active_config" <<'EOF'
 {
+  "agents": {
+    "defaults": {
+      "compaction": {
+        "reserveTokens": 8192,
+        "reserveTokensFloor": 8192
+      }
+    }
+  },
   "models": {
     "providers": {
       "clawbox": {
@@ -1472,6 +1508,8 @@ EOF
   export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROPS_JSON='{"default_generation_settings":{"n_ctx":65536},"total_slots":1}'
+  export CLAWBOX_TEST_STATUS_SLOTS_JSON='[{"id":0,"n_ctx":65536}]'
   export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
@@ -1519,6 +1557,14 @@ MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 EOF
   cat > "$active_config" <<'EOF'
 {
+  "agents": {
+    "defaults": {
+      "compaction": {
+        "reserveTokens": 8192,
+        "reserveTokensFloor": 8192
+      }
+    }
+  },
   "models": {
     "providers": {
       "clawbox": {
@@ -1546,6 +1592,8 @@ EOF
   export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROPS_JSON='{"default_generation_settings":{"n_ctx":65536},"total_slots":1}'
+  export CLAWBOX_TEST_STATUS_SLOTS_JSON='[{"id":0,"n_ctx":65536}]'
   export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
@@ -1564,9 +1612,157 @@ EOF
 
   assert_equals 'status normalized OpenClaw provider model exits healthy' "$status" '0'
   assert_contains 'status normalized OpenClaw provider model reports stable alias' "$output" 'PASS: OpenClaw stable alias model entry is configured'
+  assert_contains 'status normalized OpenClaw provider model reports context section' "$output" 'Context and Token Budget'
+  assert_contains 'status normalized OpenClaw provider model reports runtime context' "$output" 'Runtime context: 65536'
+  assert_contains 'status normalized OpenClaw provider model reports OpenClaw context' "$output" 'OpenClaw contextWindow: 65536'
+  assert_contains 'status normalized OpenClaw provider model reports OpenClaw maxTokens' "$output" 'OpenClaw maxTokens: 8192'
+  assert_contains 'status normalized OpenClaw provider model reports compaction reserve' "$output" 'Compaction reserveTokens: 8192'
+  assert_contains 'status normalized OpenClaw provider model reports prompt budget' "$output" 'Prompt budget before reserve: 57344'
+  assert_contains 'status normalized OpenClaw provider model confirms context match' "$output" 'PASS: OpenClaw contextWindow matches effective llama-server runtime context'
+  assert_contains 'status normalized OpenClaw provider model validates runtime evidence' "$output" 'PASS: llama-server runtime context evidence is internally consistent'
   assert_contains 'status normalized OpenClaw provider model reports healthy summary' "$output" 'RESULT: HEALTHY'
   assert_not_contains 'status normalized OpenClaw provider model has no obsolete concrete warning' "$output" 'WARN: OpenClaw provider has obsolete concrete model entry'
   assert_not_contains 'status normalized OpenClaw provider model has no warnings summary' "$output" 'HEALTHY WITH WARNINGS'
+}
+
+run_status_context_contract_fixture() {
+  local configured_context="$1"
+  local configured_parallel="$2"
+  local runtime_context="$3"
+  local total_slots="$4"
+  local slots_json="$5"
+  local openclaw_context="$6"
+  local active_config="$TEMP_DIR/status-context-contract-openclaw.json"
+
+  prepare_status_test_home
+  setup_status_test_mocks
+
+  cat > "$ENV_FILE" <<EOF
+HOST_IP="127.0.0.1"
+VM_HOST="vm-user@192.168.64.2"
+LLAMA_PORT="18080"
+LLAMA_BASE_URL="http://127.0.0.1:18080/v1"
+MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+LLAMA_EXTERNAL="false"
+LLAMA_CTX="$configured_context"
+LLAMA_PARALLEL="$configured_parallel"
+EOF
+  cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
+MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+EOF
+  cat > "$active_config" <<EOF
+{
+  "agents": {
+    "defaults": {
+      "compaction": {
+        "reserveTokens": 8192,
+        "reserveTokensFloor": 8192
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "clawbox": {
+        "baseUrl": "http://127.0.0.1:18080/v1",
+        "models": [
+          {
+            "id": "local",
+            "name": "local",
+            "api": "openai-completions",
+            "contextWindow": $openclaw_context,
+            "maxTokens": 8192,
+            "compat": {
+              "supportsDeveloperRole": false,
+              "unsupportedToolSchemaKeywords": ["pattern", "additionalProperties"]
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+EOF
+
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT="/opt/homebrew/bin/llama-server -m /Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --host 0.0.0.0 --port 18080 --ctx-size $configured_context --parallel $configured_parallel"
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  if [ "$runtime_context" = "missing" ] && [ "$total_slots" = "missing" ]; then
+    unset CLAWBOX_TEST_STATUS_PROPS_JSON
+  elif [ "$runtime_context" = "missing" ]; then
+    export CLAWBOX_TEST_STATUS_PROPS_JSON="{\"total_slots\":$total_slots}"
+  elif [ "$total_slots" = "missing" ]; then
+    export CLAWBOX_TEST_STATUS_PROPS_JSON="{\"default_generation_settings\":{\"n_ctx\":$runtime_context}}"
+  else
+    export CLAWBOX_TEST_STATUS_PROPS_JSON="{\"default_generation_settings\":{\"n_ctx\":$runtime_context},\"total_slots\":$total_slots}"
+  fi
+  if [ "$slots_json" = "missing" ]; then
+    unset CLAWBOX_TEST_STATUS_SLOTS_JSON
+  else
+    export CLAWBOX_TEST_STATUS_SLOTS_JSON="$slots_json"
+  fi
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE="$active_config"
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/context-contract-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/context-contract-system.err.log"
+
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG"
+
+  set +e
+  STATUS_CONTEXT_OUTPUT="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  STATUS_CONTEXT_STATUS=$?
+  set -e
+}
+
+test_status_reports_incomplete_when_props_unavailable() {
+  run_status_context_contract_fixture 65536 1 missing missing '[{"id":0,"n_ctx":65536}]' 65536
+
+  assert_equals 'status missing props remains non-fatal' "$STATUS_CONTEXT_STATUS" '0'
+  assert_contains 'status missing props reports incomplete validation' "$STATUS_CONTEXT_OUTPUT" 'Runtime API validation: incomplete (/props or /slots unavailable)'
+  assert_not_contains 'status missing props does not claim runtime evidence passed' "$STATUS_CONTEXT_OUTPUT" 'PASS: llama-server runtime context evidence is internally consistent'
+}
+
+test_status_reports_incomplete_when_slots_unavailable() {
+  run_status_context_contract_fixture 65536 1 65536 1 missing 65536
+
+  assert_equals 'status missing slots remains non-fatal' "$STATUS_CONTEXT_STATUS" '0'
+  assert_contains 'status missing slots reports incomplete validation' "$STATUS_CONTEXT_OUTPUT" 'Runtime API validation: incomplete (/props or /slots unavailable)'
+  assert_not_contains 'status missing slots does not claim runtime evidence passed' "$STATUS_CONTEXT_OUTPUT" 'PASS: llama-server runtime context evidence is internally consistent'
+}
+
+test_status_fails_on_inconsistent_llama_slot_contexts() {
+  run_status_context_contract_fixture 65536 2 65536 2 '[{"id":0,"n_ctx":65536},{"id":1,"n_ctx":32768}]' 65536
+
+  assert_equals 'status inconsistent slot contexts exits unhealthy' "$STATUS_CONTEXT_STATUS" '1'
+  assert_contains 'status inconsistent slot contexts reports validation failure' "$STATUS_CONTEXT_OUTPUT" 'FAIL: llama-server slot contexts are unavailable or inconsistent'
+  assert_contains 'status inconsistent slot contexts reports unhealthy summary' "$STATUS_CONTEXT_OUTPUT" 'RESULT: UNHEALTHY'
+}
+
+test_status_fails_on_slot_count_mismatch() {
+  run_status_context_contract_fixture 65536 2 65536 2 '[{"id":0,"n_ctx":65536}]' 65536
+
+  assert_equals 'status slot count mismatch exits unhealthy' "$STATUS_CONTEXT_STATUS" '1'
+  assert_contains 'status slot count mismatch reports failure' "$STATUS_CONTEXT_OUTPUT" 'FAIL: llama-server total_slots does not match returned slot count'
+}
+
+test_status_fails_on_parallel_total_slots_mismatch() {
+  run_status_context_contract_fixture 65536 1 65536 2 '[{"id":0,"n_ctx":65536},{"id":1,"n_ctx":65536}]' 65536
+
+  assert_equals 'status configured parallel mismatch exits unhealthy' "$STATUS_CONTEXT_STATUS" '1'
+  assert_contains 'status configured parallel mismatch reports failure' "$STATUS_CONTEXT_OUTPUT" 'FAIL: llama-server total_slots differs from configured LLAMA_PARALLEL'
+}
+
+test_status_fails_on_openclaw_runtime_context_mismatch() {
+  run_status_context_contract_fixture 65536 1 65536 1 '[{"id":0,"n_ctx":65536}]' 32768
+
+  assert_equals 'status OpenClaw runtime context mismatch exits unhealthy' "$STATUS_CONTEXT_STATUS" '1'
+  assert_contains 'status OpenClaw runtime context mismatch reports failure' "$STATUS_CONTEXT_OUTPUT" 'FAIL: OpenClaw contextWindow differs from effective llama-server runtime context'
 }
 
 test_status_detects_primary_model_mismatch() {
@@ -2284,9 +2480,9 @@ test_status_uses_bounded_noninteractive_ssh_for_all_vm_checks() {
   set -e
 
   assert_equals 'status bounded ssh path stays healthy when all probes succeed' "$status" '0'
-  assert_equals 'status bounded ssh path issues eight SSH calls' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '8'
-  assert_equals 'status bounded ssh path applies BatchMode to every SSH call' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '8'
-  assert_equals 'status bounded ssh path applies ConnectTimeout to every SSH call' "$(/usr/bin/grep -Fc -- '-o ConnectTimeout=3' "$ssh_log")" '8'
+  assert_equals 'status bounded ssh path issues ten SSH calls' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '10'
+  assert_equals 'status bounded ssh path applies BatchMode to every SSH call' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '10'
+  assert_equals 'status bounded ssh path applies ConnectTimeout to every SSH call' "$(/usr/bin/grep -Fc -- '-o ConnectTimeout=3' "$ssh_log")" '10'
   assert_contains 'status bounded ssh path reports a healthy summary' "$output" 'RESULT: HEALTHY'
 }
 
@@ -2318,6 +2514,12 @@ run_test test_status_managed_local_host_probe_ignores_custom_llama_base_url_when
 run_test test_status_displays_primary_model_summary
 run_test test_status_warns_about_obsolete_openclaw_concrete_model_entries
 run_test test_status_reports_normalized_openclaw_provider_models_healthy
+run_test test_status_reports_incomplete_when_props_unavailable
+run_test test_status_reports_incomplete_when_slots_unavailable
+run_test test_status_fails_on_inconsistent_llama_slot_contexts
+run_test test_status_fails_on_slot_count_mismatch
+run_test test_status_fails_on_parallel_total_slots_mismatch
+run_test test_status_fails_on_openclaw_runtime_context_mismatch
 run_test test_status_detects_primary_model_mismatch
 run_test test_status_displays_embeddings_model_summary_when_enabled
 run_test test_status_reports_embeddings_loopback_only_as_unhealthy

@@ -39,17 +39,20 @@ test_wrapper_arguments_are_profile_specific() {
   local primary_model="$TEMP_DIR/models/primary.gguf"
   local embed_model="$TEMP_DIR/models/embed.gguf"
   local primary_env="$TEMP_DIR/primary.env"
+  local primary_conflict_env="$TEMP_DIR/primary-conflict.env"
   local primary_empty_env="$TEMP_DIR/primary-empty.env"
   local primary_absent_env="$TEMP_DIR/primary-absent.env"
   local embed_env="$TEMP_DIR/embed-wrapper.env"
   local embed_empty_env="$TEMP_DIR/embed-empty.env"
   local embed_absent_env="$TEMP_DIR/embed-absent.env"
   local primary_output='' primary_empty_output='' primary_absent_output=''
+  local primary_conflict_output='' primary_conflict_status=0
   local embed_output='' embed_empty_output='' embed_absent_output=''
   mkdir -p "$(dirname "$primary_model")" "$(dirname "$embed_model")"
   : > "$primary_model"
   : > "$embed_model"
-  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS="-ngl 99"\n' "$fake_bin" "$primary_model" > "$primary_env"
+  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS="--threads 8"\n' "$fake_bin" "$primary_model" > "$primary_env"
+  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS="-ngl 99"\n' "$fake_bin" "$primary_model" > "$primary_conflict_env"
   printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS=""\n' "$fake_bin" "$primary_model" > "$primary_empty_env"
   printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\n' "$fake_bin" "$primary_model" > "$primary_absent_env"
   printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\nEMBEDDINGS_LLAMA_EXTRA_ARGS="--embedding -fa on"\n' "$fake_bin" "$embed_model" > "$embed_env"
@@ -57,21 +60,27 @@ test_wrapper_arguments_are_profile_specific() {
   printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\n' "$fake_bin" "$embed_model" > "$embed_absent_env"
   lsof() { return 1; }; export -f lsof
   primary_output="$(CLAWBOX_ENV_FILE="$primary_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
+  set +e
+  primary_conflict_output="$(CLAWBOX_ENV_FILE="$primary_conflict_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh" 2>&1)"
+  primary_conflict_status=$?
+  set -e
   primary_empty_output="$(CLAWBOX_ENV_FILE="$primary_empty_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   primary_absent_output="$(CLAWBOX_ENV_FILE="$primary_absent_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   embed_output="$(CLAWBOX_ENV_FILE="$embed_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   embed_empty_output="$(CLAWBOX_ENV_FILE="$embed_empty_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   embed_absent_output="$(CLAWBOX_ENV_FILE="$embed_absent_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
-  assert_contains 'primary wrapper appends primary args after required args' "$primary_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 -ngl 99"
+  assert_contains 'primary wrapper appends primary args after required args' "$primary_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 --parallel 1 --threads 8"
+  assert_equals 'primary wrapper rejects managed flags in LLAMA_EXTRA_ARGS' "$primary_conflict_status" '1'
+  assert_contains 'primary wrapper reports managed flag conflicts' "$primary_conflict_output" 'LLAMA_EXTRA_ARGS conflicts with ClawBox-managed llama-server settings: -ngl'
   assert_not_contains 'primary wrapper excludes embeddings arg by default' "$primary_output" '--embedding'
-  assert_contains 'primary wrapper accepts empty LLAMA_EXTRA_ARGS' "$primary_empty_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384"
+  assert_contains 'primary wrapper accepts empty LLAMA_EXTRA_ARGS' "$primary_empty_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 --parallel 1"
   assert_not_contains 'primary wrapper empty LLAMA_EXTRA_ARGS appends nothing' "$primary_empty_output" '-ngl'
-  assert_contains 'primary wrapper accepts absent LLAMA_EXTRA_ARGS under set -u' "$primary_absent_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384"
+  assert_contains 'primary wrapper accepts absent LLAMA_EXTRA_ARGS under set -u' "$primary_absent_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 --parallel 1"
   assert_not_contains 'primary wrapper absent LLAMA_EXTRA_ARGS appends nothing' "$primary_absent_output" '-ngl'
-  assert_contains 'embeddings wrapper uses embeddings model and args' "$embed_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --embedding -fa on"
-  assert_contains 'embeddings wrapper accepts empty EMBEDDINGS_LLAMA_EXTRA_ARGS' "$embed_empty_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192"
+  assert_contains 'embeddings wrapper uses embeddings model and args' "$embed_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --parallel 1 --embedding -fa on"
+  assert_contains 'embeddings wrapper accepts empty EMBEDDINGS_LLAMA_EXTRA_ARGS' "$embed_empty_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --parallel 1"
   assert_not_contains 'embeddings wrapper empty extra args appends nothing' "$embed_empty_output" '--embedding'
-  assert_contains 'embeddings wrapper accepts absent EMBEDDINGS_LLAMA_EXTRA_ARGS under set -u' "$embed_absent_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192"
+  assert_contains 'embeddings wrapper accepts absent EMBEDDINGS_LLAMA_EXTRA_ARGS under set -u' "$embed_absent_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --parallel 1"
   assert_not_contains 'embeddings wrapper absent extra args appends nothing' "$embed_absent_output" '--embedding'
 }
 

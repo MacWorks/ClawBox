@@ -1,6 +1,7 @@
 LLAMA_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$LLAMA_LIB_DIR/output.sh"
+source "$LLAMA_LIB_DIR/context-runtime.sh"
 
 # Exit codes:
 # 0 = success

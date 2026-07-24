@@ -909,6 +909,122 @@ test_runtime_handle_module() {
   eval "$saved_warn"
 }
 
+test_context_runtime_module() {
+  local gguf_file="$TEMP_DIR/context-fixture.gguf"
+  local malformed_file="$TEMP_DIR/not-gguf.bin"
+  local conflicts=''
+  local reserve=''
+  local entries=''
+  local runtime_args=()
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/output.sh"
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/context-runtime.sh"
+
+  python3 - "$gguf_file" <<'PY'
+import struct, sys
+path = sys.argv[1]
+key = b"llama.context_length"
+with open(path, "wb") as handle:
+    handle.write(b"GGUF")
+    handle.write(struct.pack("<I", 3))
+    handle.write(struct.pack("<Q", 0))
+    handle.write(struct.pack("<Q", 1))
+    handle.write(struct.pack("<Q", len(key)))
+    handle.write(key)
+    handle.write(struct.pack("<I", 4))
+    handle.write(struct.pack("<I", 262144))
+PY
+  printf 'nope' > "$malformed_file"
+
+  if [ "$(gguf_native_context_from_file "$gguf_file")" = '262144' ]; then
+    pass "GGUF native context parser reads llama.context_length metadata"
+  else
+    fail "GGUF native context parser should read llama.context_length metadata"
+  fi
+
+  if gguf_native_context_from_file "$malformed_file" >/dev/null 2>&1; then
+    fail "GGUF native context parser should reject malformed files"
+  else
+    pass "GGUF native context parser rejects malformed files"
+  fi
+
+  if llama_managed_runtime_arg_conflicts '--threads 8 --ctx-size 65536 --parallel 2'; then
+    conflicts="$REPLY"
+    if [[ "$conflicts" == *'--ctx-size'* ]] && [[ "$conflicts" == *'--parallel'* ]]; then
+      pass "managed runtime arg conflict detection catches managed flags in LLAMA_EXTRA_ARGS"
+    else
+      fail "managed runtime arg conflict detection should report conflicting flags"
+    fi
+  else
+    fail "managed runtime arg conflict detection should fail when managed flags are present"
+  fi
+
+  LLAMA_CTX=32768
+  LLAMA_PARALLEL=1
+  LLAMA_GPU_LAYERS=''
+  LLAMA_FLASH_ATTENTION=false
+  LLAMA_MLOCK=false
+  LLAMA_EXTRA_ARGS='-ngl 99 --jinja -fa on --mlock --parallel 1'
+  if llama_migrate_managed_runtime_extra_args "$LLAMA_EXTRA_ARGS" \
+    && [ "$LLAMA_MIGRATION_GPU_LAYERS" = '99' ] \
+    && [ "$LLAMA_MIGRATION_FLASH_ATTENTION" = 'true' ] \
+    && [ "$LLAMA_MIGRATION_MLOCK" = 'true' ] \
+    && [ "$LLAMA_MIGRATION_PARALLEL" = '1' ] \
+    && [ "$LLAMA_MIGRATION_EXTRA_ARGS" = '--jinja' ]; then
+    pass "managed runtime arg migration preserves Jimmy passthrough flags"
+  else
+    fail "managed runtime arg migration should move managed flags and preserve --jinja"
+  fi
+  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_MLOCK LLAMA_EXTRA_ARGS
+
+  LLAMA_CTX=65536
+  LLAMA_PARALLEL=2
+  LLAMA_GPU_LAYERS=99
+  LLAMA_FLASH_ATTENTION=true
+  LLAMA_MLOCK=true
+  unset LLAMA_EXTRA_ARGS
+  llama_validate_managed_runtime_settings
+  llama_append_managed_runtime_args runtime_args
+  if [[ " ${runtime_args[*]} " == *' --ctx-size 65536 '* ]] \
+    && [[ " ${runtime_args[*]} " == *' --parallel 2 '* ]] \
+    && [[ " ${runtime_args[*]} " == *' --n-gpu-layers 99 '* ]] \
+    && [[ " ${runtime_args[*]} " == *' --flash-attn '* ]] \
+    && [[ " ${runtime_args[*]} " == *' --mlock '* ]]; then
+    pass "managed runtime args render first-class llama-server settings"
+  else
+    fail "managed runtime args should render first-class llama-server settings"
+  fi
+  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_MLOCK
+
+  reserve="$(openclaw_context_reserve_for_context 32768)"
+  assert_equals "OpenClaw reserve policy derives 8192 from 32768 context" "$reserve" '8192'
+
+  reserve="$(openclaw_context_reserve_for_context 16384)"
+  assert_equals "OpenClaw reserve policy derives quarter-context reserve for smaller context" "$reserve" '4096'
+
+  entries="$(openclaw_managed_token_budget_entries 32768 8192)"
+  if [[ "$entries" == *$'agents.defaults.compaction.reserveTokens\t8192'* ]] \
+    && [[ "$entries" == *$'agents.defaults.compaction.reserveTokensFloor\t8192'* ]]; then
+    pass "OpenClaw managed token budget entries include reserve and reserve floor"
+  else
+    fail "OpenClaw managed token budget entries should include reserve and reserve floor"
+  fi
+
+  assert_equals "llama runtime slot count reads returned slots" \
+    "$(llama_runtime_slot_count_from_slots_json '[{"id":0,"n_ctx":32768},{"id":1,"n_ctx":32768}]')" \
+    '2'
+  assert_equals "llama runtime slot context validates every returned slot" \
+    "$(llama_runtime_slot_context_from_slots_json '[{"id":0,"n_ctx":32768},{"id":1,"n_ctx":32768}]')" \
+    '32768'
+  if llama_runtime_slot_context_from_slots_json '[{"id":0,"n_ctx":32768},{"id":1,"n_ctx":16384}]' >/dev/null 2>&1; then
+    fail "llama runtime slot context should reject inconsistent slot contexts"
+  else
+    pass "llama runtime slot context rejects inconsistent slot contexts"
+  fi
+}
+
 test_deploy_module() {
   local prompt_marker="$TEMP_DIR/deploy-prompt-called"
   local upload_marker="$TEMP_DIR/deploy-upload-called"
@@ -1012,11 +1128,32 @@ test_deploy_module() {
   local merged_deny=''
   local conflicting_model=''
   local custom_models=''
+  local desired_entries=''
 
   OPENCLAW_DEFAULT_MODEL=local
   LLAMA_CTX=32768
   unset OPENCLAW_MAX_TOKENS
   desired_models="$(openclaw_config_model_array)"
+
+  desired_entries="$(openclaw_config_desired_entries_for_scope primary)"
+  if [[ "$desired_entries" == *$'agents.defaults.compaction.reserveTokens\t8192'* ]] \
+    && [[ "$desired_entries" == *$'agents.defaults.compaction.reserveTokensFloor\t8192'* ]]; then
+    pass "OpenClaw primary targeted sync includes derived compaction reserves"
+  else
+    fail "OpenClaw primary targeted sync should include derived compaction reserves"
+  fi
+
+  LLAMA_CTX=65536
+  OPENCLAW_EFFECTIVE_CONTEXT_WINDOW=32768
+  desired_entries="$(openclaw_config_desired_entries_for_scope primary)"
+  unset OPENCLAW_EFFECTIVE_CONTEXT_WINDOW
+  LLAMA_CTX=32768
+  if [[ "$desired_entries" == *$'agents.defaults.compaction.reserveTokens\t8192'* ]] \
+    && [[ "$desired_entries" != *$'agents.defaults.compaction.reserveTokens\t20000'* ]]; then
+    pass "OpenClaw primary targeted sync derives reserves from effective context instead of legacy fixed values"
+  else
+    fail "OpenClaw primary targeted sync should derive reserves from effective context"
+  fi
 
   last_ssh_exec=''
   openclaw_config_remote_get 'models.providers.clawbox.models' >/dev/null || true
@@ -1806,6 +1943,16 @@ test_setup_deployment_flow_updates_active_openclaw_config() {
         printf '%s\n' 'clawbox/local'
         return 0
         ;;
+      *get*"agents.defaults.compaction.reserveTokensFloor"*)
+        printf 'reserveFloor:active:%s\n' "$command_text" >> "$get_log"
+        printf '%s\n' '8192'
+        return 0
+        ;;
+      *get*"agents.defaults.compaction.reserveTokens"*)
+        printf 'reserve:active:%s\n' "$command_text" >> "$get_log"
+        printf '%s\n' '8192'
+        return 0
+        ;;
       *get*"gateway.auth.token"*)
         printf '%s\n' '__OPENCLAW_REDACTED__'
         return 0
@@ -1820,6 +1967,14 @@ test_setup_deployment_flow_updates_active_openclaw_config() {
         mv "$active_models_file.next" "$active_models_file"
         count="$(cat "$active_set_count_file")"
         printf '%s\n' "$((count + 1))" > "$active_set_count_file"
+        return 0
+        ;;
+      *set*"agents.defaults.compaction.reserveTokensFloor"*)
+        printf 'reserveFloor:active:%s\n' "$command_text" >> "$set_log"
+        return 0
+        ;;
+      *set*"agents.defaults.compaction.reserveTokens"*)
+        printf 'reserve:active:%s\n' "$command_text" >> "$set_log"
         return 0
         ;;
     esac
@@ -5584,6 +5739,7 @@ run_test test_config_module
 run_test test_ssh_module
 run_test test_runtime_module
 run_test test_runtime_handle_module
+run_test test_context_runtime_module
 run_test test_deploy_module
 run_test test_setup_deployment_flow_updates_active_openclaw_config
 run_test test_setup_deployment_flow_stops_on_openclaw_sync_failure

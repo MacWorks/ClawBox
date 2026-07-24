@@ -310,6 +310,16 @@ jq -s \
   --arg modelConfigured "${CLAWBOX_QUALIFY_MODEL_CONFIGURED:-unknown}" \
   --arg modelRunning "${CLAWBOX_QUALIFY_MODEL_RUNNING:-unknown}" \
   --arg modelWarning "${CLAWBOX_QUALIFY_MODEL_WARNING:-}" \
+  --arg nativeContext "${CLAWBOX_QUALIFY_NATIVE_CONTEXT:-}" \
+  --arg configuredContext "${CLAWBOX_QUALIFY_CONFIGURED_CONTEXT:-}" \
+  --arg runtimeContext "${CLAWBOX_QUALIFY_RUNTIME_CONTEXT:-}" \
+  --arg totalSlots "${CLAWBOX_QUALIFY_TOTAL_SLOTS:-}" \
+  --arg slotContext "${CLAWBOX_QUALIFY_SLOT_CONTEXT:-}" \
+  --arg openclawContextWindow "${CLAWBOX_QUALIFY_OPENCLAW_CONTEXT_WINDOW:-}" \
+  --arg openclawMaxTokens "${CLAWBOX_QUALIFY_OPENCLAW_MAX_TOKENS:-}" \
+  --arg reserveTokens "${CLAWBOX_QUALIFY_RESERVE_TOKENS:-}" \
+  --arg reserveTokensFloor "${CLAWBOX_QUALIFY_RESERVE_TOKENS_FLOOR:-}" \
+  --arg promptBudgetBeforeReserve "${CLAWBOX_QUALIFY_PROMPT_BUDGET_BEFORE_RESERVE:-}" \
   --arg profileId "$PROFILE_ID" \
   --arg profileName "$PROFILE_NAME" \
   --arg coverageReliabilityIterations "$COVERAGE_RELIABILITY_ITERATIONS" \
@@ -324,13 +334,15 @@ jq -s \
       elif ($statuses|index("WARNING")) then {status:"WARNING"}
       elif ($statuses|index("PASS")) then {status:"PASS"}
       else {status:"unrated"} end;
+  def number_or_null($value):
+    if $value == "" then null else ($value | tonumber? // null) end;
   . as $scenarios
   | ($scenarios | map(.status) | if length == 0 then "ERROR" else min_by(priority[.] // 99) end) as $overall
   | ($scenarios | map(select((.unrated // false) | not) | .score) ) as $scores
   | ($scenarios | map(select((.status == "ERROR") or (.unrated // false))) | length) as $unratedRequired
   | ($scenarios | map(select((.unrated // false) | not)) | length) as $ratedScenarios
   | (if $modelWarning == "" then [] else [$modelWarning] end) as $modelWarnings
-  | {schemaVersion:"1",runId:$runId,startedAt:$startedAt,completedAt:$completedAt,durationSeconds:($durationSeconds|tonumber),completed:true,suite:{schemaVersion:$suiteSchemaVersion,checksum:$suiteChecksum},clawbox:{commit:(if $clawboxCommit == "" then null else $clawboxCommit end),dirty:$clawboxDirty},profile:{id:$profileId,name:$profileName},coverage:{profile:$profileId,scenariosRun:($scenarios|length),reliabilityIterations:($coverageReliabilityIterations|tonumber),workflowCases:($coverageWorkflowCases|tonumber),progressUnits:($coverageProgressUnits|tonumber)},scoreComplete:($unratedRequired == 0),ratedScenarios:$ratedScenarios,requiredScenarios:($scenarios|length),model:{alias:$modelAlias,configured:$modelConfigured,running:$modelRunning},overallStatus:$overall,score:(if $unratedRequired > 0 then null elif ($scores|length)>0 then (($scores|add / length)|round) else null end),categories:{"Tool correctness": category_status(["tool_correctness"]),"Grounding": category_status(["grounding"]),"Workflow correctness": category_status(["workflow_correctness"]),"Instruction following": category_status(["instruction_following"]),"Code and state correctness": category_status(["code_state_correctness"]),"Hallucination avoidance": category_status(["hallucination_avoidance"]),"Efficiency": category_status(["efficiency"])},warnings:($modelWarnings + ($scenarios|map(.warnings[]?) )),failures:($scenarios|map(.failures[]?) ),scenarios:$scenarios,artifactDirectory:$artifactDir}' "${scenario_result_files[@]}" >"$results_dir/aggregate.json" 2>"$aggregate_stderr"
+  | {schemaVersion:"1",runId:$runId,startedAt:$startedAt,completedAt:$completedAt,durationSeconds:($durationSeconds|tonumber),completed:true,suite:{schemaVersion:$suiteSchemaVersion,checksum:$suiteChecksum},clawbox:{commit:(if $clawboxCommit == "" then null else $clawboxCommit end),dirty:$clawboxDirty},profile:{id:$profileId,name:$profileName},coverage:{profile:$profileId,scenariosRun:($scenarios|length),reliabilityIterations:($coverageReliabilityIterations|tonumber),workflowCases:($coverageWorkflowCases|tonumber),progressUnits:($coverageProgressUnits|tonumber)},scoreComplete:($unratedRequired == 0),ratedScenarios:$ratedScenarios,requiredScenarios:($scenarios|length),model:{alias:$modelAlias,configured:$modelConfigured,running:$modelRunning},runtime:{nativeContext:number_or_null($nativeContext),configuredContext:number_or_null($configuredContext),runtimeContext:number_or_null($runtimeContext),totalSlots:number_or_null($totalSlots),perSlotContext:number_or_null($slotContext),openclawContextWindow:number_or_null($openclawContextWindow),openclawMaxTokens:number_or_null($openclawMaxTokens),reserveTokens:number_or_null($reserveTokens),reserveTokensFloor:number_or_null($reserveTokensFloor),promptBudgetBeforeReserve:number_or_null($promptBudgetBeforeReserve)},overallStatus:$overall,score:(if $unratedRequired > 0 then null elif ($scores|length)>0 then (($scores|add / length)|round) else null end),categories:{"Tool correctness": category_status(["tool_correctness"]),"Grounding": category_status(["grounding"]),"Workflow correctness": category_status(["workflow_correctness"]),"Instruction following": category_status(["instruction_following"]),"Code and state correctness": category_status(["code_state_correctness"]),"Hallucination avoidance": category_status(["hallucination_avoidance"]),"Efficiency": category_status(["efficiency"])},warnings:($modelWarnings + ($scenarios|map(.warnings[]?) )),failures:($scenarios|map(.failures[]?) ),scenarios:$scenarios,artifactDirectory:$artifactDir}' "${scenario_result_files[@]}" >"$results_dir/aggregate.json" 2>"$aggregate_stderr"
 aggregate_status=$?
 set -e
 
@@ -362,6 +374,10 @@ else
     "OpenClaw alias: \(.model.alias)",
     "Configured model: \(.model.configured)",
     "Running model: \(.model.running)",
+    "Runtime context: \(.runtime.runtimeContext // "unknown")",
+    "OpenClaw contextWindow: \(.runtime.openclawContextWindow // "unknown")",
+    "OpenClaw maxTokens: \(.runtime.openclawMaxTokens // "unknown")",
+    "Prompt budget before reserve: \(.runtime.promptBudgetBeforeReserve // "unknown")",
     (.scenarios[] | "\(.scenarioId) \(.scenarioName): \(.status)"),
     "Overall Score: \(if .score == null then "unrated" else (.score|tostring) + "/100" end)",
     "Overall Result: \(.overallStatus)",

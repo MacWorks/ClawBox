@@ -31,7 +31,7 @@ write_llama_runtime_env() {
 
   : > "$output_path"
 
-  for key in LLAMA_BIN MODEL_PATH LLAMA_HOST LLAMA_PORT LLAMA_CTX LLAMA_EXTRA_ARGS; do
+  for key in LLAMA_BIN MODEL_PATH LLAMA_HOST LLAMA_PORT LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_MLOCK LLAMA_EXTRA_ARGS; do
     value="${!key:-}"
     printf '%s="%s"\n' "$key" "$(llama_escape_env_value "$value")" >> "$output_path"
   done
@@ -271,6 +271,7 @@ setup_llama_service_for_mode() {
     llama_require_value LLAMA_HOST || return 1
     llama_require_value LLAMA_PORT || return 1
     llama_require_value LLAMA_CTX || return 1
+    llama_validate_managed_runtime_settings || return 1
 
     if [ ! -x "$LLAMA_BIN" ]; then
       llama_fail "llama binary not found or not executable: $LLAMA_BIN"

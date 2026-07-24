@@ -58,6 +58,7 @@ LLAMA_CONTEXT_WINDOW_RAW_VALUE="$LLAMA_CTX"
 OPENCLAW_EFFECTIVE_CONTEXT_WINDOW_VALUE="${OPENCLAW_EFFECTIVE_CONTEXT_WINDOW:-}"
 OPENCLAW_MAX_TOKENS_VALUE="${OPENCLAW_MAX_TOKENS:-8192}"
 OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE="${OPENCLAW_GATEWAY_AUTH_TOKEN:-}"
+OPENCLAW_COMPACTION_RESERVE_VALUE=''
 
 case "$OPENCLAW_GATEWAY_MODE_VALUE" in
   local|remote)
@@ -129,6 +130,16 @@ else
   fi
 fi
 
+OPENCLAW_COMPACTION_RESERVE_VALUE="$(python3 - "$LLAMA_CONTEXT_WINDOW_VALUE" <<'PY'
+import sys
+ctx = int(sys.argv[1])
+reserve = min(8192, max(2048, ctx // 4))
+if reserve >= ctx:
+    reserve = max(1, ctx // 2)
+print(reserve)
+PY
+)"
+
 mkdir -p "$RUNTIME_DIR"
 
 if [ -z "$OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE" ]; then
@@ -139,7 +150,7 @@ PY
 )"
 fi
 
-export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE OPENCLAW_MAX_TOKENS_VALUE OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE
+export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE OPENCLAW_MAX_TOKENS_VALUE OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE OPENCLAW_COMPACTION_RESERVE_VALUE
 
 python3 - "$CONFIG_PATH" <<'PY'
 import json
@@ -153,7 +164,13 @@ config = {
         "mode": os.environ["OPENCLAW_GATEWAY_MODE_VALUE"],
         "auth": {"token": os.environ["OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE"]},
     },
-    "agents": {"defaults": {"model": {"primary": f"{provider}/{model}"}}},
+    "agents": {"defaults": {
+        "model": {"primary": f"{provider}/{model}"},
+        "compaction": {
+            "reserveTokens": int(os.environ["OPENCLAW_COMPACTION_RESERVE_VALUE"]),
+            "reserveTokensFloor": int(os.environ["OPENCLAW_COMPACTION_RESERVE_VALUE"]),
+        },
+    }},
     "tools": {"deny": ["cron"]},
     "models": {"providers": {provider: {
         "baseUrl": os.environ["LLAMA_BASE_URL"],
