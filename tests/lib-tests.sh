@@ -2532,10 +2532,14 @@ test_launchagent_module() {
     fail "launchagent plist should include stdout and stderr log paths"
   fi
 
-  if [ -f "$plist_path" ] && grep -Fq '<key>RunAtLoad</key>' "$plist_path" && ! grep -Fq '<key>KeepAlive</key>' "$plist_path"; then
-    pass "launchagent plist uses RunAtLoad without KeepAlive"
+  if [ -f "$plist_path" ] \
+    && grep -Fq '<key>RunAtLoad</key>' "$plist_path" \
+    && grep -Fq '<key>KeepAlive</key>' "$plist_path" \
+    && grep -Fq '<key>SuccessfulExit</key>' "$plist_path" \
+    && grep -Fq '<false/>' "$plist_path"; then
+    pass "launchagent plist uses RunAtLoad and retries failed wrapper exits"
   else
-    fail "launchagent plist should use RunAtLoad without KeepAlive"
+    fail "launchagent plist should use RunAtLoad and retry failed wrapper exits"
   fi
 
   if [ -f "$plist_path" ]; then
@@ -2701,6 +2705,68 @@ EOF
     fail 'launchagent wrapper should not report success without runtime verification'
   else
     pass 'launchagent wrapper does not report success without runtime verification'
+  fi
+}
+
+test_launchagent_wrapper_returns_failure_when_vm_never_starts() {
+  local wrapper="$ROOT_DIR/host/scripts/start-utm-vm.sh"
+  local mock_dir="$TEMP_DIR/launchagent-never-starts-bin"
+  local output=''
+  local status=0
+
+  mkdir -p "$mock_dir"
+  cat > "$mock_dir/utmctl" <<'EOF'
+#!/bin/bash
+case "$1" in
+  list)
+    printf 'UUID                                 Status   Name\n'
+    printf '11111111-2222-3333-4444-555555555555 stopped  Test VM\n'
+    exit 0
+    ;;
+  start)
+    exit 0
+    ;;
+esac
+exit 1
+EOF
+  cat > "$mock_dir/osascript" <<'EOF'
+#!/bin/bash
+exit 1
+EOF
+  cat > "$mock_dir/ssh" <<'EOF'
+#!/bin/bash
+exit 255
+EOF
+  cat > "$mock_dir/sleep" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+  chmod +x "$mock_dir/utmctl" "$mock_dir/osascript" "$mock_dir/ssh" "$mock_dir/sleep"
+
+  set +e
+  output="$(
+    CLAWBOX_UTMCTL_BIN="$mock_dir/utmctl" \
+    CLAWBOX_OSASCRIPT_BIN="$mock_dir/osascript" \
+    CLAWBOX_SSH_BIN="$mock_dir/ssh" \
+    CLAWBOX_SLEEP_BIN="$mock_dir/sleep" \
+    CLAWBOX_VM_AUTOSTART_INITIAL_DELAY=0 \
+    CLAWBOX_VM_AUTOSTART_START_ATTEMPTS=1 \
+    CLAWBOX_VM_AUTOSTART_MAX_ATTEMPTS=1 \
+    "$wrapper" 'Test VM' 'tester@192.168.64.6' 2>&1
+  )"
+  status=$?
+  set -e
+
+  if [ "$status" -ne 0 ]; then
+    pass 'launchagent wrapper exits nonzero when the VM never starts'
+  else
+    fail 'launchagent wrapper should exit nonzero when the VM never starts'
+  fi
+
+  if printf '%s' "$output" | grep -Fq 'VM did not report running after startup attempts: Test VM'; then
+    pass 'launchagent wrapper reports unsuccessful autostart for launchd retry'
+  else
+    fail 'launchagent wrapper should report unsuccessful autostart for launchd retry'
   fi
 }
 
@@ -4457,6 +4523,47 @@ test_llama_health_decision_module() {
     fail "llama health verification should succeed after bounded port and API readiness"
   fi
 
+  output="$({
+    local status=0
+    local api_hosts=''
+
+    # shellcheck source=/dev/null
+    . "$ROOT_DIR/lib/llama.sh"
+
+    HOST_IP='192.168.64.1'
+    LLAMA_HOST='0.0.0.0'
+    LLAMA_PORT='11434'
+    LLAMA_ACTIVE_MODE='user'
+
+    step() { printf 'STEP:%s\n' "$1"; }
+    success() { printf 'SUCCESS:%s\n' "$1"; }
+    warn() { printf 'WARN:%s\n' "$1"; }
+    out() { printf 'OUT:%s\n' "$1"; }
+    sleep() { :; }
+    llama_port_in_use() { return 0; }
+    llama_api_responding() {
+      api_hosts="${api_hosts}${api_hosts:+ }$1:$2"
+      [ "$1" = '127.0.0.1' ] && [ "$2" = '11434' ]
+    }
+
+    if llama_verify_service_health; then
+      status=0
+    else
+      status=$?
+    fi
+
+    printf 'STATUS:%s\n' "$status"
+    printf 'API_HOSTS:%s\n' "$api_hosts"
+  } 2>&1)"
+
+  if printf '%s\n' "$output" | grep -Fq 'STATUS:0' \
+    && printf '%s\n' "$output" | grep -Fq 'API_HOSTS:127.0.0.1:11434 192.168.64.1:11434' \
+    && printf '%s\n' "$output" | grep -Fq 'WARN:llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet.'; then
+    pass "llama health verification uses loopback readiness before VM-facing validation"
+  else
+    fail "llama health verification should not block local readiness on VM-facing interface availability"
+  fi
+
   queue_llama_choices ''
   output="$({
     local status=0
@@ -5757,6 +5864,7 @@ run_test test_openclaw_webui_module
 run_test test_prompt_module
 run_test test_launchagent_module
 run_test test_launchagent_wrapper_logs_tcc_denial
+run_test test_launchagent_wrapper_returns_failure_when_vm_never_starts
 run_test test_launchagent_wrapper_retries_and_verifies_runtime_before_success
 run_test test_launchagent_wrapper_uses_ssh_reachability_as_success_signal
 run_test test_launchagent_module_requires_vm_host

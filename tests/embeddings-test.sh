@@ -156,6 +156,55 @@ test_configured_endpoint_is_authoritative_for_setup() {
   assert_not_contains 'embeddings setup does not probe legacy root models path' "$curl_output" 'http://192.168.64.1:11435/models'
 }
 
+test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint() {
+  local output=''
+  local status=0
+  local curl_log="$TEMP_DIR/embeddings-start-curl.log"
+  local model_path="$TEMP_DIR/models/embed-start.gguf"
+  local fake_bin='/bin/echo'
+
+  mkdir -p "$(dirname "$model_path")"
+  : > "$model_path"
+
+  output="$({
+    export HOME="$TEMP_DIR/embeddings-start-home"
+    export BASE_DIR="$ROOT_DIR"
+    export CLAWBOX_EMBEDDINGS_CURL_LOG="$curl_log"
+    export LLAMA_BIN="$fake_bin"
+    export EMBEDDINGS_MODEL_PATH="$model_path"
+    export EMBEDDINGS_LLAMA_HOST='0.0.0.0'
+    export EMBEDDINGS_LLAMA_PORT=11435
+    export EMBEDDINGS_LLAMA_CTX=8192
+    export EMBEDDINGS_LLAMA_EXTRA_ARGS='--embedding'
+    export EMBEDDINGS_LLAMA_BASE_URL='http://192.168.64.1:11435/v1'
+    curl() {
+      printf '%s\n' "$*" >> "$CLAWBOX_EMBEDDINGS_CURL_LOG"
+      if [[ "$*" == *'http://127.0.0.1:11435/v1/models'* ]]; then
+        return 0
+      fi
+      if [[ "$*" == *'http://192.168.64.1:11435/v1/models'* ]]; then
+        return 1
+      fi
+      printf 'UNEXPECTED_CURL:%s\n' "$*"
+      return 2
+    }
+    launchctl() { return 0; }
+    sleep() { :; }
+    . "$ROOT_DIR/lib/llama.sh"
+    set +e
+    setup_embeddings_llama_service_for_mode user
+    status=$?
+    set -e
+    printf 'STATUS=%s\n' "$status"
+  } 2>&1)"
+
+  assert_contains 'embeddings service start succeeds from local readiness' "$output" 'STATUS=0'
+  assert_contains 'embeddings service start warns when VM-facing endpoint is unavailable' "$output" 'Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet.'
+  curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
+  assert_contains 'embeddings service start probes local readiness' "$curl_output" 'http://127.0.0.1:11435/v1/models'
+  assert_contains 'embeddings service start separately probes VM-facing endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'
+}
+
 test_disabled_status_and_model_preservation_contract() {
   local status_source model_source embeddings_source
   status_source="$(cat "$ROOT_DIR/scripts/status.sh")"; model_source="$(cat "$ROOT_DIR/scripts/model.sh")"; embeddings_source="$(cat "$ROOT_DIR/lib/setup-embeddings.sh")"
@@ -337,6 +386,7 @@ run_test test_runtime_artifacts_are_distinct
 run_test test_wrapper_arguments_are_profile_specific
 run_test test_runtime_env_writes_empty_extra_args_for_fresh_users
 run_test test_configured_endpoint_is_authoritative_for_setup
+run_test test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint
 run_test test_disabled_status_and_model_preservation_contract
 run_test test_port_selection_contract
 run_test test_setup_rerun_preserves_existing_embeddings_service

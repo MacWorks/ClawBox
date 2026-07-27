@@ -442,6 +442,26 @@ managed_llama_service_loaded() {
   launchctl print "$(llama_mode_target "$1")" >/dev/null 2>&1
 }
 
+vm_autostart_plist_path() {
+  printf '%s/Library/LaunchAgents/com.clawbox.startutmvm.plist\n' "$HOME"
+}
+
+vm_autostart_wrapper_path() {
+  printf '%s/Library/Application Support/ClawBox/bin/start-utm-vm.sh\n' "$HOME"
+}
+
+vm_autostart_service_target() {
+  printf 'gui/%s/com.clawbox.startutmvm\n' "$(id -u)"
+}
+
+vm_autostart_service_loaded() {
+  launchctl print "$(vm_autostart_service_target)" >/dev/null 2>&1
+}
+
+vm_autostart_configured() {
+  [ -f "$(vm_autostart_plist_path)" ] || [ -e "$(vm_autostart_wrapper_path)" ]
+}
+
 vm_ssh_exec() {
   ssh -o BatchMode=yes -o ConnectTimeout=3 "$VM_HOST" "$@"
 }
@@ -580,10 +600,10 @@ if $api_ok && $HOST_STATUS_EXPECTS_EXTERNAL; then
   out "  Using externally managed instance at $HOST_STATUS_DISPLAY_URL"
   out "  ClawBox will not manage this process."
 
-elif $api_ok && $port_ok && $process_ok && ! $bind_failed; then
+elif $api_ok && $port_ok && $process_ok; then
   pass "llama-server is healthy and owned by this user"
 
-elif $api_ok && $bind_failed; then
+elif ! $api_ok && $port_ok && $process_ok && $bind_failed; then
   fail "llama-server conflict detected"
   out "  Another instance is already bound to this port."
   out "  Your LaunchAgent instance failed to start."
@@ -732,6 +752,39 @@ if vm_ssh_exec 'echo ok' >/dev/null 2>&1; then
   pass "SSH connectivity works"
 else
   fail "SSH connectivity failed"
+fi
+
+if vm_autostart_configured; then
+  section "VM Auto-start"
+  VM_AUTOSTART_PLIST="$(vm_autostart_plist_path)"
+  VM_AUTOSTART_WRAPPER="$(vm_autostart_wrapper_path)"
+  VM_AUTOSTART_STDOUT_LOG="$(clawbox_startutmvm_stdout_log_default)"
+  VM_AUTOSTART_STDERR_LOG="$(clawbox_startutmvm_stderr_log_default)"
+
+  if [ -f "$VM_AUTOSTART_PLIST" ]; then
+    pass "VM auto-start plist exists"
+  else
+    warn_status "VM auto-start plist is missing"
+  fi
+
+  if [ -x "$VM_AUTOSTART_WRAPPER" ]; then
+    pass "VM auto-start wrapper is executable"
+  else
+    warn_status "VM auto-start wrapper is missing or not executable"
+  fi
+
+  if vm_autostart_service_loaded; then
+    pass "VM auto-start LaunchAgent is loaded"
+  else
+    warn_status "VM auto-start LaunchAgent is not loaded"
+  fi
+
+  out "  Service: $(vm_autostart_service_target)"
+  out "  stdout: $VM_AUTOSTART_STDOUT_LOG"
+  out "  stderr: $VM_AUTOSTART_STDERR_LOG"
+  if [ -f "$VM_AUTOSTART_STDERR_LOG" ] && tail -n 20 "$VM_AUTOSTART_STDERR_LOG" 2>/dev/null | grep -Eiq 'did not report running|ERROR|WARN'; then
+    warn_status "VM auto-start has recent warning or failure log entries"
+  fi
 fi
 
 # --- Logs ---

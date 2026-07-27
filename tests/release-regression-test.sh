@@ -155,7 +155,7 @@ if [ "${1:-}" = "print" ]; then
   fi
 
   case "$target" in
-    gui/*/com.clawbox.llama|system/com.clawbox.llama|gui/*/com.clawbox.llama.embeddings|system/com.clawbox.llama.embeddings)
+    gui/*/com.clawbox.llama|system/com.clawbox.llama|gui/*/com.clawbox.llama.embeddings|system/com.clawbox.llama.embeddings|gui/*/com.clawbox.startutmvm)
       exit "${CLAWBOX_TEST_STATUS_LAUNCHCTL_PRINT_EXIT_CODE:-0}"
       ;;
   esac
@@ -464,10 +464,10 @@ esac
   assert_contains 'status summary reflects unique failure count' "$output" 'RESULT: UNHEALTHY (2 issues)'
 }
 
-test_status_reports_bind_failure_without_double_counting() {
+test_status_ignores_stale_bind_log_when_managed_runtime_is_currently_healthy() {
   local output
   local status=0
-  local bind_log="$TEMP_DIR/llama-bind.err.log"
+  local bind_log="$TEMP_DIR/llama-stale-bind.err.log"
 
   prepare_status_test_home
   write_status_test_env false
@@ -494,14 +494,51 @@ EOF
   status=$?
   set -e
 
-  assert_equals 'status exits with a single bind-conflict failure' "$status" '1'
-  assert_equals 'status reports bind conflict once' "$(printf '%s\n' "$output" | /usr/bin/grep -Fc 'FAIL: llama-server conflict detected')" '1'
-  assert_not_contains 'status bind conflict path does not also report the generic process-not-responding failure' "$output" 'FAIL: llama-server process exists but API is not responding'
-  assert_not_contains 'status bind conflict path does not also report the failed-startup bind branch' "$output" 'FAIL: llama-server failed to start (port bind error)'
-  assert_contains 'status bind conflict path explains the remediation' "$output" 'Fix: stop the other instance or choose a different port.'
-  assert_contains 'status bind conflict path emits the recent error log path' "$output" "From $bind_log:"
-  assert_contains 'status bind conflict path shows the recent bind error line' "$output" "couldn't bind HTTP server socket"
-  assert_contains 'status bind conflict path reports a single unhealthy issue in the summary' "$output" 'RESULT: UNHEALTHY (1 issues)'
+  assert_equals 'status stale-bind path exits healthy when current managed runtime is healthy' "$status" '0'
+  assert_contains 'status stale-bind path reports current managed runtime healthy' "$output" 'PASS: llama-server is healthy and owned by this user'
+  assert_not_contains 'status stale-bind path does not report a port conflict' "$output" 'FAIL: llama-server conflict detected'
+  assert_not_contains 'status stale-bind path does not report failed startup' "$output" 'FAIL: llama-server failed to start (port bind error)'
+  assert_contains 'status stale-bind path may still display historical diagnostics' "$output" "couldn't bind HTTP server socket"
+  assert_contains 'status stale-bind path reports healthy summary' "$output" 'RESULT: HEALTHY'
+}
+
+test_status_reports_current_bind_conflict_when_port_is_open_but_api_is_not_healthy() {
+  local output
+  local status=0
+  local bind_log="$TEMP_DIR/llama-current-bind.err.log"
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$bind_log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/unused-current-bind-system.err.log"
+
+  cat > "$bind_log" <<'EOF'
+startup line
+couldn't bind HTTP server socket
+EOF
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status current bind-conflict path exits unhealthy' "$status" '1'
+  assert_equals 'status reports current bind conflict once' "$(printf '%s\n' "$output" | /usr/bin/grep -Fc 'FAIL: llama-server conflict detected')" '1'
+  assert_not_contains 'status current bind conflict does not also report process-not-responding' "$output" 'FAIL: llama-server process exists but API is not responding'
+  assert_not_contains 'status current bind conflict does not also report failed-startup bind branch' "$output" 'FAIL: llama-server failed to start (port bind error)'
+  assert_contains 'status current bind conflict explains remediation' "$output" 'Fix: stop the other instance or choose a different port.'
+  assert_contains 'status current bind conflict shows recent bind evidence' "$output" "couldn't bind HTTP server socket"
+  assert_contains 'status current bind conflict reports one unhealthy issue' "$output" 'RESULT: UNHEALTHY (1 issues)'
 }
 
 test_status_reports_external_instance_as_configured_when_api_and_port_are_healthy() {
@@ -682,6 +719,43 @@ test_status_reports_owned_healthy_instance_when_api_port_and_process_are_healthy
   assert_not_contains 'status owned-healthy path does not report the configured external instance' "$output" 'PASS: llama-server is running (external instance - configured)'
   assert_not_contains 'status owned-healthy path does not report unmanaged-instance failure' "$output" 'FAIL: llama-server is running but not managed by this user'
   assert_contains 'status owned-healthy path reports a healthy summary' "$output" 'RESULT: HEALTHY'
+}
+
+test_status_reports_configured_vm_autostart_operational_state() {
+  local output
+  local status=0
+  local wrapper_path=''
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  mkdir -p "$HOME/Library/Application Support/ClawBox/bin"
+  : > "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist"
+  wrapper_path="$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+  : > "$wrapper_path"
+  chmod +x "$wrapper_path"
+
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status vm-autostart path exits healthy when loaded' "$status" '0'
+  assert_contains 'status vm-autostart path shows section' "$output" ' > VM Auto-start'
+  assert_contains 'status vm-autostart path reports plist' "$output" 'PASS: VM auto-start plist exists'
+  assert_contains 'status vm-autostart path reports wrapper' "$output" 'PASS: VM auto-start wrapper is executable'
+  assert_contains 'status vm-autostart path reports loaded service' "$output" 'PASS: VM auto-start LaunchAgent is loaded'
+  assert_contains 'status vm-autostart path reports service label' "$output" 'com.clawbox.startutmvm'
 }
 
 test_status_reports_system_managed_healthy_instance_when_system_mode_artifacts_exist() {
@@ -2489,11 +2563,13 @@ test_status_uses_bounded_noninteractive_ssh_for_all_vm_checks() {
 printf 'Running release regression tests\n'
 
 run_test test_status_avoids_duplicate_vm_host_api_failure
-run_test test_status_reports_bind_failure_without_double_counting
+run_test test_status_ignores_stale_bind_log_when_managed_runtime_is_currently_healthy
+run_test test_status_reports_current_bind_conflict_when_port_is_open_but_api_is_not_healthy
 run_test test_status_reports_external_instance_as_configured_when_api_and_port_are_healthy
 run_test test_status_external_instance_ignores_local_port_when_configured_api_is_healthy
 run_test test_status_external_instance_does_not_require_local_managed_artifacts
 run_test test_status_reports_owned_healthy_instance_when_api_port_and_process_are_healthy
+run_test test_status_reports_configured_vm_autostart_operational_state
 run_test test_status_reports_system_managed_healthy_instance_when_system_mode_artifacts_exist
 run_test test_status_reports_system_launchdaemon_loaded_via_domain_aware_probe
 run_test test_status_reports_unmanaged_instance_when_api_is_healthy_but_external_mode_is_false

@@ -456,6 +456,17 @@ embeddings_llama_endpoint_responding() {
   curl -sS --fail --connect-timeout 1 --max-time 2 "$models_url" >/dev/null 2>&1
 }
 
+embeddings_llama_local_base_url() {
+  local host=''
+
+  host="$(llama_local_readiness_host "${EMBEDDINGS_LLAMA_HOST:-}")"
+  printf 'http://%s:%s/v1\n' "$host" "${EMBEDDINGS_LLAMA_PORT:-11435}"
+}
+
+embeddings_llama_local_endpoint_responding() {
+  embeddings_llama_endpoint_responding "$(embeddings_llama_local_base_url)"
+}
+
 embeddings_llama_verify_configured_endpoint() {
   local configured_base=''
   local loopback_base=''
@@ -503,7 +514,15 @@ setup_embeddings_llama_service_for_mode() {
   fi
   local attempt=1
   while [ "$attempt" -le 30 ]; do
-    if embeddings_llama_verify_configured_endpoint >/dev/null 2>&1; then return 0; fi
+    if embeddings_llama_local_endpoint_responding; then
+      if ! embeddings_llama_verify_configured_endpoint >/dev/null 2>&1; then
+        warn "Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
+        out "  Local readiness: $(embeddings_llama_local_base_url)"
+        out "  VM-facing endpoint: $(embeddings_llama_configured_base_url)"
+        out '  This usually means the UTM VM interface is not available yet; setup will validate VM reachability separately.'
+      fi
+      return 0
+    fi
     attempt=$((attempt + 1)); sleep 1
   done
   embeddings_llama_verify_configured_endpoint
