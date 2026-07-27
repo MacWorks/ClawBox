@@ -86,8 +86,12 @@ if [ -n "${LLAMA_GPU_LAYERS:-}" ]; then
   LLAMA_ARGS+=(--n-gpu-layers "$LLAMA_GPU_LAYERS")
 fi
 
-if clawbox_bool_enabled "${LLAMA_FLASH_ATTENTION:-false}"; then
-  LLAMA_ARGS+=(--flash-attn)
+if [ "${CLAWBOX_LLAMA_INSTANCE:-primary}" != embeddings ]; then
+  if clawbox_bool_enabled "${LLAMA_FLASH_ATTENTION:-false}"; then
+    LLAMA_ARGS+=(--flash-attn on)
+  else
+    LLAMA_ARGS+=(--flash-attn off)
+  fi
 fi
 
 if clawbox_bool_enabled "${LLAMA_MLOCK:-false}"; then

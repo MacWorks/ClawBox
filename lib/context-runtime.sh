@@ -220,7 +220,9 @@ llama_append_managed_runtime_args() {
   fi
 
   if clawbox_bool_enabled "${LLAMA_FLASH_ATTENTION:-false}"; then
-    eval "$args_name+=(--flash-attn)"
+    eval "$args_name+=(--flash-attn on)"
+  else
+    eval "$args_name+=(--flash-attn off)"
   fi
 
   if clawbox_bool_enabled "${LLAMA_MLOCK:-false}"; then

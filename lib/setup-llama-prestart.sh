@@ -37,6 +37,39 @@ stop_user_owned_llama_instance() {
   return 1
 }
 
+prestart_discovered_port_is_embeddings_endpoint() {
+  local host_ip_value="${1:-}"
+  local discovered_port="${2:-}"
+  local embeddings_url="${EMBEDDINGS_LLAMA_BASE_URL:-}"
+
+  [ -n "$discovered_port" ] || return 1
+
+  if clawbox_bool_enabled "${EMBEDDINGS_ENABLED:-false}"; then
+    if [ -n "${EMBEDDINGS_LLAMA_PORT:-}" ] && [ "$discovered_port" = "$EMBEDDINGS_LLAMA_PORT" ]; then
+      return 0
+    fi
+
+    case "$embeddings_url" in
+      "http://$host_ip_value:$discovered_port"|\
+      "http://$host_ip_value:$discovered_port/"*|\
+      "https://$host_ip_value:$discovered_port"|\
+      "https://$host_ip_value:$discovered_port/"*|\
+      "http://127.0.0.1:$discovered_port"|\
+      "http://127.0.0.1:$discovered_port/"*|\
+      "https://127.0.0.1:$discovered_port"|\
+      "https://127.0.0.1:$discovered_port/"*|\
+      "http://localhost:$discovered_port"|\
+      "http://localhost:$discovered_port/"*|\
+      "https://localhost:$discovered_port"|\
+      "https://localhost:$discovered_port/"*)
+        return 0
+        ;;
+    esac
+  fi
+
+  return 1
+}
+
 resolve_prestart_llama_port() {
   local host_ip_value="$1"
   local llama_port_value="$2"
@@ -67,6 +100,18 @@ resolve_prestart_llama_port() {
   if llama_discover_healthy_instance_port "$host_ip_value" "$llama_port_value"; then
     discovered_port="$REPLY"
     if [ "$discovered_port" != "$llama_port_value" ]; then
+      if prestart_discovered_port_is_embeddings_endpoint "$host_ip_value" "$discovered_port"; then
+        if [ "$configured_endpoint_unhealthy" = true ]; then
+          out "Configured primary endpoint $llama_port_value is unhealthy."
+          out "Discovered healthy endpoint $discovered_port is the configured embeddings endpoint, so it will not be used as primary."
+        else
+          out "Discovered healthy endpoint $discovered_port is the configured embeddings endpoint, so it will not be used as primary."
+        fi
+        blank_line
+        REPLY="$llama_port_value"
+        return 0
+      fi
+
       if [ "$configured_endpoint_unhealthy" = true ]; then
         out "Configured endpoint $llama_port_value is unhealthy."
         out "Using discovered healthy endpoint $discovered_port instead."

@@ -990,11 +990,21 @@ PY
   if [[ " ${runtime_args[*]} " == *' --ctx-size 65536 '* ]] \
     && [[ " ${runtime_args[*]} " == *' --parallel 2 '* ]] \
     && [[ " ${runtime_args[*]} " == *' --n-gpu-layers 99 '* ]] \
-    && [[ " ${runtime_args[*]} " == *' --flash-attn '* ]] \
+    && [[ " ${runtime_args[*]} " == *' --flash-attn on '* ]] \
     && [[ " ${runtime_args[*]} " == *' --mlock '* ]]; then
     pass "managed runtime args render first-class llama-server settings"
   else
     fail "managed runtime args should render first-class llama-server settings"
+  fi
+
+  LLAMA_FLASH_ATTENTION=false
+  LLAMA_MLOCK=true
+  runtime_args=()
+  llama_append_managed_runtime_args runtime_args
+  if [[ " ${runtime_args[*]} " == *' --flash-attn off --mlock '* ]]; then
+    pass "managed runtime args render flash attention false as an explicit value"
+  else
+    fail "managed runtime args should render --flash-attn off before --mlock"
   fi
   unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_MLOCK
 
