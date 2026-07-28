@@ -44,6 +44,13 @@ case "$VM_LLAMA_SERVER_BASE_URL" in
     VM_LLAMA_SERVER_BASE_URL="${VM_LLAMA_SERVER_BASE_URL%/v1}"
     ;;
 esac
+HOST_STATUS_LOCAL_LLAMA_HOST="$(llama_local_readiness_host "${LLAMA_HOST:-0.0.0.0}" 2>/dev/null || printf '127.0.0.1')"
+HOST_STATUS_LOCAL_LLAMA_BASE_URL="http://$HOST_STATUS_LOCAL_LLAMA_HOST:$LLAMA_PORT"
+HOST_STATUS_LOCAL_LLAMA_MODELS_URL="$HOST_STATUS_LOCAL_LLAMA_BASE_URL/v1/models"
+STATUS_LLAMA_RUNTIME_SERVER_BASE_URL="$VM_LLAMA_SERVER_BASE_URL"
+if [ "$HOST_STATUS_EXPECTS_EXTERNAL" != true ]; then
+  STATUS_LLAMA_RUNTIME_SERVER_BASE_URL="$HOST_STATUS_LOCAL_LLAMA_BASE_URL"
+fi
 VM_LLAMA_COMPLETION_URL="$VM_LLAMA_SERVER_BASE_URL/completion"
 VM_INFERENCE_MODEL="${OPENCLAW_DEFAULT_MODEL:-}"
 if [ -z "$VM_INFERENCE_MODEL" ] && [ -n "${MODEL_PATH:-}" ]; then
@@ -88,6 +95,27 @@ status_curl() {
   curl -s --connect-timeout "$STATUS_CURL_CONNECT_TIMEOUT" --max-time "$STATUS_CURL_MAX_TIME" "$@"
 }
 
+status_host_address_available() {
+  local host="$1"
+
+  [ -n "$host" ] || return 1
+  case "$host" in
+    127.*|localhost|::1)
+      return 0
+      ;;
+    0.0.0.0|::)
+      return 0
+      ;;
+  esac
+
+  if command -v ifconfig >/dev/null 2>&1 \
+    && ifconfig 2>/dev/null | grep -E "(^|[^0-9.])${host//./\\.}([^0-9.]|$)" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
+}
+
 status_llama_runtime_json() {
   local endpoint="$1"
   local fixture_var=''
@@ -105,7 +133,7 @@ status_llama_runtime_json() {
     return $?
   fi
 
-  status_curl "$VM_LLAMA_SERVER_BASE_URL/$endpoint"
+  status_curl "$STATUS_LLAMA_RUNTIME_SERVER_BASE_URL/$endpoint"
 }
 
 status_json_value() {
@@ -570,6 +598,8 @@ EOF
 section "LLaMA Status"
 
 api_ok=false
+vm_api_ok=false
+vm_interface_ok=false
 port_ok=false
 process_ok=false
 bind_failed=false
@@ -579,8 +609,24 @@ MANAGED_LLAMA_SERVICE_NAME="$(managed_llama_service_name "$MANAGED_LLAMA_MODE")"
 MANAGED_LLAMA_PLIST_PATH="$(llama_mode_plist_dest "$MANAGED_LLAMA_MODE")"
 MANAGED_LLAMA_ENV_PATH="$(llama_mode_env_dest "$MANAGED_LLAMA_MODE")"
 
-if status_curl "$HOST_STATUS_LLAMA_MODELS_URL" >/dev/null 2>&1; then
-  api_ok=true
+if $HOST_STATUS_EXPECTS_EXTERNAL; then
+  if status_curl "$HOST_STATUS_LLAMA_MODELS_URL" >/dev/null 2>&1; then
+    api_ok=true
+    vm_api_ok=true
+  fi
+  if status_host_address_available "$HOST_IP"; then
+    vm_interface_ok=true
+  fi
+else
+  if status_curl "$HOST_STATUS_LOCAL_LLAMA_MODELS_URL" >/dev/null 2>&1; then
+    api_ok=true
+  fi
+  if status_curl "$HOST_STATUS_LLAMA_MODELS_URL" >/dev/null 2>&1; then
+    vm_api_ok=true
+  fi
+  if status_host_address_available "$HOST_IP"; then
+    vm_interface_ok=true
+  fi
 fi
 
 if port_open "$LLAMA_PORT"; then
@@ -601,7 +647,24 @@ if $api_ok && $HOST_STATUS_EXPECTS_EXTERNAL; then
   out "  ClawBox will not manage this process."
 
 elif $api_ok && $port_ok && $process_ok; then
-  pass "llama-server is healthy and owned by this user"
+  if [ "$HOST_STATUS_LOCAL_LLAMA_BASE_URL" != "$HOST_STATUS_DISPLAY_URL" ]; then
+    pass "llama-server is healthy through loopback"
+    out "  Local endpoint: $HOST_STATUS_LOCAL_LLAMA_BASE_URL/v1"
+    if $vm_api_ok; then
+      pass "VM-facing llama endpoint is reachable"
+      out "  VM-facing endpoint: $HOST_STATUS_DISPLAY_URL/v1"
+    elif ! $vm_interface_ok; then
+      warn_status "VM-facing llama endpoint is unavailable because the configured host interface is absent"
+      out "  VM-facing endpoint: $HOST_STATUS_DISPLAY_URL/v1"
+      out "  The UTM/VM host network interface may be offline because the selected VM is stopped."
+    else
+      fail "VM-facing llama endpoint is unavailable"
+      out "  VM-facing endpoint: $HOST_STATUS_DISPLAY_URL/v1"
+      out "  The local service is healthy; check VM networking and host firewall reachability."
+    fi
+  else
+    pass "llama-server is healthy and owned by this user"
+  fi
 
 elif ! $api_ok && $port_ok && $process_ok && $bind_failed; then
   fail "llama-server conflict detected"
@@ -735,13 +798,23 @@ if [ "${EMBEDDINGS_ENABLED:-false}" = true ]; then
   if status_curl "${EMBEDDINGS_URL%/}/models" >/dev/null 2>&1; then
     pass "Embeddings llama-server is responding at $EMBEDDINGS_URL"
   else
-    fail "Embeddings llama-server is not responding at $EMBEDDINGS_URL"
-    EMBEDDINGS_LOOPBACK_URL="http://127.0.0.1:${EMBEDDINGS_LLAMA_PORT:-11435}/v1"
+    EMBEDDINGS_LOOPBACK_URL="$(embeddings_llama_local_base_url 2>/dev/null || printf 'http://127.0.0.1:%s/v1' "${EMBEDDINGS_LLAMA_PORT:-11435}")"
     if [ "$EMBEDDINGS_LOOPBACK_URL" != "$EMBEDDINGS_URL" ] \
       && status_curl "${EMBEDDINGS_LOOPBACK_URL%/}/models" >/dev/null 2>&1
     then
-      out "  Loopback responds at $EMBEDDINGS_LOOPBACK_URL, but the configured VM-facing endpoint does not."
-      out '  Restart/update embeddings setup so the runtime binds to the configured host interface.'
+      pass "Embeddings llama-server is healthy through local readiness endpoint"
+      out "  Local endpoint: $EMBEDDINGS_LOOPBACK_URL"
+      out "  VM-facing endpoint: $EMBEDDINGS_URL"
+      if [ "${EMBEDDINGS_LLAMA_HOST:-0.0.0.0}" = "0.0.0.0" ] && ! status_host_address_available "$HOST_IP"; then
+        warn_status "Embeddings VM-facing endpoint is unavailable because the configured host interface is absent"
+        out '  The embeddings service is already bound for VM access; the UTM/VM host network interface appears offline.'
+      else
+        fail "Embeddings llama-server is not responding at $EMBEDDINGS_URL"
+        out '  Loopback responds, but the configured VM-facing endpoint does not.'
+        out '  Restart/update embeddings setup only if the service is not bound to the configured host interface.'
+      fi
+    else
+      fail "Embeddings llama-server is not responding at $EMBEDDINGS_URL"
     fi
   fi
 fi

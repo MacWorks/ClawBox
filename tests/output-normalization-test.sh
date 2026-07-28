@@ -2979,8 +2979,10 @@ test_runtime_service_existing_menu_wording() {
     setup_launchagent
   } 2>&1)"
 
-  assert_contains 'runtime service menu shows option one as keeping the managed service' "$output" '1) Keep and use the existing runtime service (recommended)'
-  assert_contains 'runtime service menu shows option two as reinstalling service' "$output" '2) Reinstall/update runtime service'
+  assert_contains 'runtime service menu identifies the host vm autostart service' "$output" 'Existing host VM auto-start service detected.'
+  assert_contains 'runtime service menu warns that stale keep skips updates' "$output" 'the latest reliability fixes will not be applied'
+  assert_contains 'runtime service menu shows option one as keeping the existing host vm autostart service' "$output" '1) Keep the existing host VM auto-start service'
+  assert_contains 'runtime service menu recommends reinstalling stale service' "$output" '2) Reinstall/update host VM auto-start service (recommended)'
   assert_contains 'runtime service menu shows option three as removing service' "$output" '3) Disable/remove runtime service'
   assert_contains 'runtime service menu shows option four as skipping management' "$output" '4) Skip runtime service management during setup'
 }

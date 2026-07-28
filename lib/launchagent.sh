@@ -83,7 +83,7 @@ setup_launchagent() {
 
   if [ "$existing_runtime" = true ]; then
     blank_line
-    out 'Existing VM auto-start runtime service detected.'
+    out 'Existing host VM auto-start service detected.'
 
     if [ -f "$LAUNCHAGENT_PATH" ] && launchagent_plist_matches && launchagent_service_loaded; then
       runtime_state='loaded and matches the expected configuration'
@@ -100,8 +100,19 @@ setup_launchagent() {
     out "  Service: $(if launchagent_service_loaded; then printf 'loaded'; else printf 'not loaded'; fi)"
     out "  Wrapper: $(if [ -x "$LAUNCHAGENT_WRAPPER_DEST" ]; then printf 'installed'; else printf 'missing'; fi)"
     blank_line
-    out '1) Keep and use the existing runtime service (recommended)'
-    out '2) Reinstall/update runtime service'
+    case "$runtime_state" in
+      'loaded and matches the expected configuration'|'present on disk and matches the expected configuration')
+        out '1) Keep and use the existing host VM auto-start service (recommended)'
+        out '2) Reinstall/update host VM auto-start service'
+        ;;
+      *)
+        warn 'The existing host VM auto-start service does not match this ClawBox version.'
+        out 'Keeping it will preserve the old behavior; the latest reliability fixes will not be applied.'
+        blank_line
+        out '1) Keep the existing host VM auto-start service'
+        out '2) Reinstall/update host VM auto-start service (recommended)'
+        ;;
+    esac
     out '3) Disable/remove runtime service'
     out '4) Skip runtime service management during setup'
     blank_line

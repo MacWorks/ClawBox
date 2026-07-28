@@ -2980,6 +2980,69 @@ test_launchagent_module_requires_vm_host() {
   HOME="$original_home"
 }
 
+test_launchagent_mismatched_runtime_recommends_update() {
+  local original_home="$HOME"
+  local output=''
+
+  HOME="$TEMP_DIR/home-mismatched-autostart"
+  BASE_DIR="$ROOT_DIR"
+  VM_MACHINE_NAME='Test VM'
+  VM_HOST='test-vm-host'
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Application Support/ClawBox/bin"
+  cat > "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist" <<'EOF'
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.clawbox.startutmvm</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/old/clawbox/start-utm-vm.sh</string>
+    <string>Old VM</string>
+    <string>old-host</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+EOF
+  : > "$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+  chmod +x "$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+
+  prompt_yes_no() {
+    REPLY='false'
+    return 0
+  }
+
+  prompt_with_suffix() {
+    REPLY='4'
+    return 0
+  }
+
+  launchctl() {
+    case "${1:-}" in
+      print)
+        return 0
+        ;;
+      *)
+        return 0
+        ;;
+    esac
+  }
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/launchagent.sh"
+
+  output="$(setup_launchagent 2>&1)"
+
+  assert_contains 'mismatched VM auto-start runtime identifies host-side service' "$output" 'Existing host VM auto-start service detected.'
+  assert_contains 'mismatched VM auto-start runtime reports mismatch' "$output" 'State: loaded but does not match the expected configuration'
+  assert_contains 'mismatched VM auto-start runtime recommends update' "$output" '2) Reinstall/update host VM auto-start service (recommended)'
+  assert_not_contains 'mismatched VM auto-start runtime does not recommend keeping stale service' "$output" '1) Keep and use the existing host VM auto-start service (recommended)'
+  assert_contains 'mismatched VM auto-start runtime warns old behavior remains' "$output" 'the latest reliability fixes will not be applied'
+
+  HOME="$original_home"
+}
+
 test_llama_install_mode_selection() {
   local simulated_input=''
   local result=''
@@ -5868,6 +5931,7 @@ run_test test_launchagent_wrapper_returns_failure_when_vm_never_starts
 run_test test_launchagent_wrapper_retries_and_verifies_runtime_before_success
 run_test test_launchagent_wrapper_uses_ssh_reachability_as_success_signal
 run_test test_launchagent_module_requires_vm_host
+run_test test_launchagent_mismatched_runtime_recommends_update
 run_test test_llama_install_mode_selection
 run_test test_llama_bin_resolution_prompt
 run_test test_llama_bin_resolution_hard_blocks_without_install_methods

@@ -541,6 +541,89 @@ EOF
   assert_contains 'status current bind conflict reports one unhealthy issue' "$output" 'RESULT: UNHEALTHY (1 issues)'
 }
 
+test_status_reports_primary_loopback_healthy_when_vm_interface_is_absent() {
+  local output
+  local status=0
+  local curl_log="$TEMP_DIR/status-primary-loopback-curl.log"
+
+  prepare_status_test_home
+  setup_status_test_mocks
+
+  cat > "$ENV_FILE" <<'EOF'
+HOST_IP="192.168.64.1"
+VM_HOST="vm-user@192.168.64.2"
+LLAMA_HOST="0.0.0.0"
+LLAMA_PORT="18080"
+LLAMA_BASE_URL="http://192.168.64.1:18080/v1"
+MODEL_PATH="/Users/vm-user/models/model.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+LLAMA_EXTERNAL="false"
+EOF
+  cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
+MODEL_PATH="/Users/vm-user/models/model.gguf"
+EOF
+
+  write_mock_command ifconfig '#!/bin/bash
+printf "%s\n" "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>"
+printf "%s\n" "inet 127.0.0.1 netmask 0xff000000"
+'
+  write_mock_command curl '#!/bin/bash
+if [ -n "${CLAWBOX_TEST_STATUS_CURL_LOG:-}" ]; then
+  printf "%s\n" "$*" >> "$CLAWBOX_TEST_STATUS_CURL_LOG"
+fi
+case "$*" in
+  *"http://192.168.64.1:18080/v1/models"*)
+    exit 1
+    ;;
+  *"http://127.0.0.1:18080/v1/models"*)
+    printf "%s\n" "{\"data\":[]}"
+    exit 0
+    ;;
+  *"http://127.0.0.1:18080/props"*)
+    printf "%s\n" "{\"default_generation_settings\":{\"n_ctx\":32768},\"total_slots\":1}"
+    exit 0
+    ;;
+  *"http://127.0.0.1:18080/slots"*)
+    printf "%s\n" "[{\"n_ctx\":32768}]"
+    exit 0
+    ;;
+esac
+exit 0
+'
+
+  export CLAWBOX_TEST_STATUS_CURL_LOG="$curl_log"
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=1
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT='/opt/homebrew/bin/llama-server -m /Users/vm-user/models/model.gguf --host 0.0.0.0 --port 18080 --ctx-size 32768'
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/primary-loopback-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/primary-loopback-system.err.log"
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG" "$curl_log"
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_contains 'status primary loopback path reports local health' "$output" 'PASS: llama-server is healthy through loopback'
+  assert_contains 'status primary loopback path reports missing VM-facing interface' "$output" 'WARN: VM-facing llama endpoint is unavailable because the configured host interface is absent'
+  assert_not_contains 'status primary loopback path does not report local API startup failure' "$output" 'FAIL: llama-server process exists but API is not responding'
+  assert_contains 'status primary loopback path probes local endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://127.0.0.1:18080/v1/models'
+  assert_contains 'status primary loopback path probes local props endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://127.0.0.1:18080/props'
+  assert_contains 'status primary loopback path probes local slots endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://127.0.0.1:18080/slots'
+  assert_contains 'status primary loopback path probes configured VM-facing endpoint separately' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://192.168.64.1:18080/v1/models'
+  assert_not_contains 'status primary loopback path does not probe VM-facing props endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://192.168.64.1:18080/props'
+  assert_contains 'status primary loopback path reports local runtime context' "$output" 'Runtime context: 32768'
+  assert_contains 'status primary loopback path reports local slot context' "$output" 'Per-slot context: 32768'
+  assert_contains 'status primary loopback path keeps VM failures separate' "$output" 'FAIL: SSH connectivity failed'
+  assert_contains 'status primary loopback path still exits unhealthy due to VM failures only' "$output" 'RESULT: UNHEALTHY'
+}
+
 test_status_reports_external_instance_as_configured_when_api_and_port_are_healthy() {
   local output
   local status=0
@@ -1946,7 +2029,7 @@ EOF
   assert_contains 'status embeddings model summary keeps embeddings endpoint distinct' "$output" 'API: http://127.0.0.1:18081/v1'
 }
 
-test_status_reports_embeddings_loopback_only_as_unhealthy() {
+test_status_reports_embeddings_loopback_only_with_missing_vm_interface_as_warning() {
   local output
   local status=0
   local curl_log="$TEMP_DIR/status-embeddings-loopback-curl.log"
@@ -1965,6 +2048,7 @@ OPENCLAW_DEFAULT_MODEL="local"
 LLAMA_EXTERNAL="false"
 EMBEDDINGS_ENABLED="true"
 EMBEDDINGS_MODEL_PATH="/Users/vm-user/models/bge-large-en-v1.5-f16.gguf"
+EMBEDDINGS_LLAMA_HOST="0.0.0.0"
 EMBEDDINGS_LLAMA_PORT="18081"
 EMBEDDINGS_LLAMA_BASE_URL="http://192.168.64.1:18081/v1"
 EOF
@@ -1986,6 +2070,10 @@ case "$*" in
     ;;
 esac
 exit 0
+'
+  write_mock_command ifconfig '#!/bin/bash
+printf "%s\n" "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>"
+printf "%s\n" "inet 127.0.0.1 netmask 0xff000000"
 '
 
   export CLAWBOX_TEST_STATUS_CURL_LOG="$curl_log"
@@ -2009,11 +2097,13 @@ exit 0
   status=$?
   set -e
 
-  assert_equals 'status embeddings loopback-only path exits unhealthy' "$status" '1'
-  assert_contains 'status embeddings loopback-only path fails configured endpoint' "$output" 'FAIL: Embeddings llama-server is not responding at http://192.168.64.1:18081/v1'
-  assert_contains 'status embeddings loopback-only path reports loopback diagnostic' "$output" 'Loopback responds at http://127.0.0.1:18081/v1, but the configured VM-facing endpoint does not.'
+  assert_equals 'status embeddings loopback-only path exits with warning only' "$status" '0'
+  assert_contains 'status embeddings loopback-only path reports local health' "$output" 'PASS: Embeddings llama-server is healthy through local readiness endpoint'
+  assert_contains 'status embeddings loopback-only path reports missing interface' "$output" 'WARN: Embeddings VM-facing endpoint is unavailable because the configured host interface is absent'
+  assert_contains 'status embeddings loopback-only path explains no rebind needed' "$output" 'The embeddings service is already bound for VM access'
+  assert_not_contains 'status embeddings loopback-only path does not recommend incorrect rebind' "$output" 'Restart/update embeddings setup so the runtime binds to the configured host interface.'
+  assert_not_contains 'status embeddings loopback-only path does not fail configured endpoint when interface is absent' "$output" 'FAIL: Embeddings llama-server is not responding at http://192.168.64.1:18081/v1'
   assert_contains 'status embeddings loopback-only path probes configured endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://192.168.64.1:18081/v1/models'
-  assert_contains 'status embeddings loopback-only path probes loopback only for diagnosis' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://127.0.0.1:18081/v1/models'
 }
 
 test_status_marks_embeddings_memory_model_unavailable_only_when_read_fails() {
@@ -2565,6 +2655,7 @@ printf 'Running release regression tests\n'
 run_test test_status_avoids_duplicate_vm_host_api_failure
 run_test test_status_ignores_stale_bind_log_when_managed_runtime_is_currently_healthy
 run_test test_status_reports_current_bind_conflict_when_port_is_open_but_api_is_not_healthy
+run_test test_status_reports_primary_loopback_healthy_when_vm_interface_is_absent
 run_test test_status_reports_external_instance_as_configured_when_api_and_port_are_healthy
 run_test test_status_external_instance_ignores_local_port_when_configured_api_is_healthy
 run_test test_status_external_instance_does_not_require_local_managed_artifacts
@@ -2598,7 +2689,7 @@ run_test test_status_fails_on_parallel_total_slots_mismatch
 run_test test_status_fails_on_openclaw_runtime_context_mismatch
 run_test test_status_detects_primary_model_mismatch
 run_test test_status_displays_embeddings_model_summary_when_enabled
-run_test test_status_reports_embeddings_loopback_only_as_unhealthy
+run_test test_status_reports_embeddings_loopback_only_with_missing_vm_interface_as_warning
 run_test test_status_marks_embeddings_memory_model_unavailable_only_when_read_fails
 run_test test_status_detects_embeddings_model_mismatch_when_enabled
 run_test test_status_omits_embeddings_model_summary_when_disabled_or_absent
