@@ -841,6 +841,102 @@ test_status_reports_configured_vm_autostart_operational_state() {
   assert_contains 'status vm-autostart path reports service label' "$output" 'com.clawbox.startutmvm'
 }
 
+test_status_ignores_stale_vm_autostart_failure_after_new_success() {
+  local output
+  local status=0
+  local wrapper_path=''
+  local stdout_log="$TEMP_DIR/vm-autostart-success.out.log"
+  local stderr_log="$TEMP_DIR/vm-autostart-stale.err.log"
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  mkdir -p "$HOME/Library/Application Support/ClawBox/bin"
+  : > "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist"
+  wrapper_path="$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+  : > "$wrapper_path"
+  chmod +x "$wrapper_path"
+
+  cat > "$stderr_log" <<'EOF'
+[WARN] VM did not report running after startup wait.
+EOF
+  cat > "$stdout_log" <<'EOF'
+[INFO] ClawBox VM auto-start wrapper launched for VM: macOS
+[INFO] VM is reachable via SSH after startup attempt.
+EOF
+  touch -t 202001010000 "$stderr_log"
+  touch -t 202001010001 "$stdout_log"
+
+  export CLAWBOX_VM_AUTOSTART_OUT_LOG="$stdout_log"
+  export CLAWBOX_VM_AUTOSTART_ERR_LOG="$stderr_log"
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status vm-autostart stale failure path exits healthy after latest success' "$status" '0'
+  assert_contains 'status vm-autostart stale failure path reports latest success' "$output" 'PASS: VM auto-start latest invocation succeeded'
+  assert_not_contains 'status vm-autostart stale failure path does not warn from old logs' "$output" 'WARN: VM auto-start latest invocation has warning or failure log entries'
+}
+
+test_status_warns_when_latest_vm_autostart_invocation_failed() {
+  local output
+  local status=0
+  local wrapper_path=''
+  local stdout_log="$TEMP_DIR/vm-autostart-old-success.out.log"
+  local stderr_log="$TEMP_DIR/vm-autostart-current-failure.err.log"
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  mkdir -p "$HOME/Library/Application Support/ClawBox/bin"
+  : > "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist"
+  wrapper_path="$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+  : > "$wrapper_path"
+  chmod +x "$wrapper_path"
+
+  cat > "$stdout_log" <<'EOF'
+[INFO] ClawBox VM auto-start wrapper launched for VM: macOS
+[INFO] VM is reachable via SSH after startup attempt.
+EOF
+  cat > "$stderr_log" <<'EOF'
+[ERROR] Failed to request UTM VM startup.
+EOF
+  touch -t 202001010000 "$stdout_log"
+  touch -t 202001010001 "$stderr_log"
+
+  export CLAWBOX_VM_AUTOSTART_OUT_LOG="$stdout_log"
+  export CLAWBOX_VM_AUTOSTART_ERR_LOG="$stderr_log"
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status vm-autostart latest failure path exits with warning status' "$status" '0'
+  assert_contains 'status vm-autostart latest failure path warns from current logs' "$output" 'WARN: VM auto-start latest invocation has warning or failure log entries'
+  assert_not_contains 'status vm-autostart latest failure path does not report success' "$output" 'PASS: VM auto-start latest invocation succeeded'
+}
+
 test_status_reports_system_managed_healthy_instance_when_system_mode_artifacts_exist() {
   local output
   local status=0
@@ -2098,12 +2194,14 @@ printf "%s\n" "inet 127.0.0.1 netmask 0xff000000"
   set -e
 
   assert_equals 'status embeddings loopback-only path exits with warning only' "$status" '0'
-  assert_contains 'status embeddings loopback-only path reports local health' "$output" 'PASS: Embeddings llama-server is healthy through local readiness endpoint'
-  assert_contains 'status embeddings loopback-only path reports missing interface' "$output" 'WARN: Embeddings VM-facing endpoint is unavailable because the configured host interface is absent'
-  assert_contains 'status embeddings loopback-only path explains no rebind needed' "$output" 'The embeddings service is already bound for VM access'
+  assert_contains 'status embeddings loopback-only path reports local health' "$output" 'PASS: embeddings llama-server is healthy through loopback'
+  assert_contains 'status embeddings loopback-only path reports local endpoint' "$output" 'Local endpoint: http://127.0.0.1:18081/v1'
+  assert_contains 'status embeddings loopback-only path reports missing interface' "$output" 'WARN: VM-facing embeddings endpoint is unavailable because the configured host interface is absent'
+  assert_contains 'status embeddings loopback-only path explains VM network is offline' "$output" 'The UTM/VM host network interface may be offline because the selected VM is stopped.'
   assert_not_contains 'status embeddings loopback-only path does not recommend incorrect rebind' "$output" 'Restart/update embeddings setup so the runtime binds to the configured host interface.'
   assert_not_contains 'status embeddings loopback-only path does not fail configured endpoint when interface is absent' "$output" 'FAIL: Embeddings llama-server is not responding at http://192.168.64.1:18081/v1'
   assert_contains 'status embeddings loopback-only path probes configured endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://192.168.64.1:18081/v1/models'
+  assert_contains 'status embeddings loopback-only path probes local readiness' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://127.0.0.1:18081/v1/models'
 }
 
 test_status_marks_embeddings_memory_model_unavailable_only_when_read_fails() {
@@ -2661,6 +2759,8 @@ run_test test_status_external_instance_ignores_local_port_when_configured_api_is
 run_test test_status_external_instance_does_not_require_local_managed_artifacts
 run_test test_status_reports_owned_healthy_instance_when_api_port_and_process_are_healthy
 run_test test_status_reports_configured_vm_autostart_operational_state
+run_test test_status_ignores_stale_vm_autostart_failure_after_new_success
+run_test test_status_warns_when_latest_vm_autostart_invocation_failed
 run_test test_status_reports_system_managed_healthy_instance_when_system_mode_artifacts_exist
 run_test test_status_reports_system_launchdaemon_loaded_via_domain_aware_probe
 run_test test_status_reports_unmanaged_instance_when_api_is_healthy_but_external_mode_is_false

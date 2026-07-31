@@ -24,6 +24,19 @@ llama_escape_env_value() {
   printf '%s' "$value"
 }
 
+llama_local_readiness_host() {
+  local bind_host="${1:-${LLAMA_HOST:-}}"
+
+  case "$bind_host" in
+    ''|0.0.0.0|::|\[::\])
+      printf '127.0.0.1\n'
+      ;;
+    *)
+      printf '%s\n' "$bind_host"
+      ;;
+  esac
+}
+
 write_llama_runtime_env() {
   local output_path="$1"
   local key
@@ -456,6 +469,24 @@ embeddings_llama_endpoint_responding() {
   curl -sS --fail --connect-timeout 1 --max-time 2 "$models_url" >/dev/null 2>&1
 }
 
+embeddings_llama_host_address_available() {
+  local host="$1"
+
+  [ -n "$host" ] || return 1
+  case "$host" in
+    127.*|localhost|::1|0.0.0.0|::)
+      return 0
+      ;;
+  esac
+
+  if command -v ifconfig >/dev/null 2>&1 \
+    && ifconfig 2>/dev/null | grep -E "(^|[^0-9.])${host//./\\.}([^0-9.]|$)" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
+}
+
 embeddings_llama_local_base_url() {
   local host=''
 
@@ -469,19 +500,28 @@ embeddings_llama_local_endpoint_responding() {
 
 embeddings_llama_verify_configured_endpoint() {
   local configured_base=''
-  local loopback_base=''
+  local local_base=''
 
   configured_base="$(embeddings_llama_configured_base_url)"
   if embeddings_llama_endpoint_responding "$configured_base"; then
     return 0
   fi
 
-  loopback_base="$(embeddings_llama_loopback_base_url)"
-  if [ "$configured_base" != "$loopback_base" ] \
-    && embeddings_llama_endpoint_responding "$loopback_base"
+  local_base="$(embeddings_llama_local_base_url)"
+  if [ "$configured_base" != "$local_base" ] \
+    && embeddings_llama_endpoint_responding "$local_base"
   then
-    llama_fail "Embeddings llama-server responds on loopback but not at the configured VM-facing endpoint: $configured_base"
-    out 'Restart/update the embeddings runtime so it binds to the configured host interface, then rerun setup.'
+    if [ "${EMBEDDINGS_LLAMA_HOST:-0.0.0.0}" = "0.0.0.0" ] \
+      && ! embeddings_llama_host_address_available "${HOST_IP:-}"; then
+      warn "Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
+      out "  Local readiness: $local_base"
+      out "  VM-facing endpoint: $configured_base"
+      out '  The UTM/VM host network interface may be offline because the selected VM is stopped.'
+      return 0
+    fi
+
+    llama_fail "Embeddings llama-server responds locally but not at the configured VM-facing endpoint: $configured_base"
+    out 'Restart/update embeddings setup only if the service is not bound to the configured host interface.'
     return 1
   fi
 

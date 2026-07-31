@@ -707,6 +707,50 @@ test_runtime_health_classification_marks_healthy_only_with_listener_and_health()
   assert_contains 'runtime health classification marks listener-plus-health state as healthy' "$output" 'HEALTH:healthy'
 }
 
+test_runtime_health_classification_accepts_loopback_when_vm_interface_absent() {
+  local output=''
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    LLAMA_HOST='0.0.0.0'
+    LLAMA_EXTERNAL=false
+
+    llama_port_has_local_listener() {
+      [ "$1" = '11434' ]
+    }
+
+    llama_api_responding() {
+      local host="$1"
+      local port="$2"
+      [ "$host" = '127.0.0.1' ] && [ "$port" = '11434' ]
+    }
+
+    llama_service_loaded() {
+      return 0
+    }
+
+    ps() {
+      if [ "${1:-}" = '-axo' ]; then
+        printf '%s\n' '1234 /opt/homebrew/bin/llama-server -m /tmp/model.gguf --host 0.0.0.0 --port 11434'
+        return 0
+      fi
+
+      command ps "$@"
+    }
+
+    llama_classify_runtime_health '192.168.64.1' '11434'
+    printf 'HEALTH:%s\n' "$LLAMA_INSTANCE_HEALTH"
+    printf 'VM_HEALTH:%s\n' "$LLAMA_INSTANCE_HEALTHCHECK_OK"
+    printf 'LOCAL_HEALTH:%s\n' "$LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK"
+  } 2>&1)"
+
+  assert_contains 'runtime health classification accepts loopback health' "$output" 'HEALTH:healthy'
+  assert_contains 'runtime health classification records vm-facing failure separately' "$output" 'VM_HEALTH:false'
+  assert_contains 'runtime health classification records local readiness success' "$output" 'LOCAL_HEALTH:true'
+}
+
 test_listening_port_parser_extracts_ports_without_gawk_match_captures() {
   local output=''
 
@@ -802,6 +846,92 @@ test_prestart_resolver_reports_unhealthy_primary_and_finds_healthy_alternate() {
   assert_contains 'prestart resolver explains that the configured endpoint is unhealthy' "$output" 'Configured endpoint 11434 is unhealthy.'
   assert_contains 'prestart resolver reports switching to the discovered healthy endpoint' "$output" 'Using discovered healthy endpoint 11435 instead.'
   assert_contains 'prestart resolver returns the healthy alternate port' "$output" 'RESOLVED:11435'
+}
+
+test_prestart_resolver_accepts_loopback_healthy_primary_when_vm_interface_absent() {
+  local output=''
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    llama_classify_runtime_health() {
+      LLAMA_INSTANCE_HEALTH='healthy'
+      LLAMA_INSTANCE_HAS_PROCESS=true
+      LLAMA_INSTANCE_HAS_LISTENER=true
+      LLAMA_INSTANCE_HEALTHCHECK_OK=false
+      LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK=true
+      LLAMA_INSTANCE_LAUNCHD_LOADED=true
+      REPLY="$LLAMA_INSTANCE_HEALTH"
+      return 0
+    }
+
+    llama_discover_healthy_instance_port() {
+      printf 'UNEXPECTED_DISCOVERY:%s:%s\n' "$1" "$2"
+      REPLY='11435'
+      return 0
+    }
+
+    resolve_prestart_llama_port '192.168.64.1' '11434'
+    printf 'RESOLVED:%s\n' "$REPLY"
+  } 2>&1)"
+
+  assert_contains 'prestart resolver keeps loopback-healthy configured port' "$output" 'RESOLVED:11434'
+  assert_not_contains 'prestart resolver does not call discovery for loopback-healthy primary' "$output" 'UNEXPECTED_DISCOVERY'
+  assert_not_contains 'prestart resolver does not report unhealthy when local readiness succeeds' "$output" 'Detected unhealthy llama-server state'
+}
+
+test_prestart_existing_service_reuse_menu_reports_loopback_health_without_repair() {
+  local output=''
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers '1'
+
+    LLAMA_HOST='0.0.0.0'
+    LLAMA_EXTERNAL=false
+
+    llama_api_responding() {
+      local host="$1"
+      local port="$2"
+      [ "$host" = '127.0.0.1' ] && [ "$port" = '11434' ]
+    }
+
+    llama_describe_existing_instance() {
+      LLAMA_EXISTING_INSTANCE_RUNTIME='current-user LaunchAgent'
+      LLAMA_EXISTING_INSTANCE_CONTROLLABLE=true
+      return 0
+    }
+
+    llama_existing_instance_is_current_user_managed() {
+      return 0
+    }
+
+    llama_runtime_env_matches_mode() {
+      [ "$1" = 'user' ]
+    }
+
+    user_has_sudo() {
+      return 1
+    }
+
+    llama_print_existing_instance_details() {
+      out '  Runtime: current-user LaunchAgent'
+    }
+
+    handle_prestart_llama_instance_choice '192.168.64.1' '11434'
+    printf 'USE_EXISTING:%s\n' "$LLAMA_USE_EXISTING_INSTANCE"
+    printf 'EXTERNAL:%s\n' "$LLAMA_EXTERNAL"
+    printf 'PORT:%s\n' "$REPLY"
+  } 2>&1)"
+
+  assert_contains 'prestart reuse menu reports local endpoint when vm-facing interface is absent' "$output" 'llama-server detected at http://127.0.0.1:11434'
+  assert_contains 'prestart reuse menu reports vm-facing endpoint separately' "$output" 'VM-facing endpoint is not reachable yet: http://192.168.64.1:11434'
+  assert_contains 'prestart reuse menu keeps existing managed service recommended' "$output" '1) Use the existing running llama-server on port 11434 (recommended)'
+  assert_not_contains 'prestart reuse menu does not force repair for missing vm interface' "$output" 'Stop existing instance and use ClawBox-managed instance (recommended)'
+  assert_contains 'prestart reuse menu reuses existing service' "$output" 'USE_EXISTING:true'
+  assert_contains 'prestart reuse menu preserves selected port' "$output" 'PORT:11434'
 }
 
 test_prestart_resolver_keeps_explicit_selected_port() {
@@ -967,9 +1097,12 @@ run_test test_dedicated_port_prompt_defaults_to_next_available_port
 run_test test_dedicated_port_prompt_skips_busy_sequential_ports
 run_test test_runtime_health_classification_requires_listener_and_health_endpoint
 run_test test_runtime_health_classification_marks_healthy_only_with_listener_and_health
+run_test test_runtime_health_classification_accepts_loopback_when_vm_interface_absent
 run_test test_listening_port_parser_extracts_ports_without_gawk_match_captures
 run_test test_llama_api_health_probe_uses_bounded_timeouts
 run_test test_prestart_resolver_reports_unhealthy_primary_and_finds_healthy_alternate
+run_test test_prestart_resolver_accepts_loopback_healthy_primary_when_vm_interface_absent
+run_test test_prestart_existing_service_reuse_menu_reports_loopback_health_without_repair
 run_test test_prestart_resolver_keeps_explicit_selected_port
 run_test test_prestart_flow_keeps_custom_port_when_default_port_has_other_user_service
 run_test test_prestart_flow_prefers_discovered_healthy_port_before_binary_setup

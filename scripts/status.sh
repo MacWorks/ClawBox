@@ -490,6 +490,73 @@ vm_autostart_configured() {
   [ -f "$(vm_autostart_plist_path)" ] || [ -e "$(vm_autostart_wrapper_path)" ]
 }
 
+vm_autostart_log_latest_state_for_file() {
+  local log_path="$1"
+
+  [ -f "$log_path" ] || return 1
+  awk '
+    /ClawBox VM auto-start wrapper launched/ { state = "started" }
+    /VM is already reachable via SSH/ { state = "success" }
+    /VM is already running/ { state = "success" }
+    /VM is reachable via SSH after startup/ { state = "success" }
+    /VM is running after startup/ { state = "success" }
+    /VM did not report running/ { state = "failure" }
+    /\[ERROR\]/ { state = "failure" }
+    END {
+      if (state == "") {
+        exit 1
+      }
+      print state
+    }
+  ' "$log_path"
+}
+
+vm_autostart_log_mtime() {
+  local log_path="$1"
+
+  [ -f "$log_path" ] || {
+    printf '0\n'
+    return 0
+  }
+
+  if stat -f '%m' "$log_path" >/dev/null 2>&1; then
+    stat -f '%m' "$log_path"
+  else
+    stat -c '%Y' "$log_path" 2>/dev/null || printf '0\n'
+  fi
+}
+
+vm_autostart_log_latest_state() {
+  local stdout_log="$1"
+  local stderr_log="$2"
+  local stdout_state=''
+  local stderr_state=''
+  local stdout_mtime=0
+  local stderr_mtime=0
+
+  stdout_state="$(vm_autostart_log_latest_state_for_file "$stdout_log" 2>/dev/null || true)"
+  stderr_state="$(vm_autostart_log_latest_state_for_file "$stderr_log" 2>/dev/null || true)"
+
+  if [ -z "$stdout_state" ] && [ -z "$stderr_state" ]; then
+    return 1
+  fi
+
+  stdout_mtime="$(vm_autostart_log_mtime "$stdout_log")"
+  stderr_mtime="$(vm_autostart_log_mtime "$stderr_log")"
+
+  if [ -n "$stderr_state" ] && [ "$stderr_mtime" -gt "$stdout_mtime" ]; then
+    printf '%s\n' "$stderr_state"
+    return 0
+  fi
+
+  if [ -n "$stdout_state" ]; then
+    printf '%s\n' "$stdout_state"
+    return 0
+  fi
+
+  printf '%s\n' "$stderr_state"
+}
+
 vm_ssh_exec() {
   ssh -o BatchMode=yes -o ConnectTimeout=3 "$VM_HOST" "$@"
 }
@@ -802,12 +869,12 @@ if [ "${EMBEDDINGS_ENABLED:-false}" = true ]; then
     if [ "$EMBEDDINGS_LOOPBACK_URL" != "$EMBEDDINGS_URL" ] \
       && status_curl "${EMBEDDINGS_LOOPBACK_URL%/}/models" >/dev/null 2>&1
     then
-      pass "Embeddings llama-server is healthy through local readiness endpoint"
+      pass "embeddings llama-server is healthy through loopback"
       out "  Local endpoint: $EMBEDDINGS_LOOPBACK_URL"
       out "  VM-facing endpoint: $EMBEDDINGS_URL"
       if [ "${EMBEDDINGS_LLAMA_HOST:-0.0.0.0}" = "0.0.0.0" ] && ! status_host_address_available "$HOST_IP"; then
-        warn_status "Embeddings VM-facing endpoint is unavailable because the configured host interface is absent"
-        out '  The embeddings service is already bound for VM access; the UTM/VM host network interface appears offline.'
+        warn_status "VM-facing embeddings endpoint is unavailable because the configured host interface is absent"
+        out '  The UTM/VM host network interface may be offline because the selected VM is stopped.'
       else
         fail "Embeddings llama-server is not responding at $EMBEDDINGS_URL"
         out '  Loopback responds, but the configured VM-facing endpoint does not.'
@@ -831,8 +898,9 @@ if vm_autostart_configured; then
   section "VM Auto-start"
   VM_AUTOSTART_PLIST="$(vm_autostart_plist_path)"
   VM_AUTOSTART_WRAPPER="$(vm_autostart_wrapper_path)"
-  VM_AUTOSTART_STDOUT_LOG="$(clawbox_startutmvm_stdout_log_default)"
-  VM_AUTOSTART_STDERR_LOG="$(clawbox_startutmvm_stderr_log_default)"
+  VM_AUTOSTART_STDOUT_LOG="${CLAWBOX_VM_AUTOSTART_OUT_LOG:-$(clawbox_startutmvm_stdout_log_default)}"
+  VM_AUTOSTART_STDERR_LOG="${CLAWBOX_VM_AUTOSTART_ERR_LOG:-$(clawbox_startutmvm_stderr_log_default)}"
+  VM_AUTOSTART_LATEST_LOG_STATE=''
 
   if [ -f "$VM_AUTOSTART_PLIST" ]; then
     pass "VM auto-start plist exists"
@@ -855,9 +923,18 @@ if vm_autostart_configured; then
   out "  Service: $(vm_autostart_service_target)"
   out "  stdout: $VM_AUTOSTART_STDOUT_LOG"
   out "  stderr: $VM_AUTOSTART_STDERR_LOG"
-  if [ -f "$VM_AUTOSTART_STDERR_LOG" ] && tail -n 20 "$VM_AUTOSTART_STDERR_LOG" 2>/dev/null | grep -Eiq 'did not report running|ERROR|WARN'; then
-    warn_status "VM auto-start has recent warning or failure log entries"
-  fi
+  VM_AUTOSTART_LATEST_LOG_STATE="$(vm_autostart_log_latest_state "$VM_AUTOSTART_STDOUT_LOG" "$VM_AUTOSTART_STDERR_LOG" 2>/dev/null || true)"
+  case "$VM_AUTOSTART_LATEST_LOG_STATE" in
+    success)
+      pass "VM auto-start latest invocation succeeded"
+      ;;
+    failure)
+      warn_status "VM auto-start latest invocation has warning or failure log entries"
+      ;;
+    started)
+      warn_status "VM auto-start latest invocation has not reported VM readiness yet"
+      ;;
+  esac
 fi
 
 # --- Logs ---

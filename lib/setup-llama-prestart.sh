@@ -97,6 +97,13 @@ resolve_prestart_llama_port() {
     return 0
   fi
 
+  if [ "$LLAMA_INSTANCE_HEALTH" = 'healthy' ] \
+    && [ "${LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK:-false}" = true ] \
+    && [ "${LLAMA_INSTANCE_HEALTHCHECK_OK:-false}" != true ]; then
+    REPLY="$llama_port_value"
+    return 0
+  fi
+
   if llama_discover_healthy_instance_port "$host_ip_value" "$llama_port_value"; then
     discovered_port="$REPLY"
     if [ "$discovered_port" != "$llama_port_value" ]; then
@@ -149,11 +156,25 @@ handle_prestart_llama_instance_choice() {
   local managed_action='replace'
   local managed_instance_reuse_first=false
   local managed_runtime_matches=true
+  local existing_instance_responding=false
+  local local_readiness_host=''
 
   LLAMA_USE_EXISTING_INSTANCE=false
   LLAMA_EXTERNAL=false
 
   if LLAMA_EXTERNAL="$original_llama_external" llama_api_responding "$host_ip_value" "$llama_port_value"; then
+    existing_instance_responding=true
+  elif [ "${LLAMA_EXTERNAL:-false}" != true ]; then
+    local_readiness_host="$(llama_local_readiness_host "${LLAMA_HOST:-}")"
+    if [ -n "$local_readiness_host" ] \
+      && [ "$local_readiness_host" != "$host_ip_value" ] \
+      && LLAMA_EXTERNAL="$original_llama_external" llama_api_responding "$local_readiness_host" "$llama_port_value"; then
+      existing_instance_responding=true
+      LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK=true
+    fi
+  fi
+
+  if [ "$existing_instance_responding" = true ]; then
     llama_describe_existing_instance "$llama_port_value" "$host_ip_value" >/dev/null 2>&1 || true
 
     if llama_existing_instance_is_current_user_managed; then
@@ -206,7 +227,13 @@ handle_prestart_llama_instance_choice() {
 
     while true; do
       blank_line
-      warn "llama-server detected at http://$host_ip_value:$llama_port_value"
+      if [ "$LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK" = true ] && [ "$LLAMA_INSTANCE_HEALTHCHECK_OK" != true ]; then
+        warn "llama-server detected at http://$local_readiness_host:$llama_port_value"
+        out "  VM-facing endpoint is not reachable yet: http://$host_ip_value:$llama_port_value"
+        out '  The UTM/VM host network interface may be offline because the selected VM is stopped.'
+      else
+        warn "llama-server detected at http://$host_ip_value:$llama_port_value"
+      fi
       llama_print_existing_instance_details "$llama_port_value"
       blank_line
       if [ "$managed_instance_reuse_first" = true ]; then

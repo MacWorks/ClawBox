@@ -118,7 +118,7 @@ test_runtime_env_writes_empty_extra_args_for_fresh_users() {
   assert_contains 'fresh embeddings runtime env includes empty EMBEDDINGS_LLAMA_EXTRA_ARGS' "$output" 'EMBEDDINGS_LLAMA_EXTRA_ARGS=""'
 }
 
-test_configured_endpoint_is_authoritative_for_setup() {
+test_configured_endpoint_failure_with_available_interface_requires_repair() {
   local output=''
   local status=0
   local curl_log="$TEMP_DIR/embeddings-curl.log"
@@ -127,6 +127,8 @@ test_configured_endpoint_is_authoritative_for_setup() {
   output="$({
     export BASE_DIR="$ROOT_DIR"
     export CLAWBOX_EMBEDDINGS_CURL_LOG="$curl_log"
+    export HOST_IP='192.168.64.1'
+    export EMBEDDINGS_LLAMA_HOST='0.0.0.0'
     export EMBEDDINGS_LLAMA_PORT=11435
     export EMBEDDINGS_LLAMA_BASE_URL='http://192.168.64.1:11435/v1'
     curl() {
@@ -140,6 +142,10 @@ test_configured_endpoint_is_authoritative_for_setup() {
       printf 'UNEXPECTED_CURL:%s\n' "$*"
       return 2
     }
+    ifconfig() {
+      printf '%s\n' 'bridge100: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST>'
+      printf '%s\n' 'inet 192.168.64.1 netmask 0xffffff00 broadcast 192.168.64.255'
+    }
     . "$ROOT_DIR/lib/llama.sh"
     set +e
     embeddings_llama_verify_configured_endpoint
@@ -148,12 +154,58 @@ test_configured_endpoint_is_authoritative_for_setup() {
     printf 'STATUS=%s\n' "$status"
   } 2>&1)"
 
-  assert_contains 'embeddings setup fails when only loopback responds' "$output" 'STATUS=1'
-  assert_contains 'embeddings setup reports configured VM-facing endpoint failure' "$output" 'Embeddings llama-server responds on loopback but not at the configured VM-facing endpoint: http://192.168.64.1:11435/v1'
+  assert_contains 'embeddings setup fails when interface exists but only loopback responds' "$output" 'STATUS=1'
+  assert_contains 'embeddings setup reports configured VM-facing endpoint failure' "$output" 'Embeddings llama-server responds locally but not at the configured VM-facing endpoint: http://192.168.64.1:11435/v1'
   curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
   assert_contains 'embeddings setup probes the configured /v1/models endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'
   assert_contains 'embeddings setup probes loopback only as diagnostic' "$curl_output" 'http://127.0.0.1:11435/v1/models'
   assert_not_contains 'embeddings setup does not probe legacy root models path' "$curl_output" 'http://192.168.64.1:11435/models'
+}
+
+test_configured_endpoint_absent_interface_allows_loopback_reuse() {
+  local output=''
+  local status=0
+  local curl_log="$TEMP_DIR/embeddings-absent-interface-curl.log"
+  local curl_output=''
+
+  output="$({
+    export BASE_DIR="$ROOT_DIR"
+    export CLAWBOX_EMBEDDINGS_CURL_LOG="$curl_log"
+    export HOST_IP='192.168.64.1'
+    export EMBEDDINGS_LLAMA_HOST='0.0.0.0'
+    export EMBEDDINGS_LLAMA_PORT=11435
+    export EMBEDDINGS_LLAMA_BASE_URL='http://192.168.64.1:11435/v1'
+    curl() {
+      printf '%s\n' "$*" >> "$CLAWBOX_EMBEDDINGS_CURL_LOG"
+      if [[ "$*" == *'http://192.168.64.1:11435/v1/models'* ]]; then
+        return 1
+      fi
+      if [[ "$*" == *'http://127.0.0.1:11435/v1/models'* ]]; then
+        return 0
+      fi
+      printf 'UNEXPECTED_CURL:%s\n' "$*"
+      return 2
+    }
+    ifconfig() {
+      printf '%s\n' 'lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>'
+      printf '%s\n' 'inet 127.0.0.1 netmask 0xff000000'
+    }
+    . "$ROOT_DIR/lib/llama.sh"
+    set +e
+    embeddings_llama_verify_configured_endpoint
+    status=$?
+    set -e
+    printf 'STATUS=%s\n' "$status"
+  } 2>&1)"
+
+  assert_contains 'embeddings setup accepts local health when VM-facing interface is absent' "$output" 'STATUS=0'
+  assert_contains 'embeddings setup reports missing VM-facing interface' "$output" 'Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet.'
+  assert_contains 'embeddings setup reports local readiness endpoint' "$output" 'Local readiness: http://127.0.0.1:11435/v1'
+  assert_contains 'embeddings setup reports configured VM-facing endpoint' "$output" 'VM-facing endpoint: http://192.168.64.1:11435/v1'
+  assert_not_contains 'embeddings setup absent interface does not recommend rebind' "$output" 'Restart/update embeddings setup'
+  curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
+  assert_contains 'embeddings setup absent interface probes configured endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'
+  assert_contains 'embeddings setup absent interface probes local readiness' "$curl_output" 'http://127.0.0.1:11435/v1/models'
 }
 
 test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint() {
@@ -188,6 +240,10 @@ test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint() {
       printf 'UNEXPECTED_CURL:%s\n' "$*"
       return 2
     }
+    ifconfig() {
+      printf '%s\n' 'lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>'
+      printf '%s\n' 'inet 127.0.0.1 netmask 0xff000000'
+    }
     launchctl() { return 0; }
     sleep() { :; }
     . "$ROOT_DIR/lib/llama.sh"
@@ -199,7 +255,6 @@ test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint() {
   } 2>&1)"
 
   assert_contains 'embeddings service start succeeds from local readiness' "$output" 'STATUS=0'
-  assert_contains 'embeddings service start warns when VM-facing endpoint is unavailable' "$output" 'Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet.'
   curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
   assert_contains 'embeddings service start probes local readiness' "$curl_output" 'http://127.0.0.1:11435/v1/models'
   assert_contains 'embeddings service start separately probes VM-facing endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'
@@ -325,6 +380,59 @@ test_setup_rerun_preserves_existing_embeddings_service() {
   assert_not_contains 'existing embeddings reuse does not rewrite env' "$output" 'WRITE_ENV_UNEXPECTED'
 }
 
+test_setup_rerun_reuses_embeddings_when_loopback_healthy_and_vm_interface_absent() {
+  local embed_model="$TEMP_DIR/models/existing-loopback-embed.gguf"
+  local output
+  local curl_log="$TEMP_DIR/existing-embeddings-loopback-curl.log"
+  mkdir -p "$(dirname "$embed_model")"
+  : > "$embed_model"
+  output="$({
+    export TEMP_DIR ROOT_DIR
+    export TEST_EMBED_MODEL="$embed_model"
+    export CLAWBOX_EMBEDDINGS_CURL_LOG="$curl_log"
+    . "$ROOT_DIR/tests/helpers/setup-harness.sh"
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers '1'
+    HOST_IP=192.168.64.1
+    LLAMA_BIN=/opt/homebrew/bin/llama-server
+    LLAMA_PORT=11434
+    EMBEDDINGS_ENABLED=true
+    EMBEDDINGS_MODEL_PATH="$TEST_EMBED_MODEL"
+    EMBEDDINGS_LLAMA_HOST=0.0.0.0
+    EMBEDDINGS_LLAMA_PORT=11435
+    EMBEDDINGS_LLAMA_BASE_URL=http://192.168.64.1:11435/v1
+    embeddings_llama_service_loaded() { [ "$1" = user ]; }
+    llama_port_in_use() { return 0; }
+    curl() {
+      printf '%s\n' "$*" >> "$CLAWBOX_EMBEDDINGS_CURL_LOG"
+      if [[ "$*" == *'http://192.168.64.1:11435/v1/models'* ]]; then
+        return 1
+      fi
+      if [[ "$*" == *'http://127.0.0.1:11435/v1/models'* ]]; then
+        return 0
+      fi
+      printf 'UNEXPECTED_CURL:%s\n' "$*"
+      return 2
+    }
+    ifconfig() {
+      printf '%s\n' 'lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>'
+      printf '%s\n' 'inet 127.0.0.1 netmask 0xff000000'
+    }
+    write_env_from_template() { printf 'WRITE_ENV_UNEXPECTED\n'; }
+    source_env_file() { :; }
+    setup_embeddings_llama_service_for_mode() { printf 'RESTART_UNEXPECTED\n'; }
+    setup_embeddings_service_phase
+    printf 'FINAL:%s:%s:%s:%s\n' "$EMBEDDINGS_ENABLED" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_LLAMA_PORT" "$EMBEDDINGS_LLAMA_BASE_URL"
+  } 2>&1)"
+  assert_contains 'existing embeddings loopback reuse reports local health' "$output" 'Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet.'
+  assert_contains 'existing embeddings loopback reuse accepts existing service' "$output" 'Using existing embeddings llama-server.'
+  assert_contains 'existing embeddings loopback reuse preserves enabled config' "$output" "FINAL:true:$embed_model:11435:http://192.168.64.1:11435/v1"
+  assert_not_contains 'existing embeddings loopback reuse does not recommend restart' "$output" 'Choose restart/update'
+  assert_not_contains 'existing embeddings loopback reuse does not restart service' "$output" 'RESTART_UNEXPECTED'
+  assert_not_contains 'existing embeddings loopback reuse does not rewrite env' "$output" 'WRITE_ENV_UNEXPECTED'
+}
+
 test_setup_rerun_stopped_embeddings_offers_repair_not_fresh_enable() {
   local embed_model="$TEMP_DIR/models/stopped-embed.gguf"
   local output
@@ -385,11 +493,13 @@ test_disabled_embeddings_keeps_fresh_enable_prompt() {
 run_test test_runtime_artifacts_are_distinct
 run_test test_wrapper_arguments_are_profile_specific
 run_test test_runtime_env_writes_empty_extra_args_for_fresh_users
-run_test test_configured_endpoint_is_authoritative_for_setup
+run_test test_configured_endpoint_failure_with_available_interface_requires_repair
+run_test test_configured_endpoint_absent_interface_allows_loopback_reuse
 run_test test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint
 run_test test_disabled_status_and_model_preservation_contract
 run_test test_port_selection_contract
 run_test test_setup_rerun_preserves_existing_embeddings_service
+run_test test_setup_rerun_reuses_embeddings_when_loopback_healthy_and_vm_interface_absent
 run_test test_setup_rerun_stopped_embeddings_offers_repair_not_fresh_enable
 run_test test_disabled_embeddings_keeps_fresh_enable_prompt
 [ "$FAILURES" -eq 0 ] && { echo 'PASS: embeddings test suite succeeded'; exit 0; }

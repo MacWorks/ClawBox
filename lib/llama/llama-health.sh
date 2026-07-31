@@ -26,19 +26,6 @@ llama_api_responding() {
   curl -sS --fail --connect-timeout "$connect_timeout" --max-time "$max_time" "$api_url" >/dev/null 2>&1
 }
 
-llama_local_readiness_host() {
-  local bind_host="${1:-${LLAMA_HOST:-}}"
-
-  case "$bind_host" in
-    ''|0.0.0.0|::|\[::\])
-      printf '127.0.0.1\n'
-      ;;
-    *)
-      printf '%s\n' "$bind_host"
-      ;;
-  esac
-}
-
 llama_local_api_responding() {
   local port="${1:-${LLAMA_PORT:-}}"
   local local_host=''
@@ -747,17 +734,20 @@ LLAMA_INSTANCE_HEALTH='inactive'
 LLAMA_INSTANCE_HAS_PROCESS=false
 LLAMA_INSTANCE_HAS_LISTENER=false
 LLAMA_INSTANCE_HEALTHCHECK_OK=false
+LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK=false
 LLAMA_INSTANCE_LAUNCHD_LOADED=false
 
 llama_classify_runtime_health() {
   local host_ip="${1:-${HOST_IP:-}}"
   local port="${2:-${LLAMA_PORT:-}}"
+  local local_host=''
   local process_line=''
 
   LLAMA_INSTANCE_HEALTH='inactive'
   LLAMA_INSTANCE_HAS_PROCESS=false
   LLAMA_INSTANCE_HAS_LISTENER=false
   LLAMA_INSTANCE_HEALTHCHECK_OK=false
+  LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK=false
   LLAMA_INSTANCE_LAUNCHD_LOADED=false
 
   if [ -z "$port" ]; then
@@ -783,15 +773,24 @@ llama_classify_runtime_health() {
     LLAMA_INSTANCE_HEALTHCHECK_OK=true
   fi
 
+  if [ "${LLAMA_EXTERNAL:-false}" != true ]; then
+    local_host="$(llama_local_readiness_host "${LLAMA_HOST:-}")"
+    if [ -n "$local_host" ] && [ "$local_host" != "$host_ip" ] && llama_api_responding "$local_host" "$port"; then
+      LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK=true
+    fi
+  fi
+
   if llama_service_loaded user; then
     LLAMA_INSTANCE_LAUNCHD_LOADED=true
   fi
 
-  if [ "$LLAMA_INSTANCE_HAS_LISTENER" = true ] && [ "$LLAMA_INSTANCE_HEALTHCHECK_OK" = true ]; then
+  if [ "$LLAMA_INSTANCE_HAS_LISTENER" = true ] \
+    && { [ "$LLAMA_INSTANCE_HEALTHCHECK_OK" = true ] || [ "$LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK" = true ]; }; then
     LLAMA_INSTANCE_HEALTH='healthy'
   elif [ "$LLAMA_INSTANCE_HAS_PROCESS" = true ] \
     || [ "$LLAMA_INSTANCE_HAS_LISTENER" = true ] \
     || [ "$LLAMA_INSTANCE_HEALTHCHECK_OK" = true ] \
+    || [ "$LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK" = true ] \
     || [ "$LLAMA_INSTANCE_LAUNCHD_LOADED" = true ]; then
     LLAMA_INSTANCE_HEALTH='unhealthy'
   else
