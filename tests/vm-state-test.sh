@@ -1843,6 +1843,185 @@ test_ensure_vm_connectivity_does_not_repeat_boot_wait_after_failed_startup_readi
   assert_equals 'connectivity repair does not repeat the boot readiness wait after a failed startup wait' "$readiness_wait_calls" '1'
 }
 
+test_started_vm_polls_until_ssh_ready_without_manual_setup() {
+  local detect_calls=0
+  local ssh_probe_calls_file="$TEMP_DIR/started-vm-ssh-probe-calls"
+  local ssh_probe_calls=0
+  local output
+
+  prepare_vm_state_mocks
+  printf '0\n' > "$ssh_probe_calls_file"
+
+  load_setup_functions
+  install_prompt_stubs
+  queue_prompt_answers 'y'
+
+  detect_vm_state() {
+    detect_calls=$((detect_calls + 1))
+    if [ "$detect_calls" -eq 1 ]; then
+      REPLY='stopped'
+      VM_RUNNING_STATE_CONFIDENCE='unknown'
+    else
+      REPLY='booting'
+      VM_RUNNING_STATE_CONFIDENCE='exact'
+    fi
+    return 0
+  }
+
+  start_vm_with_utm() {
+    return 0
+  }
+
+  wait_for_vm_running() {
+    status_begin 'Waiting for VM runtime...'
+    status_end 'VM runtime detected.' 'success'
+    return 0
+  }
+
+  probe_vm_network_endpoint() {
+    REPLY='ready'
+    return 0
+  }
+
+  probe_vm_ssh_endpoint() {
+    ssh_probe_calls="$(cat "$ssh_probe_calls_file")"
+    ssh_probe_calls=$((ssh_probe_calls + 1))
+    printf '%s\n' "$ssh_probe_calls" > "$ssh_probe_calls_file"
+    if [ "$ssh_probe_calls" -lt 4 ]; then
+      REPLY='ssh-timeout'
+    else
+      REPLY='ready'
+    fi
+    return 0
+  }
+
+  CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS=5
+  CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS=0
+  export CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS
+
+  output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
+  ssh_probe_calls="$(cat "$ssh_probe_calls_file")"
+
+  assert_contains 'started vm cold boot waits for vm runtime' "$output" 'VM runtime detected.'
+  assert_contains 'started vm cold boot waits for vm network' "$output" 'VM network detected.'
+  assert_contains 'started vm cold boot waits for ssh' "$output" 'Waiting for SSH'
+  assert_contains 'started vm cold boot continues after ssh becomes ready' "$output" 'VM started and SSH is now available.'
+  assert_not_contains 'started vm cold boot does not show manual ssh setup' "$output" ' > Manual SSH Setup'
+  assert_equals 'started vm cold boot probes ssh until ready' "$ssh_probe_calls" '4'
+}
+
+test_started_vm_ssh_timeout_uses_recovery_not_manual_ssh_setup() {
+  local detect_calls=0
+  local ssh_probe_calls_file="$TEMP_DIR/started-vm-timeout-ssh-probe-calls"
+  local ssh_probe_calls=0
+  local output
+
+  prepare_vm_state_mocks
+  printf '0\n' > "$ssh_probe_calls_file"
+
+  load_setup_functions
+  install_prompt_stubs
+  queue_prompt_answers 'y' '6'
+  vm_startup_readiness_can_prompt() { return 0; }
+
+  detect_vm_state() {
+    detect_calls=$((detect_calls + 1))
+    if [ "$detect_calls" -eq 1 ]; then
+      REPLY='stopped'
+      VM_RUNNING_STATE_CONFIDENCE='unknown'
+    else
+      REPLY='booting'
+      VM_RUNNING_STATE_CONFIDENCE='exact'
+    fi
+    return 0
+  }
+
+  start_vm_with_utm() {
+    return 0
+  }
+
+  wait_for_vm_running() {
+    status_begin 'Waiting for VM runtime...'
+    status_end 'VM runtime detected.' 'success'
+    return 0
+  }
+
+  probe_vm_network_endpoint() {
+    REPLY='ready'
+    return 0
+  }
+
+  probe_vm_ssh_endpoint() {
+    ssh_probe_calls="$(cat "$ssh_probe_calls_file")"
+    ssh_probe_calls=$((ssh_probe_calls + 1))
+    printf '%s\n' "$ssh_probe_calls" > "$ssh_probe_calls_file"
+    REPLY='ssh-timeout'
+    return 0
+  }
+
+  CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS=3
+  CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS=0
+  export CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS
+
+  output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
+  ssh_probe_calls="$(cat "$ssh_probe_calls_file")"
+
+  assert_contains 'started vm timeout reports started-but-not-ready diagnosis' "$output" 'VM was started but did not become SSH-ready before the timeout.'
+  assert_contains 'started vm timeout offers recovery menu' "$output" '1) Try starting the selected VM again'
+  assert_not_contains 'started vm timeout does not diagnose missing ssh keys' "$output" 'SSH keys are not configured'
+  assert_not_contains 'started vm timeout does not show manual ssh setup automatically' "$output" ' > Manual SSH Setup'
+  assert_equals 'started vm timeout probes ssh until configured timeout' "$ssh_probe_calls" '3'
+}
+
+test_started_vm_auth_required_enters_ssh_configuration_flow() {
+  local detect_calls=0
+  local output
+
+  prepare_vm_state_mocks
+
+  load_setup_functions
+  install_prompt_stubs
+  queue_prompt_answers 'y' 'n'
+
+  detect_vm_state() {
+    detect_calls=$((detect_calls + 1))
+    if [ "$detect_calls" -eq 1 ]; then
+      REPLY='stopped'
+      VM_RUNNING_STATE_CONFIDENCE='unknown'
+    else
+      REPLY='booting'
+      VM_RUNNING_STATE_CONFIDENCE='exact'
+    fi
+    return 0
+  }
+
+  start_vm_with_utm() {
+    return 0
+  }
+
+  wait_for_vm_running() {
+    return 0
+  }
+
+  probe_vm_network_endpoint() {
+    REPLY='ssh-auth-required'
+    return 0
+  }
+
+  probe_vm_ssh_endpoint() {
+    REPLY='ssh-auth-required'
+    return 0
+  }
+
+  output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
+
+  assert_contains 'started vm auth failure reports ssh connectivity' "$output" 'SSH connectivity is working.'
+  assert_contains 'started vm auth failure reports authentication state' "$output" 'Passwordless SSH authentication could not be confirmed yet.'
+  assert_contains 'started vm auth failure offers automatic ssh setup' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
+  assert_contains 'started vm auth failure can still show manual ssh after declining setup' "$output" ' > Manual SSH Setup'
+  assert_not_contains 'started vm auth failure does not report boot timeout' "$output" 'VM was started but did not become SSH-ready before the timeout.'
+}
+
 test_ensure_vm_connectivity_classifies_network_stage_failure_once() {
   local detect_calls=0
   local output
@@ -2322,6 +2501,9 @@ test_classify_vm_ssh_connectivity_promotes_auth_required_when_batch_auth_succeed
 test_copy_ssh_key_to_vm_treats_all_keys_skipped_as_success_when_auth_works
 test_copy_ssh_key_to_vm_keeps_failure_when_all_keys_skipped_but_auth_fails
 test_ensure_vm_connectivity_does_not_repeat_boot_wait_after_failed_startup_readiness
+test_started_vm_polls_until_ssh_ready_without_manual_setup
+test_started_vm_ssh_timeout_uses_recovery_not_manual_ssh_setup
+test_started_vm_auth_required_enters_ssh_configuration_flow
 test_ensure_vm_connectivity_classifies_network_stage_failure_once
 test_startup_network_timeout_offers_bounded_recovery
 test_startup_network_timeout_recovery_stays_bounded

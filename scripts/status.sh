@@ -716,18 +716,18 @@ if $api_ok && $HOST_STATUS_EXPECTS_EXTERNAL; then
 elif $api_ok && $port_ok && $process_ok; then
   if [ "$HOST_STATUS_LOCAL_LLAMA_BASE_URL" != "$HOST_STATUS_DISPLAY_URL" ]; then
     pass "llama-server is healthy through loopback"
-    out "  Local endpoint: $HOST_STATUS_LOCAL_LLAMA_BASE_URL/v1"
+    out "Local endpoint: $HOST_STATUS_LOCAL_LLAMA_BASE_URL/v1"
     if $vm_api_ok; then
       pass "VM-facing llama endpoint is reachable"
-      out "  VM-facing endpoint: $HOST_STATUS_DISPLAY_URL/v1"
+      out "VM-facing endpoint: $HOST_STATUS_DISPLAY_URL/v1"
     elif ! $vm_interface_ok; then
       warn_status "VM-facing llama endpoint is unavailable because the configured host interface is absent"
-      out "  VM-facing endpoint: $HOST_STATUS_DISPLAY_URL/v1"
-      out "  The UTM/VM host network interface may be offline because the selected VM is stopped."
+      out "VM-facing endpoint: $HOST_STATUS_DISPLAY_URL/v1"
+      out "The UTM/VM host network interface may be offline because the selected VM is stopped."
     else
       fail "VM-facing llama endpoint is unavailable"
-      out "  VM-facing endpoint: $HOST_STATUS_DISPLAY_URL/v1"
-      out "  The local service is healthy; check VM networking and host firewall reachability."
+      out "VM-facing endpoint: $HOST_STATUS_DISPLAY_URL/v1"
+      out "The local service is healthy; check VM networking and host firewall reachability."
     fi
   else
     pass "llama-server is healthy and owned by this user"
@@ -870,15 +870,15 @@ if [ "${EMBEDDINGS_ENABLED:-false}" = true ]; then
       && status_curl "${EMBEDDINGS_LOOPBACK_URL%/}/models" >/dev/null 2>&1
     then
       pass "embeddings llama-server is healthy through loopback"
-      out "  Local endpoint: $EMBEDDINGS_LOOPBACK_URL"
-      out "  VM-facing endpoint: $EMBEDDINGS_URL"
+      out "Local endpoint: $EMBEDDINGS_LOOPBACK_URL"
+      out "VM-facing endpoint: $EMBEDDINGS_URL"
       if [ "${EMBEDDINGS_LLAMA_HOST:-0.0.0.0}" = "0.0.0.0" ] && ! status_host_address_available "$HOST_IP"; then
         warn_status "VM-facing embeddings endpoint is unavailable because the configured host interface is absent"
-        out '  The UTM/VM host network interface may be offline because the selected VM is stopped.'
+        out 'The UTM/VM host network interface may be offline because the selected VM is stopped.'
       else
         fail "Embeddings llama-server is not responding at $EMBEDDINGS_URL"
-        out '  Loopback responds, but the configured VM-facing endpoint does not.'
-        out '  Restart/update embeddings setup only if the service is not bound to the configured host interface.'
+        out 'Loopback responds, but the configured VM-facing endpoint does not.'
+        out 'Restart/update embeddings setup only if the service is not bound to the configured host interface.'
       fi
     else
       fail "Embeddings llama-server is not responding at $EMBEDDINGS_URL"
@@ -920,9 +920,9 @@ if vm_autostart_configured; then
     warn_status "VM auto-start LaunchAgent is not loaded"
   fi
 
-  out "  Service: $(vm_autostart_service_target)"
-  out "  stdout: $VM_AUTOSTART_STDOUT_LOG"
-  out "  stderr: $VM_AUTOSTART_STDERR_LOG"
+  out "Service: $(vm_autostart_service_target)"
+  out "stdout: $VM_AUTOSTART_STDOUT_LOG"
+  out "stderr: $VM_AUTOSTART_STDERR_LOG"
   VM_AUTOSTART_LATEST_LOG_STATE="$(vm_autostart_log_latest_state "$VM_AUTOSTART_STDOUT_LOG" "$VM_AUTOSTART_STDERR_LOG" 2>/dev/null || true)"
   case "$VM_AUTOSTART_LATEST_LOG_STATE" in
     success)

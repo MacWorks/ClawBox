@@ -229,8 +229,8 @@ handle_prestart_llama_instance_choice() {
       blank_line
       if [ "$LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK" = true ] && [ "$LLAMA_INSTANCE_HEALTHCHECK_OK" != true ]; then
         warn "llama-server detected at http://$local_readiness_host:$llama_port_value"
-        out "  VM-facing endpoint is not reachable yet: http://$host_ip_value:$llama_port_value"
-        out '  The UTM/VM host network interface may be offline because the selected VM is stopped.'
+        out "VM-facing endpoint is not reachable yet: http://$host_ip_value:$llama_port_value"
+        out 'The UTM/VM host network interface may be offline because the selected VM is stopped.'
       else
         warn "llama-server detected at http://$host_ip_value:$llama_port_value"
       fi

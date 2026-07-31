@@ -928,6 +928,8 @@ test_prestart_existing_service_reuse_menu_reports_loopback_health_without_repair
 
   assert_contains 'prestart reuse menu reports local endpoint when vm-facing interface is absent' "$output" 'llama-server detected at http://127.0.0.1:11434'
   assert_contains 'prestart reuse menu reports vm-facing endpoint separately' "$output" 'VM-facing endpoint is not reachable yet: http://192.168.64.1:11434'
+  assert_not_contains 'prestart reuse menu vm-facing diagnostic has no leading whitespace' "$output" $'\n  VM-facing endpoint is not reachable yet:'
+  assert_not_contains 'prestart reuse menu vm-interface explanation has no leading whitespace' "$output" $'\n  The UTM/VM host network interface'
   assert_contains 'prestart reuse menu keeps existing managed service recommended' "$output" '1) Use the existing running llama-server on port 11434 (recommended)'
   assert_not_contains 'prestart reuse menu does not force repair for missing vm interface' "$output" 'Stop existing instance and use ClawBox-managed instance (recommended)'
   assert_contains 'prestart reuse menu reuses existing service' "$output" 'USE_EXISTING:true'

@@ -2378,6 +2378,10 @@ test_vm_startup_progress_flow() {
     load_setup_functions
     install_prompt_stubs
 
+    CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS=3
+    CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS=0
+    export CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS
+
     queue_prompt_answers 'y' 'y'
 
     start_vm_with_utm() {
@@ -2461,6 +2465,10 @@ test_vm_startup_network_recovery_flow() {
   output="$({
     load_setup_functions
     install_prompt_stubs
+
+    CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS=3
+    CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS=0
+    export CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS
 
     queue_prompt_answers 'y' '2' 'y'
 

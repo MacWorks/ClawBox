@@ -969,9 +969,9 @@ llama_verify_service_health() {
         if [ -n "${HOST_IP:-}" ] && [ "${HOST_IP:-}" != "$local_readiness_host" ] \
           && ! llama_api_responding "${HOST_IP:-}" "$LLAMA_PORT"; then
           warn "llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
-          out "  Local readiness: http://$local_readiness_host:$LLAMA_PORT/v1/models"
-          out "  VM-facing endpoint: $(llama_api_url "${HOST_IP:-}" "$LLAMA_PORT" 2>/dev/null || printf 'unavailable')"
-          out '  This usually means the UTM VM interface is not available yet; setup will validate VM reachability separately.'
+          out "Local readiness: http://$local_readiness_host:$LLAMA_PORT/v1/models"
+          out "VM-facing endpoint: $(llama_api_url "${HOST_IP:-}" "$LLAMA_PORT" 2>/dev/null || printf 'unavailable')"
+          out 'This usually means the UTM VM interface is not available yet; setup will validate VM reachability separately.'
         fi
         return 0
       fi

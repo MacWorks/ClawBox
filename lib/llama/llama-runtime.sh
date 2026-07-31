@@ -514,9 +514,9 @@ embeddings_llama_verify_configured_endpoint() {
     if [ "${EMBEDDINGS_LLAMA_HOST:-0.0.0.0}" = "0.0.0.0" ] \
       && ! embeddings_llama_host_address_available "${HOST_IP:-}"; then
       warn "Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
-      out "  Local readiness: $local_base"
-      out "  VM-facing endpoint: $configured_base"
-      out '  The UTM/VM host network interface may be offline because the selected VM is stopped.'
+      out "Local readiness: $local_base"
+      out "VM-facing endpoint: $configured_base"
+      out 'The UTM/VM host network interface may be offline because the selected VM is stopped.'
       return 0
     fi
 
@@ -557,9 +557,9 @@ setup_embeddings_llama_service_for_mode() {
     if embeddings_llama_local_endpoint_responding; then
       if ! embeddings_llama_verify_configured_endpoint >/dev/null 2>&1; then
         warn "Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
-        out "  Local readiness: $(embeddings_llama_local_base_url)"
-        out "  VM-facing endpoint: $(embeddings_llama_configured_base_url)"
-        out '  This usually means the UTM VM interface is not available yet; setup will validate VM reachability separately.'
+        out "Local readiness: $(embeddings_llama_local_base_url)"
+        out "VM-facing endpoint: $(embeddings_llama_configured_base_url)"
+        out 'This usually means the UTM VM interface is not available yet; setup will validate VM reachability separately.'
       fi
       return 0
     fi

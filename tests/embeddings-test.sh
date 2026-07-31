@@ -202,6 +202,9 @@ test_configured_endpoint_absent_interface_allows_loopback_reuse() {
   assert_contains 'embeddings setup reports missing VM-facing interface' "$output" 'Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet.'
   assert_contains 'embeddings setup reports local readiness endpoint' "$output" 'Local readiness: http://127.0.0.1:11435/v1'
   assert_contains 'embeddings setup reports configured VM-facing endpoint' "$output" 'VM-facing endpoint: http://192.168.64.1:11435/v1'
+  assert_not_contains 'embeddings setup local readiness line has no leading whitespace' "$output" $'\n  Local readiness:'
+  assert_not_contains 'embeddings setup vm-facing line has no leading whitespace' "$output" $'\n  VM-facing endpoint:'
+  assert_not_contains 'embeddings setup vm-interface explanation has no leading whitespace' "$output" $'\n  The UTM/VM host network interface'
   assert_not_contains 'embeddings setup absent interface does not recommend rebind' "$output" 'Restart/update embeddings setup'
   curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
   assert_contains 'embeddings setup absent interface probes configured endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'
@@ -428,6 +431,9 @@ test_setup_rerun_reuses_embeddings_when_loopback_healthy_and_vm_interface_absent
   assert_contains 'existing embeddings loopback reuse reports local health' "$output" 'Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet.'
   assert_contains 'existing embeddings loopback reuse accepts existing service' "$output" 'Using existing embeddings llama-server.'
   assert_contains 'existing embeddings loopback reuse preserves enabled config' "$output" "FINAL:true:$embed_model:11435:http://192.168.64.1:11435/v1"
+  assert_not_contains 'existing embeddings loopback local readiness line has no leading whitespace' "$output" $'\n  Local readiness:'
+  assert_not_contains 'existing embeddings loopback vm-facing line has no leading whitespace' "$output" $'\n  VM-facing endpoint:'
+  assert_not_contains 'existing embeddings loopback vm-interface explanation has no leading whitespace' "$output" $'\n  The UTM/VM host network interface'
   assert_not_contains 'existing embeddings loopback reuse does not recommend restart' "$output" 'Choose restart/update'
   assert_not_contains 'existing embeddings loopback reuse does not restart service' "$output" 'RESTART_UNEXPECTED'
   assert_not_contains 'existing embeddings loopback reuse does not rewrite env' "$output" 'WRITE_ENV_UNEXPECTED'
