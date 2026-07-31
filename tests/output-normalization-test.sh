@@ -2422,6 +2422,11 @@ test_vm_startup_progress_flow() {
       return 0
     }
 
+    probe_ssh_batch_auth_target() {
+      REPLY='ssh-auth-required'
+      return 0
+    }
+
     attempt_ssh_access_bootstrap() {
       status_begin 'Configuring SSH access...'
       status_tick 'Configuring SSH access...'

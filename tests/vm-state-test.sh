@@ -1059,6 +1059,8 @@ test_ensure_vm_connectivity_classifies_missing_key_auth_without_failure_framing(
   assert_contains 'ssh auth-required flow states connectivity is working' "$output" 'SSH connectivity is working.'
   assert_contains 'ssh auth-required flow states key auth could not be confirmed yet' "$output" 'Passwordless SSH authentication could not be confirmed yet.'
   assert_contains 'ssh auth-required flow still offers bootstrap prompt' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
+  assert_contains 'ssh auth-required decline reports setup is blocked' "$output" 'Setup cannot continue until noninteractive SSH authentication works.'
+  assert_not_contains 'ssh auth-required decline does not immediately print manual setup' "$output" ' > Manual SSH Setup'
   assert_not_contains 'ssh auth-required flow does not use possible-causes failure framing' "$output" 'Possible causes:'
   assert_not_contains 'ssh auth-required flow does not list ssh keys as a possible cause bullet' "$output" '- SSH keys are not configured'
 }
@@ -1100,6 +1102,93 @@ test_ensure_vm_connectivity_treats_batch_auth_success_as_ready() {
   assert_not_contains 'batch auth success does not run later bootstrap reporting after initial readiness' "$output" 'SSH key-based authentication is already configured.'
   assert_not_contains 'batch auth success does not prompt for bootstrap' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
   assert_not_contains 'batch auth success does not claim passwordless auth is unconfirmed' "$output" 'Passwordless SSH authentication could not be confirmed yet.'
+}
+
+test_started_vm_cold_boot_uses_definitive_batch_auth_before_prompting() {
+  local detect_calls=0
+  local ssh_probe_calls_file="$TEMP_DIR/started-vm-auth-success-ssh-probe-calls"
+  local auth_probe_calls_file="$TEMP_DIR/started-vm-auth-success-auth-probe-calls"
+  local ssh_probe_calls=0
+  local auth_probe_calls=0
+  local output
+
+  prepare_vm_state_mocks
+  printf '0\n' > "$ssh_probe_calls_file"
+  printf '0\n' > "$auth_probe_calls_file"
+
+  load_setup_functions
+  install_prompt_stubs
+  queue_prompt_answers 'y'
+
+  detect_vm_state() {
+    detect_calls=$((detect_calls + 1))
+    if [ "$detect_calls" -eq 1 ]; then
+      REPLY='stopped'
+      VM_RUNNING_STATE_CONFIDENCE='unknown'
+    else
+      REPLY='booting'
+      VM_RUNNING_STATE_CONFIDENCE='exact'
+    fi
+    return 0
+  }
+
+  start_vm_with_utm() {
+    return 0
+  }
+
+  wait_for_vm_running() {
+    return 0
+  }
+
+  probe_vm_network_endpoint() {
+    REPLY='ready'
+    return 0
+  }
+
+  probe_vm_ssh_endpoint() {
+    ssh_probe_calls="$(cat "$ssh_probe_calls_file")"
+    ssh_probe_calls=$((ssh_probe_calls + 1))
+    printf '%s\n' "$ssh_probe_calls" > "$ssh_probe_calls_file"
+
+    if [ "$ssh_probe_calls" -eq 1 ]; then
+      REPLY='ssh-timeout'
+    elif [ "$ssh_probe_calls" -eq 2 ]; then
+      REPLY='ssh-refused'
+    else
+      REPLY='ssh-auth-required'
+    fi
+    return 0
+  }
+
+  probe_ssh_batch_auth_target() {
+    auth_probe_calls="$(cat "$auth_probe_calls_file")"
+    auth_probe_calls=$((auth_probe_calls + 1))
+    printf '%s\n' "$auth_probe_calls" > "$auth_probe_calls_file"
+
+    if [ "$1" = "$VM_HOST" ]; then
+      REPLY='ready'
+    else
+      REPLY='ssh-auth-required'
+    fi
+    return 0
+  }
+
+  CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS=5
+  CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS=0
+  export CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS
+
+  VM_HOST='vm-user@192.168.64.2'
+
+  output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
+  ssh_probe_calls="$(cat "$ssh_probe_calls_file")"
+  auth_probe_calls="$(cat "$auth_probe_calls_file")"
+
+  assert_contains 'started vm cold boot auth success waits for ssh readiness' "$output" 'SSH readiness detected.'
+  assert_contains 'started vm cold boot auth success continues setup' "$output" 'VM started and SSH is now available.'
+  assert_not_contains 'started vm cold boot auth success does not prompt for ssh setup' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
+  assert_not_contains 'started vm cold boot auth success does not show manual setup' "$output" ' > Manual SSH Setup'
+  assert_equals 'started vm cold boot auth success uses definitive batch auth once' "$auth_probe_calls" '1'
+  assert_equals 'started vm cold boot auth success preserves configured VM_HOST for auth probe' "$ssh_probe_calls" '3'
 }
 
 test_ensure_vm_connectivity_skips_bootstrap_when_key_auth_is_ready() {
@@ -1495,6 +1584,34 @@ test_classify_vm_ssh_connectivity_promotes_auth_required_when_batch_auth_succeed
   assert_equals 'ssh connectivity classifier promotes auth-required to ready when batch auth succeeds' "$REPLY" 'ready'
 }
 
+test_batch_auth_probe_uses_configured_target_without_disabling_user_ssh_config() {
+  local ssh_log="$TEMP_DIR/batch-auth-ssh-args.log"
+
+  prepare_vm_state_mocks
+
+  write_mock_command ssh '#!/bin/bash
+printf "%s\n" "$*" > "$CLAWBOX_TEST_SSH_ARGS_LOG"
+exit 0'
+  CLAWBOX_TEST_SSH_ARGS_LOG="$ssh_log"
+  export CLAWBOX_TEST_SSH_ARGS_LOG
+
+  load_setup_functions
+
+  VM_HOST='vm-user@192.168.64.88'
+  CLAWBOX_SSH_AUTH_PROBE_CONNECT_TIMEOUT=7
+  export CLAWBOX_SSH_AUTH_PROBE_CONNECT_TIMEOUT
+
+  probe_ssh_batch_auth_target "$VM_HOST"
+
+  assert_equals 'batch auth probe reports ready on successful command' "$REPLY" 'ready'
+  assert_contains 'batch auth probe uses BatchMode' "$(cat "$ssh_log")" '-o BatchMode=yes'
+  assert_contains 'batch auth probe uses bounded connect timeout' "$(cat "$ssh_log")" '-o ConnectTimeout=7'
+  assert_contains 'batch auth probe uses the configured VM_HOST' "$(cat "$ssh_log")" 'vm-user@192.168.64.88'
+  assert_contains 'batch auth probe uses harmless echo command' "$(cat "$ssh_log")" 'echo ok'
+  assert_not_contains 'batch auth probe does not disable user preferred authentications' "$(cat "$ssh_log")" 'PreferredAuthentications=none'
+  assert_not_contains 'batch auth probe does not disable public key auth' "$(cat "$ssh_log")" 'PubkeyAuthentication=no'
+}
+
 test_copy_ssh_key_to_vm_treats_all_keys_skipped_as_success_when_auth_works() {
   prepare_vm_state_mocks
 
@@ -1786,6 +1903,11 @@ test_wait_for_known_vm_ssh_readiness_distinguishes_network_ready_from_ssh_auth_f
     return 0
   }
 
+  probe_ssh_batch_auth_target() {
+    REPLY='ssh-auth-required'
+    return 0
+  }
+
   if wait_for_known_vm_ssh_readiness; then
     fail 'known vm ssh readiness should not report ready when ssh requires authentication'
   else
@@ -2013,12 +2135,18 @@ test_started_vm_auth_required_enters_ssh_configuration_flow() {
     return 0
   }
 
+  probe_ssh_batch_auth_target() {
+    REPLY='ssh-auth-required'
+    return 0
+  }
+
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
   assert_contains 'started vm auth failure reports ssh connectivity' "$output" 'SSH connectivity is working.'
   assert_contains 'started vm auth failure reports authentication state' "$output" 'Passwordless SSH authentication could not be confirmed yet.'
   assert_contains 'started vm auth failure offers automatic ssh setup' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
-  assert_contains 'started vm auth failure can still show manual ssh after declining setup' "$output" ' > Manual SSH Setup'
+  assert_contains 'started vm auth failure decline reports setup is blocked' "$output" 'Setup cannot continue until noninteractive SSH authentication works.'
+  assert_not_contains 'started vm auth failure does not immediately show manual setup after declining setup' "$output" ' > Manual SSH Setup'
   assert_not_contains 'started vm auth failure does not report boot timeout' "$output" 'VM was started but did not become SSH-ready before the timeout.'
 }
 
@@ -2498,10 +2626,12 @@ test_ensure_vm_connectivity_recovers_vm_ip_after_startup
 test_wait_for_vm_network_succeeds_within_network_specific_budget
 test_ensure_vm_connectivity_treats_batch_auth_success_as_ready
 test_classify_vm_ssh_connectivity_promotes_auth_required_when_batch_auth_succeeds
+test_batch_auth_probe_uses_configured_target_without_disabling_user_ssh_config
 test_copy_ssh_key_to_vm_treats_all_keys_skipped_as_success_when_auth_works
 test_copy_ssh_key_to_vm_keeps_failure_when_all_keys_skipped_but_auth_fails
 test_ensure_vm_connectivity_does_not_repeat_boot_wait_after_failed_startup_readiness
 test_started_vm_polls_until_ssh_ready_without_manual_setup
+test_started_vm_cold_boot_uses_definitive_batch_auth_before_prompting
 test_started_vm_ssh_timeout_uses_recovery_not_manual_ssh_setup
 test_started_vm_auth_required_enters_ssh_configuration_flow
 test_ensure_vm_connectivity_classifies_network_stage_failure_once
