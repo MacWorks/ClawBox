@@ -784,6 +784,7 @@ LLAMA_BASE_URL="http://127.0.0.1:11434/v1"
 MODEL_PATH="/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 OPENCLAW_PROVIDER_NAME="clawbox"
 OPENCLAW_DEFAULT_MODEL="local"
+OPENCLAW_CONFIG_PATH="$remote_runtime/openclaw.json"
 EOF_ENV
   export CLAWBOX_FAKE_REMOTE_ROOT="$remote_root"
   export CLAWBOX_FAKE_REMOTE_HOME="$remote_home"
@@ -791,9 +792,67 @@ EOF_ENV
   export CLAWBOX_HOST_REPO_ROOT="$ROOT_DIR"
   export CLAWBOX_FAKE_SSH_LOG="$log_file"
   mkdir -p "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-a" \
-    "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-b"
+    "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-b" \
+    "$remote_home/.openclaw" \
+    "$remote_runtime"
   printf 'keep-a\n' > "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-a/sentinel.txt"
   printf 'keep-b\n' > "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-b/sentinel.txt"
+  cat > "$remote_home/.openclaw/openclaw.json" <<'EOF_ACTIVE_OPENCLAW'
+{
+  "agents": {
+    "defaults": {
+      "model": {"primary": "clawbox/local"},
+      "compaction": {
+        "reserveTokens": 8192,
+        "reserveTokensFloor": 8192
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "clawbox": {
+        "models": [
+          {
+            "id": "local",
+            "name": "local",
+            "api": "openai-completions",
+            "contextWindow": 65536,
+            "maxTokens": 8192
+          }
+        ]
+      }
+    }
+  }
+}
+EOF_ACTIVE_OPENCLAW
+  cat > "$remote_runtime/openclaw.json" <<'EOF_STAGED_OPENCLAW'
+{
+  "agents": {
+    "defaults": {
+      "model": {"primary": "clawbox/local"},
+      "compaction": {
+        "reserveTokens": 2048,
+        "reserveTokensFloor": 2048
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "clawbox": {
+        "models": [
+          {
+            "id": "local",
+            "name": "local",
+            "api": "openai-completions",
+            "contextWindow": 32768,
+            "maxTokens": 2048
+          }
+        ]
+      }
+    }
+  }
+}
+EOF_STAGED_OPENCLAW
   write_qualify_mock_curl "/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
   write_mock_command scp '#!/bin/bash
 set -euo pipefail
@@ -827,6 +886,8 @@ shift
 command="$*"
 printf "%s\n" "$command" >> "$CLAWBOX_FAKE_SSH_LOG"
 if [ "$command" = "echo ok" ]; then exit 0; fi
+if [[ "$command" == *"jq -cer --arg provider"* ]]; then HOME="$CLAWBOX_FAKE_REMOTE_HOME" bash -c "$command"; exit $?; fi
+if [[ "$command" == *"agents.defaults.compaction.reserveTokens"* ]]; then HOME="$CLAWBOX_FAKE_REMOTE_HOME" bash -c "$command"; exit $?; fi
 if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
 if [[ "$command" == rm\ -f* ]]; then exit 0; fi
 if [[ "$command" == *"tar -C"* ]]; then
@@ -851,7 +912,11 @@ if [[ "$command" == *"runner.sh"* ]]; then
   [[ "$command" == *"CLAWBOX_QUALIFY_PROFILE_ID=full"* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_SUITE_CHECKSUM="* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_CLAWBOX_COMMIT="* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_OPENCLAW_CONTEXT_WINDOW=65536"* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_OPENCLAW_MAX_TOKENS=8192"* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_RESERVE_TOKENS=8192"* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_RESERVE_TOKENS_FLOOR=8192"* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_PROMPT_BUDGET_BEFORE_RESERVE=57344"* ]]
   printf "CLAWBOX_PROGRESS\t1\t10\t01-tool-reliability\titeration 1\n" >&2
   printf "remote diagnostic line\n" >&2
   printf "CLAWBOX_PROGRESS\t10\t10\t01-tool-reliability\titeration 10\n" >&2
@@ -905,6 +970,10 @@ PY
   assert_contains 'qualify self-heal passes default full profile to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_PROFILE_ID=full'
   assert_contains 'qualify self-heal passes suite checksum to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_SUITE_CHECKSUM='
   assert_contains 'qualify self-heal passes ClawBox commit to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_CLAWBOX_COMMIT='
+  assert_contains 'qualify self-heal passes active OpenClaw context window to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_OPENCLAW_CONTEXT_WINDOW=65536'
+  assert_contains 'qualify self-heal passes active OpenClaw reserve to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_RESERVE_TOKENS=8192'
+  assert_contains 'qualify self-heal passes active OpenClaw reserve floor to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_RESERVE_TOKENS_FLOOR=8192'
+  assert_contains 'qualify self-heal passes derived prompt budget to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_PROMPT_BUDGET_BEFORE_RESERVE=57344'
   assert_contains 'qualify self-heal checks runtime evidence before publishing' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Checking runtime context evidence'
   assert_contains 'qualify missing runtime endpoint evidence remains non-blocking' "$(cat "$log_file")" 'RUNNER'
   assert_contains 'qualify self-heal progress stays on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Publishing qualification suite to VM'

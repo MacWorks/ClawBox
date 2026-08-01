@@ -374,23 +374,7 @@ status_openclaw_model_numeric_field() {
   local default_model="$2"
   local field="$3"
 
-  python3 - "$models" "$default_model" "$field" <<'PY'
-import json, sys
-try:
-    models = json.loads(sys.argv[1])
-except Exception:
-    raise SystemExit(1)
-default_model = sys.argv[2] or "local"
-field = sys.argv[3]
-for model in models if isinstance(models, list) else []:
-    if isinstance(model, dict) and model.get("id") == default_model:
-        value = model.get(field)
-        if isinstance(value, bool) or value is None:
-            raise SystemExit(1)
-        print(int(value))
-        raise SystemExit(0)
-raise SystemExit(1)
-PY
+  openclaw_model_numeric_field_from_models_json "$models" "$default_model" "$field"
 }
 
 llama_process_running() {
@@ -1037,8 +1021,8 @@ out "OpenClaw maxTokens: ${STATUS_OPENCLAW_MAX_TOKENS:-${OPENCLAW_MAX_TOKENS:-un
 out "Compaction reserveTokens: ${STATUS_RESERVE_TOKENS:-unknown}"
 out "Compaction reserveTokensFloor: ${STATUS_RESERVE_TOKENS_FLOOR:-unknown}"
 
-if clawbox_positive_integer "${STATUS_OPENCLAW_CONTEXT:-}" && clawbox_positive_integer "${STATUS_RESERVE_TOKENS:-}"; then
-  STATUS_PROMPT_BUDGET=$((STATUS_OPENCLAW_CONTEXT - STATUS_RESERVE_TOKENS))
+STATUS_PROMPT_BUDGET="$(openclaw_prompt_budget_before_reserve "${STATUS_OPENCLAW_CONTEXT:-}" "${STATUS_RESERVE_TOKENS:-}" 2>/dev/null || true)"
+if [ -n "$STATUS_PROMPT_BUDGET" ]; then
   out "Prompt budget before reserve: $STATUS_PROMPT_BUDGET"
 else
   out "Prompt budget before reserve: unknown"

@@ -516,3 +516,37 @@ if not isinstance(items, list):
 print(len(items))
 PY
 }
+
+openclaw_model_numeric_field_from_models_json() {
+  local models="$1"
+  local default_model="${2:-local}"
+  local field="$3"
+
+  python3 - "$models" "$default_model" "$field" <<'PY'
+import json, sys
+try:
+    models = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+default_model = sys.argv[2] or "local"
+field = sys.argv[3]
+for model in models if isinstance(models, list) else []:
+    if isinstance(model, dict) and model.get("id") == default_model:
+        value = model.get(field)
+        if isinstance(value, bool) or value is None:
+            raise SystemExit(1)
+        print(int(value))
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+openclaw_prompt_budget_before_reserve() {
+  local context_window="$1"
+  local reserve_tokens="$2"
+
+  clawbox_positive_integer "$context_window" || return 1
+  clawbox_positive_integer "$reserve_tokens" || return 1
+  [ "$context_window" -gt "$reserve_tokens" ] || return 1
+  printf '%s\n' $((context_window - reserve_tokens))
+}

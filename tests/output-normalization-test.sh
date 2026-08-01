@@ -3003,6 +3003,23 @@ test_runtime_service_existing_menu_wording() {
 test_host_llama_restart_uses_install_mode_without_hidden_health_wait() {
   local restart_output reuse_output failure_output
 
+  reuse_existing_output="$({
+    load_setup_functions
+    LLAMA_USE_EXISTING_INSTANCE=true
+    LLAMA_EXTERNAL=false
+    HOST_IP='192.168.64.1'
+    LLAMA_HOST='0.0.0.0'
+    LLAMA_PORT='11434'
+    LLAMA_BASE_URL='http://192.168.64.1:11434/v1'
+    setup_host_inference_service_phase
+  } 2>&1)"
+  assert_contains 'managed existing reuse reports generic reuse line' "$reuse_existing_output" 'Using existing llama-server.'
+  assert_contains 'managed existing reuse reports local endpoint separately' "$reuse_existing_output" 'Local endpoint: http://127.0.0.1:11434/v1'
+  assert_contains 'managed existing reuse reports configured VM endpoint separately' "$reuse_existing_output" 'Configured VM endpoint: http://192.168.64.1:11434/v1'
+  assert_not_contains 'managed existing reuse avoids misleading vm endpoint in reuse line' "$reuse_existing_output" 'Using existing llama-server at http://192.168.64.1:11434/v1'
+  assert_not_contains 'managed existing reuse local endpoint line has no leading whitespace' "$reuse_existing_output" $'\n  Local endpoint:'
+  assert_not_contains 'managed existing reuse configured endpoint line has no leading whitespace' "$reuse_existing_output" $'\n  Configured VM endpoint:'
+
   restart_output="$({
     load_setup_functions
     LLAMA_USE_EXISTING_INSTANCE=false

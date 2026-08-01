@@ -137,8 +137,17 @@ setup_existing_embeddings_service_phase() {
     case "$choice" in
       1)
         if embeddings_llama_verify_configured_endpoint; then
+          local local_endpoint=''
+          local configured_endpoint=''
+
           EMBEDDINGS_ENABLED=true
           out 'Using existing embeddings llama-server.'
+          local_endpoint="$(embeddings_llama_local_base_url)"
+          configured_endpoint="$(embeddings_llama_configured_base_url)"
+          if [ "$local_endpoint" != "$configured_endpoint" ]; then
+            out "Local endpoint: $local_endpoint"
+            out "Configured VM endpoint: $configured_endpoint"
+          fi
           return 0
         fi
         warn 'Existing embeddings llama-server is not healthy at the configured endpoint.'

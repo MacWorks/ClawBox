@@ -13,7 +13,20 @@ setup_host_inference_service_phase() {
 
   section "Host Inference Service"
   if [ "$LLAMA_USE_EXISTING_INSTANCE" = true ]; then
-    out "Using existing llama-server at $LLAMA_BASE_URL"
+    local local_base_url=''
+    local configured_base_url=''
+
+    configured_base_url="${LLAMA_BASE_URL:-http://${HOST_IP:-127.0.0.1}:${LLAMA_PORT:-11434}/v1}"
+    if [ "${LLAMA_EXTERNAL:-false}" = true ]; then
+      out "Using existing llama-server at $configured_base_url"
+    else
+      out 'Using existing llama-server.'
+      local_base_url="http://$(llama_local_readiness_host "${LLAMA_HOST:-0.0.0.0}"):${LLAMA_PORT:-11434}/v1"
+      if [ "$local_base_url" != "$configured_base_url" ]; then
+        out "Local endpoint: $local_base_url"
+        out "Configured VM endpoint: $configured_base_url"
+      fi
+    fi
   else
     if user_has_sudo; then
       warn 'Administrator privileges may be required'

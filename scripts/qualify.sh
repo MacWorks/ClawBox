@@ -171,31 +171,32 @@ qualify_llama_endpoint_json() {
 
 qualify_openclaw_provider_models_json() {
   local provider="${OPENCLAW_PROVIDER_NAME:-clawbox}"
-  ssh "$VM_HOST" "jq -cer --arg provider $(printf '%q' "$provider") '.models.providers[\$provider].models // []' ~/.openclaw/openclaw.json" 2>/dev/null
+
+  ssh_check "jq -cer --arg provider $(printf '%q' "$provider") '.models.providers[\$provider].models // []' ~/.openclaw/openclaw.json" 2>/dev/null
 }
 
 qualify_openclaw_model_numeric_field() {
   local models="$1"
-  local default_model="${OPENCLAW_DEFAULT_MODEL:-local}"
-  local field="$2"
+  local default_model="${2:-${OPENCLAW_DEFAULT_MODEL:-local}}"
+  local field="$3"
 
-  python3 - "$models" "$default_model" "$field" <<'PY'
-import json, sys
-try:
-    models = json.loads(sys.argv[1])
-except Exception:
-    raise SystemExit(1)
-default_model = sys.argv[2] or "local"
-field = sys.argv[3]
-for model in models if isinstance(models, list) else []:
-    if isinstance(model, dict) and model.get("id") == default_model:
-        value = model.get(field)
-        if isinstance(value, bool) or value is None:
-            raise SystemExit(1)
-        print(int(value))
-        raise SystemExit(0)
-raise SystemExit(1)
-PY
+  openclaw_model_numeric_field_from_models_json "$models" "$default_model" "$field"
+}
+
+qualify_openclaw_config_scalar() {
+  local key="$1"
+
+  case "$key" in
+    agents.defaults.compaction.reserveTokens)
+      ssh_check "jq -er '.agents.defaults.compaction.reserveTokens // empty' ~/.openclaw/openclaw.json" 2>/dev/null
+      ;;
+    agents.defaults.compaction.reserveTokensFloor)
+      ssh_check "jq -er '.agents.defaults.compaction.reserveTokensFloor // empty' ~/.openclaw/openclaw.json" 2>/dev/null
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 qualify_collect_runtime_contract_env() {
@@ -229,11 +230,9 @@ qualify_collect_runtime_contract_env() {
     openclaw_context="$(qualify_openclaw_model_numeric_field "$openclaw_models" "${OPENCLAW_DEFAULT_MODEL:-local}" contextWindow 2>/dev/null || true)"
     openclaw_max_tokens="$(qualify_openclaw_model_numeric_field "$openclaw_models" "${OPENCLAW_DEFAULT_MODEL:-local}" maxTokens 2>/dev/null || printf '%s' "$openclaw_max_tokens")"
   fi
-  reserve_tokens="$(ssh "$VM_HOST" "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config get agents.defaults.compaction.reserveTokens" 2>/dev/null || true)"
-  reserve_floor="$(ssh "$VM_HOST" "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config get agents.defaults.compaction.reserveTokensFloor" 2>/dev/null || true)"
-  if clawbox_positive_integer "${openclaw_context:-}" && clawbox_positive_integer "${reserve_tokens:-}"; then
-    prompt_budget=$((openclaw_context - reserve_tokens))
-  fi
+  reserve_tokens="$(qualify_openclaw_config_scalar agents.defaults.compaction.reserveTokens 2>/dev/null || true)"
+  reserve_floor="$(qualify_openclaw_config_scalar agents.defaults.compaction.reserveTokensFloor 2>/dev/null || true)"
+  prompt_budget="$(openclaw_prompt_budget_before_reserve "${openclaw_context:-}" "${reserve_tokens:-}" 2>/dev/null || true)"
 
   printf 'CLAWBOX_QUALIFY_NATIVE_CONTEXT=%s ' "$(qualify_shell_quote "$native_context")"
   printf 'CLAWBOX_QUALIFY_CONFIGURED_CONTEXT=%s ' "$(qualify_shell_quote "$configured_context")"
@@ -284,8 +283,8 @@ qualify_runtime_contract_failure_message() {
     openclaw_context="$(qualify_openclaw_model_numeric_field "$openclaw_models" "${OPENCLAW_DEFAULT_MODEL:-local}" contextWindow 2>/dev/null || true)"
     openclaw_max_tokens="$(qualify_openclaw_model_numeric_field "$openclaw_models" "${OPENCLAW_DEFAULT_MODEL:-local}" maxTokens 2>/dev/null || printf '%s' "$openclaw_max_tokens")"
   fi
-  reserve_tokens="$(ssh "$VM_HOST" "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config get agents.defaults.compaction.reserveTokens" 2>/dev/null || true)"
-  reserve_floor="$(ssh "$VM_HOST" "OPENCLAW_CONFIG_PATH=\$HOME/.openclaw/openclaw.json openclaw config get agents.defaults.compaction.reserveTokensFloor" 2>/dev/null || true)"
+  reserve_tokens="$(qualify_openclaw_config_scalar agents.defaults.compaction.reserveTokens 2>/dev/null || true)"
+  reserve_floor="$(qualify_openclaw_config_scalar agents.defaults.compaction.reserveTokensFloor 2>/dev/null || true)"
 
   if clawbox_positive_integer "${configured_context:-}" && clawbox_positive_integer "${runtime_context:-}" \
     && [ "$configured_context" -ne "$runtime_context" ]; then

@@ -430,6 +430,8 @@ test_setup_rerun_reuses_embeddings_when_loopback_healthy_and_vm_interface_absent
   } 2>&1)"
   assert_contains 'existing embeddings loopback reuse reports local health' "$output" 'Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet.'
   assert_contains 'existing embeddings loopback reuse accepts existing service' "$output" 'Using existing embeddings llama-server.'
+  assert_contains 'existing embeddings loopback reuse reports local endpoint' "$output" 'Local endpoint: http://127.0.0.1:11435/v1'
+  assert_contains 'existing embeddings loopback reuse reports configured VM endpoint' "$output" 'Configured VM endpoint: http://192.168.64.1:11435/v1'
   assert_contains 'existing embeddings loopback reuse preserves enabled config' "$output" "FINAL:true:$embed_model:11435:http://192.168.64.1:11435/v1"
   assert_not_contains 'existing embeddings loopback local readiness line has no leading whitespace' "$output" $'\n  Local readiness:'
   assert_not_contains 'existing embeddings loopback vm-facing line has no leading whitespace' "$output" $'\n  VM-facing endpoint:'
