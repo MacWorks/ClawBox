@@ -24,6 +24,19 @@ llama_escape_env_value() {
   printf '%s' "$value"
 }
 
+llama_local_readiness_host() {
+  local bind_host="${1:-${LLAMA_HOST:-}}"
+
+  case "$bind_host" in
+    ''|0.0.0.0|::|\[::\])
+      printf '127.0.0.1\n'
+      ;;
+    *)
+      printf '%s\n' "$bind_host"
+      ;;
+  esac
+}
+
 write_llama_runtime_env() {
   local output_path="$1"
   local key
@@ -31,7 +44,7 @@ write_llama_runtime_env() {
 
   : > "$output_path"
 
-  for key in LLAMA_BIN MODEL_PATH LLAMA_HOST LLAMA_PORT LLAMA_CTX LLAMA_EXTRA_ARGS; do
+  for key in LLAMA_BIN MODEL_PATH LLAMA_HOST LLAMA_PORT LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_MLOCK LLAMA_EXTRA_ARGS; do
     value="${!key:-}"
     printf '%s="%s"\n' "$key" "$(llama_escape_env_value "$value")" >> "$output_path"
   done
@@ -271,6 +284,7 @@ setup_llama_service_for_mode() {
     llama_require_value LLAMA_HOST || return 1
     llama_require_value LLAMA_PORT || return 1
     llama_require_value LLAMA_CTX || return 1
+    llama_validate_managed_runtime_settings || return 1
 
     if [ ! -x "$LLAMA_BIN" ]; then
       llama_fail "llama binary not found or not executable: $LLAMA_BIN"
@@ -455,21 +469,59 @@ embeddings_llama_endpoint_responding() {
   curl -sS --fail --connect-timeout 1 --max-time 2 "$models_url" >/dev/null 2>&1
 }
 
+embeddings_llama_host_address_available() {
+  local host="$1"
+
+  [ -n "$host" ] || return 1
+  case "$host" in
+    127.*|localhost|::1|0.0.0.0|::)
+      return 0
+      ;;
+  esac
+
+  if command -v ifconfig >/dev/null 2>&1 \
+    && ifconfig 2>/dev/null | grep -E "(^|[^0-9.])${host//./\\.}([^0-9.]|$)" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
+}
+
+embeddings_llama_local_base_url() {
+  local host=''
+
+  host="$(llama_local_readiness_host "${EMBEDDINGS_LLAMA_HOST:-}")"
+  printf 'http://%s:%s/v1\n' "$host" "${EMBEDDINGS_LLAMA_PORT:-11435}"
+}
+
+embeddings_llama_local_endpoint_responding() {
+  embeddings_llama_endpoint_responding "$(embeddings_llama_local_base_url)"
+}
+
 embeddings_llama_verify_configured_endpoint() {
   local configured_base=''
-  local loopback_base=''
+  local local_base=''
 
   configured_base="$(embeddings_llama_configured_base_url)"
   if embeddings_llama_endpoint_responding "$configured_base"; then
     return 0
   fi
 
-  loopback_base="$(embeddings_llama_loopback_base_url)"
-  if [ "$configured_base" != "$loopback_base" ] \
-    && embeddings_llama_endpoint_responding "$loopback_base"
+  local_base="$(embeddings_llama_local_base_url)"
+  if [ "$configured_base" != "$local_base" ] \
+    && embeddings_llama_endpoint_responding "$local_base"
   then
-    llama_fail "Embeddings llama-server responds on loopback but not at the configured VM-facing endpoint: $configured_base"
-    out 'Restart/update the embeddings runtime so it binds to the configured host interface, then rerun setup.'
+    if [ "${EMBEDDINGS_LLAMA_HOST:-0.0.0.0}" = "0.0.0.0" ] \
+      && ! embeddings_llama_host_address_available "${HOST_IP:-}"; then
+      warn "Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
+      out "Local readiness: $local_base"
+      out "VM-facing endpoint: $configured_base"
+      out 'The UTM/VM host network interface may be offline because the selected VM is stopped.'
+      return 0
+    fi
+
+    llama_fail "Embeddings llama-server responds locally but not at the configured VM-facing endpoint: $configured_base"
+    out 'Restart/update embeddings setup only if the service is not bound to the configured host interface.'
     return 1
   fi
 
@@ -502,7 +554,15 @@ setup_embeddings_llama_service_for_mode() {
   fi
   local attempt=1
   while [ "$attempt" -le 30 ]; do
-    if embeddings_llama_verify_configured_endpoint >/dev/null 2>&1; then return 0; fi
+    if embeddings_llama_local_endpoint_responding; then
+      if ! embeddings_llama_verify_configured_endpoint >/dev/null 2>&1; then
+        warn "Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
+        out "Local readiness: $(embeddings_llama_local_base_url)"
+        out "VM-facing endpoint: $(embeddings_llama_configured_base_url)"
+        out 'This usually means the UTM VM interface is not available yet; setup will validate VM reachability separately.'
+      fi
+      return 0
+    fi
     attempt=$((attempt + 1)); sleep 1
   done
   embeddings_llama_verify_configured_endpoint

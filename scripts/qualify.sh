@@ -7,6 +7,7 @@ ENV_FILE="${CLAWBOX_ENV_FILE:-$BASE_DIR/.env}"
 source "$BASE_DIR/lib/output.sh"
 source "$BASE_DIR/lib/log.sh"
 source "$BASE_DIR/lib/ssh.sh"
+source "$BASE_DIR/lib/context-runtime.sh"
 source "$BASE_DIR/lib/qualify/qualify.sh"
 source "$BASE_DIR/lib/qualify/history.sh"
 
@@ -154,6 +155,191 @@ qualify_cleanup_active_operation() {
   if [ "$QUALIFY_JSON" != true ] && [ -n "$message" ]; then
     status_end "$message ✗" 'error'
   fi
+}
+
+qualify_llama_endpoint_json() {
+  local endpoint="$1"
+  local base="${LLAMA_BASE_URL:-}"
+
+  [ -n "$base" ] || return 1
+  base="${base%/}"
+  case "$base" in
+    */v1) base="${base%/v1}" ;;
+  esac
+  curl -s --connect-timeout 1 --max-time 2 "$base/$endpoint"
+}
+
+qualify_openclaw_provider_models_json() {
+  local provider="${OPENCLAW_PROVIDER_NAME:-clawbox}"
+
+  ssh_check "jq -cer --arg provider $(printf '%q' "$provider") '.models.providers[\$provider].models // []' ~/.openclaw/openclaw.json" 2>/dev/null
+}
+
+qualify_openclaw_model_numeric_field() {
+  local models="$1"
+  local default_model="${2:-${OPENCLAW_DEFAULT_MODEL:-local}}"
+  local field="$3"
+
+  openclaw_model_numeric_field_from_models_json "$models" "$default_model" "$field"
+}
+
+qualify_openclaw_config_scalar() {
+  local key="$1"
+
+  case "$key" in
+    agents.defaults.compaction.reserveTokens)
+      ssh_check "jq -er '.agents.defaults.compaction.reserveTokens // empty' ~/.openclaw/openclaw.json" 2>/dev/null
+      ;;
+    agents.defaults.compaction.reserveTokensFloor)
+      ssh_check "jq -er '.agents.defaults.compaction.reserveTokensFloor // empty' ~/.openclaw/openclaw.json" 2>/dev/null
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+qualify_collect_runtime_contract_env() {
+  local native_context=''
+  local configured_context="${LLAMA_CTX:-}"
+  local props_json=''
+  local slots_json=''
+  local runtime_context=''
+  local total_slots="${LLAMA_PARALLEL:-}"
+  local slot_context=''
+  local openclaw_models=''
+  local openclaw_context=''
+  local openclaw_max_tokens="${OPENCLAW_MAX_TOKENS:-8192}"
+  local reserve_tokens=''
+  local reserve_floor=''
+  local prompt_budget=''
+
+  native_context="$(gguf_native_context_from_file "${MODEL_PATH:-}" 2>/dev/null || true)"
+  props_json="$(qualify_llama_endpoint_json props 2>/dev/null || true)"
+  slots_json="$(qualify_llama_endpoint_json slots 2>/dev/null || true)"
+  if [ -n "$props_json" ]; then
+    runtime_context="$(llama_runtime_context_from_props_json "$props_json" 2>/dev/null || true)"
+    total_slots="$(llama_runtime_total_slots_from_props_json "$props_json" 2>/dev/null || printf '%s' "$total_slots")"
+  fi
+  if [ -n "$slots_json" ]; then
+    slot_context="$(llama_runtime_slot_context_from_slots_json "$slots_json" 2>/dev/null || true)"
+  fi
+  [ -n "$runtime_context" ] || runtime_context="$slot_context"
+
+  if openclaw_models="$(qualify_openclaw_provider_models_json 2>/dev/null)"; then
+    openclaw_context="$(qualify_openclaw_model_numeric_field "$openclaw_models" "${OPENCLAW_DEFAULT_MODEL:-local}" contextWindow 2>/dev/null || true)"
+    openclaw_max_tokens="$(qualify_openclaw_model_numeric_field "$openclaw_models" "${OPENCLAW_DEFAULT_MODEL:-local}" maxTokens 2>/dev/null || printf '%s' "$openclaw_max_tokens")"
+  fi
+  reserve_tokens="$(qualify_openclaw_config_scalar agents.defaults.compaction.reserveTokens 2>/dev/null || true)"
+  reserve_floor="$(qualify_openclaw_config_scalar agents.defaults.compaction.reserveTokensFloor 2>/dev/null || true)"
+  prompt_budget="$(openclaw_prompt_budget_before_reserve "${openclaw_context:-}" "${reserve_tokens:-}" 2>/dev/null || true)"
+
+  printf 'CLAWBOX_QUALIFY_NATIVE_CONTEXT=%s ' "$(qualify_shell_quote "$native_context")"
+  printf 'CLAWBOX_QUALIFY_CONFIGURED_CONTEXT=%s ' "$(qualify_shell_quote "$configured_context")"
+  printf 'CLAWBOX_QUALIFY_RUNTIME_CONTEXT=%s ' "$(qualify_shell_quote "$runtime_context")"
+  printf 'CLAWBOX_QUALIFY_TOTAL_SLOTS=%s ' "$(qualify_shell_quote "$total_slots")"
+  printf 'CLAWBOX_QUALIFY_SLOT_CONTEXT=%s ' "$(qualify_shell_quote "$slot_context")"
+  printf 'CLAWBOX_QUALIFY_OPENCLAW_CONTEXT_WINDOW=%s ' "$(qualify_shell_quote "$openclaw_context")"
+  printf 'CLAWBOX_QUALIFY_OPENCLAW_MAX_TOKENS=%s ' "$(qualify_shell_quote "$openclaw_max_tokens")"
+  printf 'CLAWBOX_QUALIFY_RESERVE_TOKENS=%s ' "$(qualify_shell_quote "$reserve_tokens")"
+  printf 'CLAWBOX_QUALIFY_RESERVE_TOKENS_FLOOR=%s ' "$(qualify_shell_quote "$reserve_floor")"
+  printf 'CLAWBOX_QUALIFY_PROMPT_BUDGET_BEFORE_RESERVE=%s' "$(qualify_shell_quote "$prompt_budget")"
+}
+
+qualify_runtime_contract_failure_message() {
+  local configured_context="${LLAMA_CTX:-}"
+  local configured_parallel="${LLAMA_PARALLEL:-}"
+  local props_json=''
+  local slots_json=''
+  local runtime_context=''
+  local total_slots=''
+  local slot_count=''
+  local slot_context=''
+  local slot_context_valid=true
+  local openclaw_models=''
+  local openclaw_context=''
+  local openclaw_max_tokens="${OPENCLAW_MAX_TOKENS:-8192}"
+  local reserve_tokens=''
+  local reserve_floor=''
+  local failures=()
+
+  props_json="$(qualify_llama_endpoint_json props 2>/dev/null || true)"
+  slots_json="$(qualify_llama_endpoint_json slots 2>/dev/null || true)"
+
+  if [ -n "$props_json" ]; then
+    runtime_context="$(llama_runtime_context_from_props_json "$props_json" 2>/dev/null || true)"
+    total_slots="$(llama_runtime_total_slots_from_props_json "$props_json" 2>/dev/null || true)"
+  fi
+
+  if [ -n "$slots_json" ]; then
+    slot_count="$(llama_runtime_slot_count_from_slots_json "$slots_json" 2>/dev/null || true)"
+    if ! slot_context="$(llama_runtime_slot_context_from_slots_json "$slots_json" 2>/dev/null)"; then
+      slot_context=''
+      slot_context_valid=false
+    fi
+  fi
+
+  if openclaw_models="$(qualify_openclaw_provider_models_json 2>/dev/null)"; then
+    openclaw_context="$(qualify_openclaw_model_numeric_field "$openclaw_models" "${OPENCLAW_DEFAULT_MODEL:-local}" contextWindow 2>/dev/null || true)"
+    openclaw_max_tokens="$(qualify_openclaw_model_numeric_field "$openclaw_models" "${OPENCLAW_DEFAULT_MODEL:-local}" maxTokens 2>/dev/null || printf '%s' "$openclaw_max_tokens")"
+  fi
+  reserve_tokens="$(qualify_openclaw_config_scalar agents.defaults.compaction.reserveTokens 2>/dev/null || true)"
+  reserve_floor="$(qualify_openclaw_config_scalar agents.defaults.compaction.reserveTokensFloor 2>/dev/null || true)"
+
+  if clawbox_positive_integer "${configured_context:-}" && clawbox_positive_integer "${runtime_context:-}" \
+    && [ "$configured_context" -ne "$runtime_context" ]; then
+    failures+=("llama-server runtime context ($runtime_context) differs from configured LLAMA_CTX ($configured_context)")
+  fi
+  if clawbox_positive_integer "${runtime_context:-}" && clawbox_positive_integer "${openclaw_context:-}" \
+    && [ "$openclaw_context" -ne "$runtime_context" ]; then
+    failures+=("OpenClaw contextWindow ($openclaw_context) differs from effective llama-server runtime context ($runtime_context)")
+  fi
+  if clawbox_positive_integer "${configured_parallel:-}" && clawbox_positive_integer "${total_slots:-}" \
+    && [ "$configured_parallel" -ne "$total_slots" ]; then
+    failures+=("llama-server total_slots ($total_slots) differs from configured LLAMA_PARALLEL ($configured_parallel)")
+  fi
+  if clawbox_positive_integer "${total_slots:-}" && clawbox_positive_integer "${slot_count:-}" \
+    && [ "$total_slots" -ne "$slot_count" ]; then
+    failures+=("llama-server total_slots ($total_slots) differs from returned /slots count ($slot_count)")
+  fi
+  if [ -n "$slots_json" ] && [ "$slot_context_valid" != true ]; then
+    failures+=("llama-server returned slot contexts that are missing or inconsistent")
+  elif clawbox_positive_integer "${runtime_context:-}" && clawbox_positive_integer "${slot_context:-}" \
+    && [ "$runtime_context" -ne "$slot_context" ]; then
+    failures+=("llama-server /slots context ($slot_context) differs from /props runtime context ($runtime_context)")
+  elif clawbox_positive_integer "${configured_context:-}" && clawbox_positive_integer "${slot_context:-}" \
+    && [ -z "$runtime_context" ] && [ "$configured_context" -ne "$slot_context" ]; then
+    failures+=("llama-server /slots context ($slot_context) differs from configured LLAMA_CTX ($configured_context)")
+  fi
+  if clawbox_positive_integer "${openclaw_context:-}" && clawbox_positive_integer "${openclaw_max_tokens:-}" \
+    && [ "$openclaw_max_tokens" -ge "$openclaw_context" ]; then
+    failures+=("OpenClaw maxTokens ($openclaw_max_tokens) is not less than contextWindow ($openclaw_context)")
+  fi
+  if clawbox_positive_integer "${openclaw_context:-}" && clawbox_positive_integer "${reserve_tokens:-}" \
+    && [ "$reserve_tokens" -ge "$openclaw_context" ]; then
+    failures+=("OpenClaw reserveTokens ($reserve_tokens) is not less than contextWindow ($openclaw_context)")
+  fi
+  if clawbox_positive_integer "${openclaw_context:-}" && clawbox_positive_integer "${reserve_floor:-}" \
+    && [ "$reserve_floor" -ge "$openclaw_context" ]; then
+    failures+=("OpenClaw reserveTokensFloor ($reserve_floor) is not less than contextWindow ($openclaw_context)")
+  fi
+
+  if [ "${#failures[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  printf 'Runtime/OpenClaw evidence is contradictory:\n'
+  printf -- '- %s\n' "${failures[@]}"
+  return 1
+}
+
+validate_qualification_runtime_contract() {
+  local message=''
+  if message="$(qualify_runtime_contract_failure_message)"; then
+    return 0
+  fi
+  printf '%s\n' "$message" >&2
+  return 1
 }
 
 install_status_exit_trap
@@ -770,6 +956,12 @@ Running:    $model_running
 Resolve the model inconsistency before running qualification."
   fi
 
+  if ! qualify_run_operation 'Checking runtime context evidence' validate_qualification_runtime_contract; then
+    QUALIFY_ERROR_CODE='RUNTIME_CONTEXT_MISMATCH'
+    qualify_fail 2 "Runtime/OpenClaw context evidence is inconsistent.
+Resolve the runtime configuration mismatch before running qualification."
+  fi
+
   export CLAWBOX_QUALIFY_MODEL_REF="$model_ref"
   export CLAWBOX_QUALIFY_MODEL_ALIAS="$model_ref"
   export CLAWBOX_QUALIFY_MODEL_CONFIGURED="$model_configured"
@@ -788,7 +980,7 @@ Resolve the model inconsistency before running qualification."
   remote_output="$(mktemp)" || qualify_fail 2 'Unable to create qualification output file.'
   remote_stderr="$(mktemp)" || qualify_fail 2 'Unable to create qualification stderr file.'
   remote_command="$(qualify_remote_runner_command "$QUALIFY_SCENARIO" true "$QUALIFY_PROFILE")"
-  remote_env="CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_ALIAS=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_CONFIGURED=$(qualify_shell_quote "$model_configured") CLAWBOX_QUALIFY_MODEL_RUNNING=$(qualify_shell_quote "$model_running") CLAWBOX_QUALIFY_MODEL_WARNING='' CLAWBOX_QUALIFY_PROFILE_ID=$(qualify_shell_quote "$QUALIFY_PROFILE") CLAWBOX_QUALIFY_PROFILE_NAME=$(qualify_shell_quote "$(qualify_profile_name "$QUALIFY_PROFILE")") CLAWBOX_QUALIFY_SUITE_VERSION=$(qualify_shell_quote "$QUALIFY_SUITE_VERSION") CLAWBOX_QUALIFY_SUITE_CHECKSUM=$(qualify_shell_quote "$suite_checksum") CLAWBOX_QUALIFY_CLAWBOX_COMMIT=$(qualify_shell_quote "$clawbox_commit") CLAWBOX_QUALIFY_CLAWBOX_DIRTY=$(qualify_shell_quote "$clawbox_dirty")"
+  remote_env="CLAWBOX_QUALIFY_MODEL_REF=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_ALIAS=$(qualify_shell_quote "$model_ref") CLAWBOX_QUALIFY_MODEL_CONFIGURED=$(qualify_shell_quote "$model_configured") CLAWBOX_QUALIFY_MODEL_RUNNING=$(qualify_shell_quote "$model_running") CLAWBOX_QUALIFY_MODEL_WARNING='' CLAWBOX_QUALIFY_PROFILE_ID=$(qualify_shell_quote "$QUALIFY_PROFILE") CLAWBOX_QUALIFY_PROFILE_NAME=$(qualify_shell_quote "$(qualify_profile_name "$QUALIFY_PROFILE")") CLAWBOX_QUALIFY_SUITE_VERSION=$(qualify_shell_quote "$QUALIFY_SUITE_VERSION") CLAWBOX_QUALIFY_SUITE_CHECKSUM=$(qualify_shell_quote "$suite_checksum") CLAWBOX_QUALIFY_CLAWBOX_COMMIT=$(qualify_shell_quote "$clawbox_commit") CLAWBOX_QUALIFY_CLAWBOX_DIRTY=$(qualify_shell_quote "$clawbox_dirty") $(qualify_collect_runtime_contract_env)"
   run_label="Running $(qualify_scenario_description "$QUALIFY_SCENARIO" "$QUALIFY_PROFILE")"
   qualify_begin_execution_group
   if qualify_run_remote_progress_operation "$run_label" "$remote_command" "$remote_output" "$remote_stderr" "$remote_env"; then

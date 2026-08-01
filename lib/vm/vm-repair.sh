@@ -360,6 +360,13 @@ wait_for_known_vm_ssh_readiness() {
     if [ "$probe_state" = 'ready' ]; then
       return 0
     fi
+    if [ "$probe_state" = 'ssh-auth-required' ]; then
+      probe_ssh_batch_auth_target "$VM_HOST"
+      probe_state="$REPLY"
+      if [ "$probe_state" = 'ready' ]; then
+        return 0
+      fi
+    fi
   else
     probe_state="$REPLY"
   fi
@@ -1113,6 +1120,25 @@ ensure_vm_connectivity_or_repair() {
       ;;
   esac
 
+  if { [ "$ssh_probe_state" = 'network-timeout' ] || [ "$ssh_probe_state" = 'ssh-timeout' ]; } \
+    && [ "$started_vm_this_run" = true ]; then
+    recovery_status=0
+    offer_vm_startup_readiness_recovery "$vm_state" "$running_confidence" "$ssh_probe_state"
+    recovery_status=$?
+
+    if [ "$recovery_status" -eq 0 ]; then
+      success 'VM SSH is now available.'
+      return 0
+    fi
+
+    if [ "$recovery_status" -eq "$LLAMA_EXIT_GRACEFUL" ]; then
+      return "$LLAMA_EXIT_GRACEFUL"
+    fi
+
+    print_vm_ssh_probe_guidance "$vm_state" "$running_confidence" "$ssh_probe_state"
+    return "$LLAMA_EXIT_GRACEFUL"
+  fi
+
   if [ "$ssh_probe_state" = 'network-timeout' ]; then
     print_vm_ssh_probe_guidance "$vm_state" "$running_confidence" "$ssh_probe_state"
     return "$LLAMA_EXIT_GRACEFUL"
@@ -1226,6 +1252,7 @@ ensure_vm_connectivity_or_repair() {
     return "$LLAMA_EXIT_GRACEFUL"
   fi
 
-  print_manual_ssh_setup_instructions
+  warn 'Setup cannot continue until noninteractive SSH authentication works.'
+  out 'Run ./clawbox setup again after SSH authentication is configured, or choose automatic SSH setup when prompted.'
   return "$LLAMA_EXIT_GRACEFUL"
 }

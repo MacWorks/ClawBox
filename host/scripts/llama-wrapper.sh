@@ -27,6 +27,26 @@ if [ "${CLAWBOX_LLAMA_INSTANCE:-primary}" = 'embeddings' ]; then
   LLAMA_EXTRA_ARGS="${EMBEDDINGS_LLAMA_EXTRA_ARGS:-}"
 fi
 
+clawbox_bool_enabled() {
+  case "${1:-}" in
+    true|TRUE|yes|YES|1|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+managed_arg_conflicts() {
+  local conflicts='' word=''
+  for word in ${LLAMA_EXTRA_ARGS:-}; do
+    case "$word" in
+      --ctx-size|--ctx-size=*|-c|-c[0-9]*|--parallel|--parallel=*|-np|-np[0-9]*|--n-gpu-layers|--n-gpu-layers=*|-ngl|-ngl[0-9]*|--flash-attn|--flash-attn=*|-fa|--mlock)
+        conflicts="${conflicts}${conflicts:+ }$word"
+        ;;
+    esac
+  done
+  [ -z "$conflicts" ] || { echo "LLAMA_EXTRA_ARGS conflicts with ClawBox-managed llama-server settings: $conflicts"; return 0; }
+  return 1
+}
+
 ########################################
 # Prevent Duplicate Instances
 ########################################
@@ -58,10 +78,30 @@ LLAMA_ARGS=(
   -m "$MODEL_PATH"
   --host "$LLAMA_HOST"
   --port "$LLAMA_PORT"
-  --ctx-size "$LLAMA_CTX"
+  --ctx-size "${LLAMA_CTX:-32768}"
+  --parallel "${LLAMA_PARALLEL:-1}"
 )
 
+if [ -n "${LLAMA_GPU_LAYERS:-}" ]; then
+  LLAMA_ARGS+=(--n-gpu-layers "$LLAMA_GPU_LAYERS")
+fi
+
+if [ "${CLAWBOX_LLAMA_INSTANCE:-primary}" != embeddings ]; then
+  if clawbox_bool_enabled "${LLAMA_FLASH_ATTENTION:-false}"; then
+    LLAMA_ARGS+=(--flash-attn on)
+  else
+    LLAMA_ARGS+=(--flash-attn off)
+  fi
+fi
+
+if clawbox_bool_enabled "${LLAMA_MLOCK:-false}"; then
+  LLAMA_ARGS+=(--mlock)
+fi
+
 if [[ "${LLAMA_EXTRA_ARGS:-}" == *[![:space:]]* ]]; then
+  if [ "${CLAWBOX_LLAMA_INSTANCE:-primary}" != embeddings ] && managed_arg_conflicts; then
+    exit 1
+  fi
   LLAMA_EXTRA_ARGS_ARRAY=()
   read -r -a LLAMA_EXTRA_ARGS_ARRAY <<< "$LLAMA_EXTRA_ARGS"
   exec "$LLAMA_BIN" "${LLAMA_ARGS[@]}" "${LLAMA_EXTRA_ARGS_ARRAY[@]}"

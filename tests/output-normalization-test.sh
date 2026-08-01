@@ -755,6 +755,69 @@ test_ensure_env_bootstrap_fast_path_rewrites_env_after_prestart_port_change() {
   assert_contains 'fast path rewrites the env file llama base url after prestart discovery' "$output" 'ENV_FILE_BASE_URL=LLAMA_BASE_URL="http://127.0.0.1:11435/v1"'
 }
 
+test_prestart_discovery_rejects_embeddings_endpoint_as_primary() {
+  local output
+
+  output="$({
+    load_setup_functions
+
+    EMBEDDINGS_ENABLED=true
+    EMBEDDINGS_LLAMA_PORT=11435
+    EMBEDDINGS_LLAMA_BASE_URL='http://127.0.0.1:11435/v1'
+
+    llama_classify_runtime_health() {
+      LLAMA_INSTANCE_HEALTH='unhealthy'
+      LLAMA_INSTANCE_HAS_PROCESS=false
+      LLAMA_INSTANCE_HAS_LISTENER=false
+      LLAMA_INSTANCE_HEALTHCHECK_OK=false
+      LLAMA_INSTANCE_LAUNCHD_LOADED=false
+      return 0
+    }
+    llama_discover_healthy_instance_port() {
+      REPLY='11435'
+      return 0
+    }
+
+    resolve_prestart_llama_port '127.0.0.1' '11434'
+    printf 'RESOLVED_PORT=%s\n' "$REPLY"
+  } 2>&1)"
+
+  assert_contains 'prestart discovery keeps unhealthy primary when only embeddings is healthy' "$output" 'RESOLVED_PORT=11434'
+  assert_contains 'prestart discovery identifies the discovered port as embeddings' "$output" 'configured embeddings endpoint'
+  assert_not_contains 'prestart discovery does not silently adopt embeddings as primary' "$output" 'Using discovered healthy endpoint 11435 instead.'
+}
+
+test_prestart_discovery_allows_non_embeddings_alternate_primary() {
+  local output
+
+  output="$({
+    load_setup_functions
+
+    EMBEDDINGS_ENABLED=true
+    EMBEDDINGS_LLAMA_PORT=11435
+    EMBEDDINGS_LLAMA_BASE_URL='http://127.0.0.1:11435/v1'
+
+    llama_classify_runtime_health() {
+      LLAMA_INSTANCE_HEALTH='unhealthy'
+      LLAMA_INSTANCE_HAS_PROCESS=false
+      LLAMA_INSTANCE_HAS_LISTENER=false
+      LLAMA_INSTANCE_HEALTHCHECK_OK=false
+      LLAMA_INSTANCE_LAUNCHD_LOADED=false
+      return 0
+    }
+    llama_discover_healthy_instance_port() {
+      REPLY='11801'
+      return 0
+    }
+
+    resolve_prestart_llama_port '127.0.0.1' '11434'
+    printf 'RESOLVED_PORT=%s\n' "$REPLY"
+  } 2>&1)"
+
+  assert_contains 'prestart discovery can still adopt a non-embeddings primary endpoint' "$output" 'RESOLVED_PORT=11801'
+  assert_contains 'prestart discovery reports the alternate primary endpoint' "$output" 'Using discovered healthy endpoint 11801 instead.'
+}
+
 test_ensure_env_bootstrap_fast_path_preserves_configured_custom_port() {
   local output
 
@@ -2315,6 +2378,10 @@ test_vm_startup_progress_flow() {
     load_setup_functions
     install_prompt_stubs
 
+    CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS=3
+    CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS=0
+    export CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS
+
     queue_prompt_answers 'y' 'y'
 
     start_vm_with_utm() {
@@ -2351,6 +2418,11 @@ test_vm_startup_progress_flow() {
     }
 
     probe_vm_ssh_endpoint() {
+      REPLY='ssh-auth-required'
+      return 0
+    }
+
+    probe_ssh_batch_auth_target() {
       REPLY='ssh-auth-required'
       return 0
     }
@@ -2398,6 +2470,10 @@ test_vm_startup_network_recovery_flow() {
   output="$({
     load_setup_functions
     install_prompt_stubs
+
+    CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS=3
+    CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS=0
+    export CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS
 
     queue_prompt_answers 'y' '2' 'y'
 
@@ -2916,14 +2992,33 @@ test_runtime_service_existing_menu_wording() {
     setup_launchagent
   } 2>&1)"
 
-  assert_contains 'runtime service menu shows option one as keeping the managed service' "$output" '1) Keep and use the existing runtime service (recommended)'
-  assert_contains 'runtime service menu shows option two as reinstalling service' "$output" '2) Reinstall/update runtime service'
+  assert_contains 'runtime service menu identifies the host vm autostart service' "$output" 'Existing host VM auto-start service detected.'
+  assert_contains 'runtime service menu warns that stale keep skips updates' "$output" 'the latest reliability fixes will not be applied'
+  assert_contains 'runtime service menu shows option one as keeping the existing host vm autostart service' "$output" '1) Keep the existing host VM auto-start service'
+  assert_contains 'runtime service menu recommends reinstalling stale service' "$output" '2) Reinstall/update host VM auto-start service (recommended)'
   assert_contains 'runtime service menu shows option three as removing service' "$output" '3) Disable/remove runtime service'
   assert_contains 'runtime service menu shows option four as skipping management' "$output" '4) Skip runtime service management during setup'
 }
 
 test_host_llama_restart_uses_install_mode_without_hidden_health_wait() {
   local restart_output reuse_output failure_output
+
+  reuse_existing_output="$({
+    load_setup_functions
+    LLAMA_USE_EXISTING_INSTANCE=true
+    LLAMA_EXTERNAL=false
+    HOST_IP='192.168.64.1'
+    LLAMA_HOST='0.0.0.0'
+    LLAMA_PORT='11434'
+    LLAMA_BASE_URL='http://192.168.64.1:11434/v1'
+    setup_host_inference_service_phase
+  } 2>&1)"
+  assert_contains 'managed existing reuse reports generic reuse line' "$reuse_existing_output" 'Using existing llama-server.'
+  assert_contains 'managed existing reuse reports local endpoint separately' "$reuse_existing_output" 'Local endpoint: http://127.0.0.1:11434/v1'
+  assert_contains 'managed existing reuse reports configured VM endpoint separately' "$reuse_existing_output" 'Configured VM endpoint: http://192.168.64.1:11434/v1'
+  assert_not_contains 'managed existing reuse avoids misleading vm endpoint in reuse line' "$reuse_existing_output" 'Using existing llama-server at http://192.168.64.1:11434/v1'
+  assert_not_contains 'managed existing reuse local endpoint line has no leading whitespace' "$reuse_existing_output" $'\n  Local endpoint:'
+  assert_not_contains 'managed existing reuse configured endpoint line has no leading whitespace' "$reuse_existing_output" $'\n  Configured VM endpoint:'
 
   restart_output="$({
     load_setup_functions
@@ -3246,6 +3341,8 @@ run_test test_ensure_env_bootstrap_auto_selects_single_model_without_selection_p
 run_test test_first_run_bootstrap_detects_cross_user_llama_before_binary_setup
 run_test test_first_run_bootstrap_honors_explicit_custom_llama_port
 run_test test_ensure_env_bootstrap_fast_path_rewrites_env_after_prestart_port_change
+run_test test_prestart_discovery_rejects_embeddings_endpoint_as_primary
+run_test test_prestart_discovery_allows_non_embeddings_alternate_primary
 run_test test_ensure_env_bootstrap_fast_path_preserves_configured_custom_port
 run_test test_ensure_env_bootstrap_fast_path_retry_stays_in_setup
 run_test test_setup_preserves_explicit_external_llama_base_url

@@ -61,6 +61,8 @@ setup_status_test_mocks() {
   unset CLAWBOX_TEST_STATUS_LAUNCHCTL_PRINT_EXIT_CODE
   unset CLAWBOX_TEST_STATUS_LAUNCHCTL_LOG
   unset CLAWBOX_TEST_STATUS_CURL_LOG
+  unset CLAWBOX_TEST_STATUS_PROPS_JSON
+  unset CLAWBOX_TEST_STATUS_SLOTS_JSON
   unset CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT
   unset CLAWBOX_TEST_STATUS_PROCESS_ARGS_EMBEDDINGS_OUTPUT
   unset CLAWBOX_TEST_SSH_LOG
@@ -118,6 +120,18 @@ esac
 if [ -n "${CLAWBOX_TEST_STATUS_CURL_LOG:-}" ]; then
   printf "%s\n" "$*" >> "$CLAWBOX_TEST_STATUS_CURL_LOG"
 fi
+last_arg=""
+for arg in "$@"; do
+  last_arg="$arg"
+done
+case "$last_arg" in
+  */props)
+    [ -n "${CLAWBOX_TEST_STATUS_PROPS_JSON:-}" ] && printf "%s\n" "$CLAWBOX_TEST_STATUS_PROPS_JSON"
+    ;;
+  */slots)
+    [ -n "${CLAWBOX_TEST_STATUS_SLOTS_JSON:-}" ] && printf "%s\n" "$CLAWBOX_TEST_STATUS_SLOTS_JSON"
+    ;;
+esac
 exit "${CLAWBOX_TEST_STATUS_CURL_EXIT_CODE:-0}"
 '
 
@@ -141,7 +155,7 @@ if [ "${1:-}" = "print" ]; then
   fi
 
   case "$target" in
-    gui/*/com.clawbox.llama|system/com.clawbox.llama|gui/*/com.clawbox.llama.embeddings|system/com.clawbox.llama.embeddings)
+    gui/*/com.clawbox.llama|system/com.clawbox.llama|gui/*/com.clawbox.llama.embeddings|system/com.clawbox.llama.embeddings|gui/*/com.clawbox.startutmvm)
       exit "${CLAWBOX_TEST_STATUS_LAUNCHCTL_PRINT_EXIT_CODE:-0}"
       ;;
   esac
@@ -227,6 +241,10 @@ shift || true
       translated_command="$remote_command"
       translated_command="${translated_command//\~\/\.openclaw\/openclaw\.json/$CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE}"
       if printf "%s\n" "$translated_command" | grep -Fq ".models.providers[\$provider].models // []"; then
+        /bin/bash -c "$translated_command"
+        exit $?
+      fi
+      if printf "%s\n" "$translated_command" | grep -Fq ".agents.defaults.compaction.reserveTokens"; then
         /bin/bash -c "$translated_command"
         exit $?
       fi
@@ -446,10 +464,10 @@ esac
   assert_contains 'status summary reflects unique failure count' "$output" 'RESULT: UNHEALTHY (2 issues)'
 }
 
-test_status_reports_bind_failure_without_double_counting() {
+test_status_ignores_stale_bind_log_when_managed_runtime_is_currently_healthy() {
   local output
   local status=0
-  local bind_log="$TEMP_DIR/llama-bind.err.log"
+  local bind_log="$TEMP_DIR/llama-stale-bind.err.log"
 
   prepare_status_test_home
   write_status_test_env false
@@ -476,14 +494,137 @@ EOF
   status=$?
   set -e
 
-  assert_equals 'status exits with a single bind-conflict failure' "$status" '1'
-  assert_equals 'status reports bind conflict once' "$(printf '%s\n' "$output" | /usr/bin/grep -Fc 'FAIL: llama-server conflict detected')" '1'
-  assert_not_contains 'status bind conflict path does not also report the generic process-not-responding failure' "$output" 'FAIL: llama-server process exists but API is not responding'
-  assert_not_contains 'status bind conflict path does not also report the failed-startup bind branch' "$output" 'FAIL: llama-server failed to start (port bind error)'
-  assert_contains 'status bind conflict path explains the remediation' "$output" 'Fix: stop the other instance or choose a different port.'
-  assert_contains 'status bind conflict path emits the recent error log path' "$output" "From $bind_log:"
-  assert_contains 'status bind conflict path shows the recent bind error line' "$output" "couldn't bind HTTP server socket"
-  assert_contains 'status bind conflict path reports a single unhealthy issue in the summary' "$output" 'RESULT: UNHEALTHY (1 issues)'
+  assert_equals 'status stale-bind path exits healthy when current managed runtime is healthy' "$status" '0'
+  assert_contains 'status stale-bind path reports current managed runtime healthy' "$output" 'PASS: llama-server is healthy and owned by this user'
+  assert_not_contains 'status stale-bind path does not report a port conflict' "$output" 'FAIL: llama-server conflict detected'
+  assert_not_contains 'status stale-bind path does not report failed startup' "$output" 'FAIL: llama-server failed to start (port bind error)'
+  assert_contains 'status stale-bind path may still display historical diagnostics' "$output" "couldn't bind HTTP server socket"
+  assert_contains 'status stale-bind path reports healthy summary' "$output" 'RESULT: HEALTHY'
+}
+
+test_status_reports_current_bind_conflict_when_port_is_open_but_api_is_not_healthy() {
+  local output
+  local status=0
+  local bind_log="$TEMP_DIR/llama-current-bind.err.log"
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$bind_log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/unused-current-bind-system.err.log"
+
+  cat > "$bind_log" <<'EOF'
+startup line
+couldn't bind HTTP server socket
+EOF
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status current bind-conflict path exits unhealthy' "$status" '1'
+  assert_equals 'status reports current bind conflict once' "$(printf '%s\n' "$output" | /usr/bin/grep -Fc 'FAIL: llama-server conflict detected')" '1'
+  assert_not_contains 'status current bind conflict does not also report process-not-responding' "$output" 'FAIL: llama-server process exists but API is not responding'
+  assert_not_contains 'status current bind conflict does not also report failed-startup bind branch' "$output" 'FAIL: llama-server failed to start (port bind error)'
+  assert_contains 'status current bind conflict explains remediation' "$output" 'Fix: stop the other instance or choose a different port.'
+  assert_contains 'status current bind conflict shows recent bind evidence' "$output" "couldn't bind HTTP server socket"
+  assert_contains 'status current bind conflict reports one unhealthy issue' "$output" 'RESULT: UNHEALTHY (1 issues)'
+}
+
+test_status_reports_primary_loopback_healthy_when_vm_interface_is_absent() {
+  local output
+  local status=0
+  local curl_log="$TEMP_DIR/status-primary-loopback-curl.log"
+
+  prepare_status_test_home
+  setup_status_test_mocks
+
+  cat > "$ENV_FILE" <<'EOF'
+HOST_IP="192.168.64.1"
+VM_HOST="vm-user@192.168.64.2"
+LLAMA_HOST="0.0.0.0"
+LLAMA_PORT="18080"
+LLAMA_BASE_URL="http://192.168.64.1:18080/v1"
+MODEL_PATH="/Users/vm-user/models/model.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+LLAMA_EXTERNAL="false"
+EOF
+  cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
+MODEL_PATH="/Users/vm-user/models/model.gguf"
+EOF
+
+  write_mock_command ifconfig '#!/bin/bash
+printf "%s\n" "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>"
+printf "%s\n" "inet 127.0.0.1 netmask 0xff000000"
+'
+  write_mock_command curl '#!/bin/bash
+if [ -n "${CLAWBOX_TEST_STATUS_CURL_LOG:-}" ]; then
+  printf "%s\n" "$*" >> "$CLAWBOX_TEST_STATUS_CURL_LOG"
+fi
+case "$*" in
+  *"http://192.168.64.1:18080/v1/models"*)
+    exit 1
+    ;;
+  *"http://127.0.0.1:18080/v1/models"*)
+    printf "%s\n" "{\"data\":[]}"
+    exit 0
+    ;;
+  *"http://127.0.0.1:18080/props"*)
+    printf "%s\n" "{\"default_generation_settings\":{\"n_ctx\":32768},\"total_slots\":1}"
+    exit 0
+    ;;
+  *"http://127.0.0.1:18080/slots"*)
+    printf "%s\n" "[{\"n_ctx\":32768}]"
+    exit 0
+    ;;
+esac
+exit 0
+'
+
+  export CLAWBOX_TEST_STATUS_CURL_LOG="$curl_log"
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=1
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=1
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT='/opt/homebrew/bin/llama-server -m /Users/vm-user/models/model.gguf --host 0.0.0.0 --port 18080 --ctx-size 32768'
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/primary-loopback-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/primary-loopback-system.err.log"
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG" "$curl_log"
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_contains 'status primary loopback path reports local health' "$output" 'PASS: llama-server is healthy through loopback'
+  assert_contains 'status primary loopback path reports missing VM-facing interface' "$output" 'WARN: VM-facing llama endpoint is unavailable because the configured host interface is absent'
+  assert_not_contains 'status primary loopback local endpoint line has no leading whitespace' "$output" $'\n  Local endpoint:'
+  assert_not_contains 'status primary loopback vm-facing endpoint line has no leading whitespace' "$output" $'\n  VM-facing endpoint:'
+  assert_not_contains 'status primary loopback vm-interface explanation has no leading whitespace' "$output" $'\n  The UTM/VM host network interface'
+  assert_not_contains 'status primary loopback path does not report local API startup failure' "$output" 'FAIL: llama-server process exists but API is not responding'
+  assert_contains 'status primary loopback path probes local endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://127.0.0.1:18080/v1/models'
+  assert_contains 'status primary loopback path probes local props endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://127.0.0.1:18080/props'
+  assert_contains 'status primary loopback path probes local slots endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://127.0.0.1:18080/slots'
+  assert_contains 'status primary loopback path probes configured VM-facing endpoint separately' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://192.168.64.1:18080/v1/models'
+  assert_not_contains 'status primary loopback path does not probe VM-facing props endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://192.168.64.1:18080/props'
+  assert_contains 'status primary loopback path reports local runtime context' "$output" 'Runtime context: 32768'
+  assert_contains 'status primary loopback path reports local slot context' "$output" 'Per-slot context: 32768'
+  assert_contains 'status primary loopback path keeps VM failures separate' "$output" 'FAIL: SSH connectivity failed'
+  assert_contains 'status primary loopback path still exits unhealthy due to VM failures only' "$output" 'RESULT: UNHEALTHY'
 }
 
 test_status_reports_external_instance_as_configured_when_api_and_port_are_healthy() {
@@ -664,6 +805,139 @@ test_status_reports_owned_healthy_instance_when_api_port_and_process_are_healthy
   assert_not_contains 'status owned-healthy path does not report the configured external instance' "$output" 'PASS: llama-server is running (external instance - configured)'
   assert_not_contains 'status owned-healthy path does not report unmanaged-instance failure' "$output" 'FAIL: llama-server is running but not managed by this user'
   assert_contains 'status owned-healthy path reports a healthy summary' "$output" 'RESULT: HEALTHY'
+}
+
+test_status_reports_configured_vm_autostart_operational_state() {
+  local output
+  local status=0
+  local wrapper_path=''
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  mkdir -p "$HOME/Library/Application Support/ClawBox/bin"
+  : > "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist"
+  wrapper_path="$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+  : > "$wrapper_path"
+  chmod +x "$wrapper_path"
+
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status vm-autostart path exits healthy when loaded' "$status" '0'
+  assert_contains 'status vm-autostart path shows section' "$output" ' > VM Auto-start'
+  assert_contains 'status vm-autostart path reports plist' "$output" 'PASS: VM auto-start plist exists'
+  assert_contains 'status vm-autostart path reports wrapper' "$output" 'PASS: VM auto-start wrapper is executable'
+  assert_contains 'status vm-autostart path reports loaded service' "$output" 'PASS: VM auto-start LaunchAgent is loaded'
+  assert_contains 'status vm-autostart path reports service label' "$output" 'com.clawbox.startutmvm'
+}
+
+test_status_ignores_stale_vm_autostart_failure_after_new_success() {
+  local output
+  local status=0
+  local wrapper_path=''
+  local stdout_log="$TEMP_DIR/vm-autostart-success.out.log"
+  local stderr_log="$TEMP_DIR/vm-autostart-stale.err.log"
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  mkdir -p "$HOME/Library/Application Support/ClawBox/bin"
+  : > "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist"
+  wrapper_path="$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+  : > "$wrapper_path"
+  chmod +x "$wrapper_path"
+
+  cat > "$stderr_log" <<'EOF'
+[WARN] VM did not report running after startup wait.
+EOF
+  cat > "$stdout_log" <<'EOF'
+[INFO] ClawBox VM auto-start wrapper launched for VM: macOS
+[INFO] VM is reachable via SSH after startup attempt.
+EOF
+  touch -t 202001010000 "$stderr_log"
+  touch -t 202001010001 "$stdout_log"
+
+  export CLAWBOX_VM_AUTOSTART_OUT_LOG="$stdout_log"
+  export CLAWBOX_VM_AUTOSTART_ERR_LOG="$stderr_log"
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status vm-autostart stale failure path exits healthy after latest success' "$status" '0'
+  assert_contains 'status vm-autostart stale failure path reports latest success' "$output" 'PASS: VM auto-start latest invocation succeeded'
+  assert_not_contains 'status vm-autostart stale failure path does not warn from old logs' "$output" 'WARN: VM auto-start latest invocation has warning or failure log entries'
+}
+
+test_status_warns_when_latest_vm_autostart_invocation_failed() {
+  local output
+  local status=0
+  local wrapper_path=''
+  local stdout_log="$TEMP_DIR/vm-autostart-old-success.out.log"
+  local stderr_log="$TEMP_DIR/vm-autostart-current-failure.err.log"
+
+  prepare_status_test_home
+  write_status_test_env false
+  setup_status_test_mocks
+
+  mkdir -p "$HOME/Library/Application Support/ClawBox/bin"
+  : > "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist"
+  wrapper_path="$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+  : > "$wrapper_path"
+  chmod +x "$wrapper_path"
+
+  cat > "$stdout_log" <<'EOF'
+[INFO] ClawBox VM auto-start wrapper launched for VM: macOS
+[INFO] VM is reachable via SSH after startup attempt.
+EOF
+  cat > "$stderr_log" <<'EOF'
+[ERROR] Failed to request UTM VM startup.
+EOF
+  touch -t 202001010000 "$stdout_log"
+  touch -t 202001010001 "$stderr_log"
+
+  export CLAWBOX_VM_AUTOSTART_OUT_LOG="$stdout_log"
+  export CLAWBOX_VM_AUTOSTART_ERR_LOG="$stderr_log"
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'status vm-autostart latest failure path exits with warning status' "$status" '0'
+  assert_contains 'status vm-autostart latest failure path warns from current logs' "$output" 'WARN: VM auto-start latest invocation has warning or failure log entries'
+  assert_not_contains 'status vm-autostart latest failure path does not report success' "$output" 'PASS: VM auto-start latest invocation succeeded'
 }
 
 test_status_reports_system_managed_healthy_instance_when_system_mode_artifacts_exist() {
@@ -1005,6 +1279,14 @@ test_status_validates_vm_openclaw_config_with_configured_provider_name() {
   mkdir -p "$vm_config_dir"
   cat > "$vm_config_path" <<EOF
 {
+  "agents": {
+    "defaults": {
+      "compaction": {
+        "reserveTokens": 8192,
+        "reserveTokensFloor": 8192
+      }
+    }
+  },
   "models": {
     "providers": {
       "$provider_name": {
@@ -1031,6 +1313,8 @@ EOF
   export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROPS_JSON='{"default_generation_settings":{"n_ctx":65536},"total_slots":1}'
+  export CLAWBOX_TEST_STATUS_SLOTS_JSON='[{"id":0,"n_ctx":65536}]'
   export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
@@ -1422,6 +1706,14 @@ MODEL_PATH="/Users/vm-user/models/Status-Legacy-14B-Q5_K_M.gguf"
 EOF
   cat > "$active_config" <<'EOF'
 {
+  "agents": {
+    "defaults": {
+      "compaction": {
+        "reserveTokens": 8192,
+        "reserveTokensFloor": 8192
+      }
+    }
+  },
   "models": {
     "providers": {
       "clawbox": {
@@ -1472,6 +1764,8 @@ EOF
   export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROPS_JSON='{"default_generation_settings":{"n_ctx":65536},"total_slots":1}'
+  export CLAWBOX_TEST_STATUS_SLOTS_JSON='[{"id":0,"n_ctx":65536}]'
   export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
@@ -1519,6 +1813,14 @@ MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 EOF
   cat > "$active_config" <<'EOF'
 {
+  "agents": {
+    "defaults": {
+      "compaction": {
+        "reserveTokens": 8192,
+        "reserveTokensFloor": 8192
+      }
+    }
+  },
   "models": {
     "providers": {
       "clawbox": {
@@ -1546,6 +1848,8 @@ EOF
   export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROPS_JSON='{"default_generation_settings":{"n_ctx":65536},"total_slots":1}'
+  export CLAWBOX_TEST_STATUS_SLOTS_JSON='[{"id":0,"n_ctx":65536}]'
   export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
@@ -1564,9 +1868,157 @@ EOF
 
   assert_equals 'status normalized OpenClaw provider model exits healthy' "$status" '0'
   assert_contains 'status normalized OpenClaw provider model reports stable alias' "$output" 'PASS: OpenClaw stable alias model entry is configured'
+  assert_contains 'status normalized OpenClaw provider model reports context section' "$output" 'Context and Token Budget'
+  assert_contains 'status normalized OpenClaw provider model reports runtime context' "$output" 'Runtime context: 65536'
+  assert_contains 'status normalized OpenClaw provider model reports OpenClaw context' "$output" 'OpenClaw contextWindow: 65536'
+  assert_contains 'status normalized OpenClaw provider model reports OpenClaw maxTokens' "$output" 'OpenClaw maxTokens: 8192'
+  assert_contains 'status normalized OpenClaw provider model reports compaction reserve' "$output" 'Compaction reserveTokens: 8192'
+  assert_contains 'status normalized OpenClaw provider model reports prompt budget' "$output" 'Prompt budget before reserve: 57344'
+  assert_contains 'status normalized OpenClaw provider model confirms context match' "$output" 'PASS: OpenClaw contextWindow matches effective llama-server runtime context'
+  assert_contains 'status normalized OpenClaw provider model validates runtime evidence' "$output" 'PASS: llama-server runtime context evidence is internally consistent'
   assert_contains 'status normalized OpenClaw provider model reports healthy summary' "$output" 'RESULT: HEALTHY'
   assert_not_contains 'status normalized OpenClaw provider model has no obsolete concrete warning' "$output" 'WARN: OpenClaw provider has obsolete concrete model entry'
   assert_not_contains 'status normalized OpenClaw provider model has no warnings summary' "$output" 'HEALTHY WITH WARNINGS'
+}
+
+run_status_context_contract_fixture() {
+  local configured_context="$1"
+  local configured_parallel="$2"
+  local runtime_context="$3"
+  local total_slots="$4"
+  local slots_json="$5"
+  local openclaw_context="$6"
+  local active_config="$TEMP_DIR/status-context-contract-openclaw.json"
+
+  prepare_status_test_home
+  setup_status_test_mocks
+
+  cat > "$ENV_FILE" <<EOF
+HOST_IP="127.0.0.1"
+VM_HOST="vm-user@192.168.64.2"
+LLAMA_PORT="18080"
+LLAMA_BASE_URL="http://127.0.0.1:18080/v1"
+MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+LLAMA_EXTERNAL="false"
+LLAMA_CTX="$configured_context"
+LLAMA_PARALLEL="$configured_parallel"
+EOF
+  cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
+MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+EOF
+  cat > "$active_config" <<EOF
+{
+  "agents": {
+    "defaults": {
+      "compaction": {
+        "reserveTokens": 8192,
+        "reserveTokensFloor": 8192
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "clawbox": {
+        "baseUrl": "http://127.0.0.1:18080/v1",
+        "models": [
+          {
+            "id": "local",
+            "name": "local",
+            "api": "openai-completions",
+            "contextWindow": $openclaw_context,
+            "maxTokens": 8192,
+            "compat": {
+              "supportsDeveloperRole": false,
+              "unsupportedToolSchemaKeywords": ["pattern", "additionalProperties"]
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+EOF
+
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT="/opt/homebrew/bin/llama-server -m /Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf --host 0.0.0.0 --port 18080 --ctx-size $configured_context --parallel $configured_parallel"
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  if [ "$runtime_context" = "missing" ] && [ "$total_slots" = "missing" ]; then
+    unset CLAWBOX_TEST_STATUS_PROPS_JSON
+  elif [ "$runtime_context" = "missing" ]; then
+    export CLAWBOX_TEST_STATUS_PROPS_JSON="{\"total_slots\":$total_slots}"
+  elif [ "$total_slots" = "missing" ]; then
+    export CLAWBOX_TEST_STATUS_PROPS_JSON="{\"default_generation_settings\":{\"n_ctx\":$runtime_context}}"
+  else
+    export CLAWBOX_TEST_STATUS_PROPS_JSON="{\"default_generation_settings\":{\"n_ctx\":$runtime_context},\"total_slots\":$total_slots}"
+  fi
+  if [ "$slots_json" = "missing" ]; then
+    unset CLAWBOX_TEST_STATUS_SLOTS_JSON
+  else
+    export CLAWBOX_TEST_STATUS_SLOTS_JSON="$slots_json"
+  fi
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE="$active_config"
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/context-contract-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/context-contract-system.err.log"
+
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG"
+
+  set +e
+  STATUS_CONTEXT_OUTPUT="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  STATUS_CONTEXT_STATUS=$?
+  set -e
+}
+
+test_status_reports_incomplete_when_props_unavailable() {
+  run_status_context_contract_fixture 65536 1 missing missing '[{"id":0,"n_ctx":65536}]' 65536
+
+  assert_equals 'status missing props remains non-fatal' "$STATUS_CONTEXT_STATUS" '0'
+  assert_contains 'status missing props reports incomplete validation' "$STATUS_CONTEXT_OUTPUT" 'Runtime API validation: incomplete (/props or /slots unavailable)'
+  assert_not_contains 'status missing props does not claim runtime evidence passed' "$STATUS_CONTEXT_OUTPUT" 'PASS: llama-server runtime context evidence is internally consistent'
+}
+
+test_status_reports_incomplete_when_slots_unavailable() {
+  run_status_context_contract_fixture 65536 1 65536 1 missing 65536
+
+  assert_equals 'status missing slots remains non-fatal' "$STATUS_CONTEXT_STATUS" '0'
+  assert_contains 'status missing slots reports incomplete validation' "$STATUS_CONTEXT_OUTPUT" 'Runtime API validation: incomplete (/props or /slots unavailable)'
+  assert_not_contains 'status missing slots does not claim runtime evidence passed' "$STATUS_CONTEXT_OUTPUT" 'PASS: llama-server runtime context evidence is internally consistent'
+}
+
+test_status_fails_on_inconsistent_llama_slot_contexts() {
+  run_status_context_contract_fixture 65536 2 65536 2 '[{"id":0,"n_ctx":65536},{"id":1,"n_ctx":32768}]' 65536
+
+  assert_equals 'status inconsistent slot contexts exits unhealthy' "$STATUS_CONTEXT_STATUS" '1'
+  assert_contains 'status inconsistent slot contexts reports validation failure' "$STATUS_CONTEXT_OUTPUT" 'FAIL: llama-server slot contexts are unavailable or inconsistent'
+  assert_contains 'status inconsistent slot contexts reports unhealthy summary' "$STATUS_CONTEXT_OUTPUT" 'RESULT: UNHEALTHY'
+}
+
+test_status_fails_on_slot_count_mismatch() {
+  run_status_context_contract_fixture 65536 2 65536 2 '[{"id":0,"n_ctx":65536}]' 65536
+
+  assert_equals 'status slot count mismatch exits unhealthy' "$STATUS_CONTEXT_STATUS" '1'
+  assert_contains 'status slot count mismatch reports failure' "$STATUS_CONTEXT_OUTPUT" 'FAIL: llama-server total_slots does not match returned slot count'
+}
+
+test_status_fails_on_parallel_total_slots_mismatch() {
+  run_status_context_contract_fixture 65536 1 65536 2 '[{"id":0,"n_ctx":65536},{"id":1,"n_ctx":65536}]' 65536
+
+  assert_equals 'status configured parallel mismatch exits unhealthy' "$STATUS_CONTEXT_STATUS" '1'
+  assert_contains 'status configured parallel mismatch reports failure' "$STATUS_CONTEXT_OUTPUT" 'FAIL: llama-server total_slots differs from configured LLAMA_PARALLEL'
+}
+
+test_status_fails_on_openclaw_runtime_context_mismatch() {
+  run_status_context_contract_fixture 65536 1 65536 1 '[{"id":0,"n_ctx":65536}]' 32768
+
+  assert_equals 'status OpenClaw runtime context mismatch exits unhealthy' "$STATUS_CONTEXT_STATUS" '1'
+  assert_contains 'status OpenClaw runtime context mismatch reports failure' "$STATUS_CONTEXT_OUTPUT" 'FAIL: OpenClaw contextWindow differs from effective llama-server runtime context'
 }
 
 test_status_detects_primary_model_mismatch() {
@@ -1676,7 +2128,7 @@ EOF
   assert_contains 'status embeddings model summary keeps embeddings endpoint distinct' "$output" 'API: http://127.0.0.1:18081/v1'
 }
 
-test_status_reports_embeddings_loopback_only_as_unhealthy() {
+test_status_reports_embeddings_loopback_only_with_missing_vm_interface_as_warning() {
   local output
   local status=0
   local curl_log="$TEMP_DIR/status-embeddings-loopback-curl.log"
@@ -1695,6 +2147,7 @@ OPENCLAW_DEFAULT_MODEL="local"
 LLAMA_EXTERNAL="false"
 EMBEDDINGS_ENABLED="true"
 EMBEDDINGS_MODEL_PATH="/Users/vm-user/models/bge-large-en-v1.5-f16.gguf"
+EMBEDDINGS_LLAMA_HOST="0.0.0.0"
 EMBEDDINGS_LLAMA_PORT="18081"
 EMBEDDINGS_LLAMA_BASE_URL="http://192.168.64.1:18081/v1"
 EOF
@@ -1716,6 +2169,10 @@ case "$*" in
     ;;
 esac
 exit 0
+'
+  write_mock_command ifconfig '#!/bin/bash
+printf "%s\n" "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>"
+printf "%s\n" "inet 127.0.0.1 netmask 0xff000000"
 '
 
   export CLAWBOX_TEST_STATUS_CURL_LOG="$curl_log"
@@ -1739,11 +2196,18 @@ exit 0
   status=$?
   set -e
 
-  assert_equals 'status embeddings loopback-only path exits unhealthy' "$status" '1'
-  assert_contains 'status embeddings loopback-only path fails configured endpoint' "$output" 'FAIL: Embeddings llama-server is not responding at http://192.168.64.1:18081/v1'
-  assert_contains 'status embeddings loopback-only path reports loopback diagnostic' "$output" 'Loopback responds at http://127.0.0.1:18081/v1, but the configured VM-facing endpoint does not.'
+  assert_equals 'status embeddings loopback-only path exits with warning only' "$status" '0'
+  assert_contains 'status embeddings loopback-only path reports local health' "$output" 'PASS: embeddings llama-server is healthy through loopback'
+  assert_contains 'status embeddings loopback-only path reports local endpoint' "$output" 'Local endpoint: http://127.0.0.1:18081/v1'
+  assert_contains 'status embeddings loopback-only path reports missing interface' "$output" 'WARN: VM-facing embeddings endpoint is unavailable because the configured host interface is absent'
+  assert_contains 'status embeddings loopback-only path explains VM network is offline' "$output" 'The UTM/VM host network interface may be offline because the selected VM is stopped.'
+  assert_not_contains 'status embeddings loopback local endpoint line has no leading whitespace' "$output" $'\n  Local endpoint:'
+  assert_not_contains 'status embeddings loopback vm-facing endpoint line has no leading whitespace' "$output" $'\n  VM-facing endpoint:'
+  assert_not_contains 'status embeddings loopback vm-interface explanation has no leading whitespace' "$output" $'\n  The UTM/VM host network interface'
+  assert_not_contains 'status embeddings loopback-only path does not recommend incorrect rebind' "$output" 'Restart/update embeddings setup so the runtime binds to the configured host interface.'
+  assert_not_contains 'status embeddings loopback-only path does not fail configured endpoint when interface is absent' "$output" 'FAIL: Embeddings llama-server is not responding at http://192.168.64.1:18081/v1'
   assert_contains 'status embeddings loopback-only path probes configured endpoint' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://192.168.64.1:18081/v1/models'
-  assert_contains 'status embeddings loopback-only path probes loopback only for diagnosis' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://127.0.0.1:18081/v1/models'
+  assert_contains 'status embeddings loopback-only path probes local readiness' "$([ -f "$curl_log" ] && cat "$curl_log")" 'http://127.0.0.1:18081/v1/models'
 }
 
 test_status_marks_embeddings_memory_model_unavailable_only_when_read_fails() {
@@ -2284,20 +2748,25 @@ test_status_uses_bounded_noninteractive_ssh_for_all_vm_checks() {
   set -e
 
   assert_equals 'status bounded ssh path stays healthy when all probes succeed' "$status" '0'
-  assert_equals 'status bounded ssh path issues eight SSH calls' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '8'
-  assert_equals 'status bounded ssh path applies BatchMode to every SSH call' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '8'
-  assert_equals 'status bounded ssh path applies ConnectTimeout to every SSH call' "$(/usr/bin/grep -Fc -- '-o ConnectTimeout=3' "$ssh_log")" '8'
+  assert_equals 'status bounded ssh path issues ten SSH calls' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '10'
+  assert_equals 'status bounded ssh path applies BatchMode to every SSH call' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '10'
+  assert_equals 'status bounded ssh path applies ConnectTimeout to every SSH call' "$(/usr/bin/grep -Fc -- '-o ConnectTimeout=3' "$ssh_log")" '10'
   assert_contains 'status bounded ssh path reports a healthy summary' "$output" 'RESULT: HEALTHY'
 }
 
 printf 'Running release regression tests\n'
 
 run_test test_status_avoids_duplicate_vm_host_api_failure
-run_test test_status_reports_bind_failure_without_double_counting
+run_test test_status_ignores_stale_bind_log_when_managed_runtime_is_currently_healthy
+run_test test_status_reports_current_bind_conflict_when_port_is_open_but_api_is_not_healthy
+run_test test_status_reports_primary_loopback_healthy_when_vm_interface_is_absent
 run_test test_status_reports_external_instance_as_configured_when_api_and_port_are_healthy
 run_test test_status_external_instance_ignores_local_port_when_configured_api_is_healthy
 run_test test_status_external_instance_does_not_require_local_managed_artifacts
 run_test test_status_reports_owned_healthy_instance_when_api_port_and_process_are_healthy
+run_test test_status_reports_configured_vm_autostart_operational_state
+run_test test_status_ignores_stale_vm_autostart_failure_after_new_success
+run_test test_status_warns_when_latest_vm_autostart_invocation_failed
 run_test test_status_reports_system_managed_healthy_instance_when_system_mode_artifacts_exist
 run_test test_status_reports_system_launchdaemon_loaded_via_domain_aware_probe
 run_test test_status_reports_unmanaged_instance_when_api_is_healthy_but_external_mode_is_false
@@ -2318,9 +2787,15 @@ run_test test_status_managed_local_host_probe_ignores_custom_llama_base_url_when
 run_test test_status_displays_primary_model_summary
 run_test test_status_warns_about_obsolete_openclaw_concrete_model_entries
 run_test test_status_reports_normalized_openclaw_provider_models_healthy
+run_test test_status_reports_incomplete_when_props_unavailable
+run_test test_status_reports_incomplete_when_slots_unavailable
+run_test test_status_fails_on_inconsistent_llama_slot_contexts
+run_test test_status_fails_on_slot_count_mismatch
+run_test test_status_fails_on_parallel_total_slots_mismatch
+run_test test_status_fails_on_openclaw_runtime_context_mismatch
 run_test test_status_detects_primary_model_mismatch
 run_test test_status_displays_embeddings_model_summary_when_enabled
-run_test test_status_reports_embeddings_loopback_only_as_unhealthy
+run_test test_status_reports_embeddings_loopback_only_with_missing_vm_interface_as_warning
 run_test test_status_marks_embeddings_memory_model_unavailable_only_when_read_fails
 run_test test_status_detects_embeddings_model_mismatch_when_enabled
 run_test test_status_omits_embeddings_model_summary_when_disabled_or_absent

@@ -351,6 +351,7 @@ def normalize(aggregate, artifact_dir=""):
         "durationSeconds": aggregate.get("durationSeconds"),
         "completed": bool(aggregate.get("completed", False)),
         "coverage": aggregate.get("coverage") or {},
+        "runtime": aggregate.get("runtime") or {},
         "categories": aggregate.get("categories") or {},
         "warnings": aggregate.get("warnings") or [],
         "failures": aggregate.get("failures") or [],
@@ -575,6 +576,24 @@ def report_record(runs_dir, run_id, latest, output, force):
     for s in record.get("scenarios") or []:
         score_value = "Unrated" if s.get("score") is None else f"{s.get('score')}/100"
         lines.append(f"| {markdown_escape(s.get('scenarioId'))} | {markdown_escape(s.get('status'))} | {markdown_escape(score_value)} | {markdown_escape(duration(s.get('durationSeconds')))} |")
+    runtime = record.get("runtime") or {}
+    if runtime:
+        runtime_fields = [
+            ("Native context", runtime.get("nativeContext")),
+            ("Configured context", runtime.get("configuredContext")),
+            ("Runtime context", runtime.get("runtimeContext")),
+            ("Total slots", runtime.get("totalSlots")),
+            ("Per-slot context", runtime.get("perSlotContext")),
+            ("OpenClaw contextWindow", runtime.get("openclawContextWindow")),
+            ("OpenClaw maxTokens", runtime.get("openclawMaxTokens")),
+            ("Reserve tokens", runtime.get("reserveTokens")),
+            ("Reserve tokens floor", runtime.get("reserveTokensFloor")),
+            ("Prompt budget before reserve", runtime.get("promptBudgetBeforeReserve")),
+        ]
+        lines += ["", "## Runtime", "", "| Field | Value |", "|---|---:|"]
+        for label, value in runtime_fields:
+            if value is not None:
+                lines.append(f"| {markdown_escape(label)} | {markdown_escape(value)} |")
     if record.get("warnings"):
         lines += ["", "## Warnings", ""]
         lines += [f"- {markdown_escape(w)}" for w in record.get("warnings")]

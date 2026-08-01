@@ -18,6 +18,9 @@ print_setup_completion_summary() {
     skipped)
       out 'VM auto-start at host login: skipped for this run.'
       ;;
+    unverified)
+      out 'VM auto-start at host login: configured but not verified.'
+      ;;
     *)
       out 'VM auto-start at host login: not changed.'
       ;;
@@ -102,7 +105,7 @@ run_provisioning_and_deployment() {
   section "Runtime"
   step "Configuring runtime services..."
 
-  setup_launchagent
+  setup_launchagent || return $?
 
   handle_openclaw_runtime_state || return $?
 

@@ -909,6 +909,132 @@ test_runtime_handle_module() {
   eval "$saved_warn"
 }
 
+test_context_runtime_module() {
+  local gguf_file="$TEMP_DIR/context-fixture.gguf"
+  local malformed_file="$TEMP_DIR/not-gguf.bin"
+  local conflicts=''
+  local reserve=''
+  local entries=''
+  local runtime_args=()
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/output.sh"
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/context-runtime.sh"
+
+  python3 - "$gguf_file" <<'PY'
+import struct, sys
+path = sys.argv[1]
+key = b"llama.context_length"
+with open(path, "wb") as handle:
+    handle.write(b"GGUF")
+    handle.write(struct.pack("<I", 3))
+    handle.write(struct.pack("<Q", 0))
+    handle.write(struct.pack("<Q", 1))
+    handle.write(struct.pack("<Q", len(key)))
+    handle.write(key)
+    handle.write(struct.pack("<I", 4))
+    handle.write(struct.pack("<I", 262144))
+PY
+  printf 'nope' > "$malformed_file"
+
+  if [ "$(gguf_native_context_from_file "$gguf_file")" = '262144' ]; then
+    pass "GGUF native context parser reads llama.context_length metadata"
+  else
+    fail "GGUF native context parser should read llama.context_length metadata"
+  fi
+
+  if gguf_native_context_from_file "$malformed_file" >/dev/null 2>&1; then
+    fail "GGUF native context parser should reject malformed files"
+  else
+    pass "GGUF native context parser rejects malformed files"
+  fi
+
+  if llama_managed_runtime_arg_conflicts '--threads 8 --ctx-size 65536 --parallel 2'; then
+    conflicts="$REPLY"
+    if [[ "$conflicts" == *'--ctx-size'* ]] && [[ "$conflicts" == *'--parallel'* ]]; then
+      pass "managed runtime arg conflict detection catches managed flags in LLAMA_EXTRA_ARGS"
+    else
+      fail "managed runtime arg conflict detection should report conflicting flags"
+    fi
+  else
+    fail "managed runtime arg conflict detection should fail when managed flags are present"
+  fi
+
+  LLAMA_CTX=32768
+  LLAMA_PARALLEL=1
+  LLAMA_GPU_LAYERS=''
+  LLAMA_FLASH_ATTENTION=false
+  LLAMA_MLOCK=false
+  LLAMA_EXTRA_ARGS='-ngl 99 --jinja -fa on --mlock --parallel 1'
+  if llama_migrate_managed_runtime_extra_args "$LLAMA_EXTRA_ARGS" \
+    && [ "$LLAMA_MIGRATION_GPU_LAYERS" = '99' ] \
+    && [ "$LLAMA_MIGRATION_FLASH_ATTENTION" = 'true' ] \
+    && [ "$LLAMA_MIGRATION_MLOCK" = 'true' ] \
+    && [ "$LLAMA_MIGRATION_PARALLEL" = '1' ] \
+    && [ "$LLAMA_MIGRATION_EXTRA_ARGS" = '--jinja' ]; then
+    pass "managed runtime arg migration preserves Jimmy passthrough flags"
+  else
+    fail "managed runtime arg migration should move managed flags and preserve --jinja"
+  fi
+  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_MLOCK LLAMA_EXTRA_ARGS
+
+  LLAMA_CTX=65536
+  LLAMA_PARALLEL=2
+  LLAMA_GPU_LAYERS=99
+  LLAMA_FLASH_ATTENTION=true
+  LLAMA_MLOCK=true
+  unset LLAMA_EXTRA_ARGS
+  llama_validate_managed_runtime_settings
+  llama_append_managed_runtime_args runtime_args
+  if [[ " ${runtime_args[*]} " == *' --ctx-size 65536 '* ]] \
+    && [[ " ${runtime_args[*]} " == *' --parallel 2 '* ]] \
+    && [[ " ${runtime_args[*]} " == *' --n-gpu-layers 99 '* ]] \
+    && [[ " ${runtime_args[*]} " == *' --flash-attn on '* ]] \
+    && [[ " ${runtime_args[*]} " == *' --mlock '* ]]; then
+    pass "managed runtime args render first-class llama-server settings"
+  else
+    fail "managed runtime args should render first-class llama-server settings"
+  fi
+
+  LLAMA_FLASH_ATTENTION=false
+  LLAMA_MLOCK=true
+  runtime_args=()
+  llama_append_managed_runtime_args runtime_args
+  if [[ " ${runtime_args[*]} " == *' --flash-attn off --mlock '* ]]; then
+    pass "managed runtime args render flash attention false as an explicit value"
+  else
+    fail "managed runtime args should render --flash-attn off before --mlock"
+  fi
+  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_MLOCK
+
+  reserve="$(openclaw_context_reserve_for_context 32768)"
+  assert_equals "OpenClaw reserve policy derives 8192 from 32768 context" "$reserve" '8192'
+
+  reserve="$(openclaw_context_reserve_for_context 16384)"
+  assert_equals "OpenClaw reserve policy derives quarter-context reserve for smaller context" "$reserve" '4096'
+
+  entries="$(openclaw_managed_token_budget_entries 32768 8192)"
+  if [[ "$entries" == *$'agents.defaults.compaction.reserveTokens\t8192'* ]] \
+    && [[ "$entries" == *$'agents.defaults.compaction.reserveTokensFloor\t8192'* ]]; then
+    pass "OpenClaw managed token budget entries include reserve and reserve floor"
+  else
+    fail "OpenClaw managed token budget entries should include reserve and reserve floor"
+  fi
+
+  assert_equals "llama runtime slot count reads returned slots" \
+    "$(llama_runtime_slot_count_from_slots_json '[{"id":0,"n_ctx":32768},{"id":1,"n_ctx":32768}]')" \
+    '2'
+  assert_equals "llama runtime slot context validates every returned slot" \
+    "$(llama_runtime_slot_context_from_slots_json '[{"id":0,"n_ctx":32768},{"id":1,"n_ctx":32768}]')" \
+    '32768'
+  if llama_runtime_slot_context_from_slots_json '[{"id":0,"n_ctx":32768},{"id":1,"n_ctx":16384}]' >/dev/null 2>&1; then
+    fail "llama runtime slot context should reject inconsistent slot contexts"
+  else
+    pass "llama runtime slot context rejects inconsistent slot contexts"
+  fi
+}
+
 test_deploy_module() {
   local prompt_marker="$TEMP_DIR/deploy-prompt-called"
   local upload_marker="$TEMP_DIR/deploy-upload-called"
@@ -1012,11 +1138,32 @@ test_deploy_module() {
   local merged_deny=''
   local conflicting_model=''
   local custom_models=''
+  local desired_entries=''
 
   OPENCLAW_DEFAULT_MODEL=local
   LLAMA_CTX=32768
   unset OPENCLAW_MAX_TOKENS
   desired_models="$(openclaw_config_model_array)"
+
+  desired_entries="$(openclaw_config_desired_entries_for_scope primary)"
+  if [[ "$desired_entries" == *$'agents.defaults.compaction.reserveTokens\t8192'* ]] \
+    && [[ "$desired_entries" == *$'agents.defaults.compaction.reserveTokensFloor\t8192'* ]]; then
+    pass "OpenClaw primary targeted sync includes derived compaction reserves"
+  else
+    fail "OpenClaw primary targeted sync should include derived compaction reserves"
+  fi
+
+  LLAMA_CTX=65536
+  OPENCLAW_EFFECTIVE_CONTEXT_WINDOW=32768
+  desired_entries="$(openclaw_config_desired_entries_for_scope primary)"
+  unset OPENCLAW_EFFECTIVE_CONTEXT_WINDOW
+  LLAMA_CTX=32768
+  if [[ "$desired_entries" == *$'agents.defaults.compaction.reserveTokens\t8192'* ]] \
+    && [[ "$desired_entries" != *$'agents.defaults.compaction.reserveTokens\t20000'* ]]; then
+    pass "OpenClaw primary targeted sync derives reserves from effective context instead of legacy fixed values"
+  else
+    fail "OpenClaw primary targeted sync should derive reserves from effective context"
+  fi
 
   last_ssh_exec=''
   openclaw_config_remote_get 'models.providers.clawbox.models' >/dev/null || true
@@ -1806,6 +1953,16 @@ test_setup_deployment_flow_updates_active_openclaw_config() {
         printf '%s\n' 'clawbox/local'
         return 0
         ;;
+      *get*"agents.defaults.compaction.reserveTokensFloor"*)
+        printf 'reserveFloor:active:%s\n' "$command_text" >> "$get_log"
+        printf '%s\n' '8192'
+        return 0
+        ;;
+      *get*"agents.defaults.compaction.reserveTokens"*)
+        printf 'reserve:active:%s\n' "$command_text" >> "$get_log"
+        printf '%s\n' '8192'
+        return 0
+        ;;
       *get*"gateway.auth.token"*)
         printf '%s\n' '__OPENCLAW_REDACTED__'
         return 0
@@ -1820,6 +1977,14 @@ test_setup_deployment_flow_updates_active_openclaw_config() {
         mv "$active_models_file.next" "$active_models_file"
         count="$(cat "$active_set_count_file")"
         printf '%s\n' "$((count + 1))" > "$active_set_count_file"
+        return 0
+        ;;
+      *set*"agents.defaults.compaction.reserveTokensFloor"*)
+        printf 'reserveFloor:active:%s\n' "$command_text" >> "$set_log"
+        return 0
+        ;;
+      *set*"agents.defaults.compaction.reserveTokens"*)
+        printf 'reserve:active:%s\n' "$command_text" >> "$set_log"
         return 0
         ;;
     esac
@@ -2367,10 +2532,14 @@ test_launchagent_module() {
     fail "launchagent plist should include stdout and stderr log paths"
   fi
 
-  if [ -f "$plist_path" ] && grep -Fq '<key>RunAtLoad</key>' "$plist_path" && ! grep -Fq '<key>KeepAlive</key>' "$plist_path"; then
-    pass "launchagent plist uses RunAtLoad without KeepAlive"
+  if [ -f "$plist_path" ] \
+    && grep -Fq '<key>RunAtLoad</key>' "$plist_path" \
+    && grep -Fq '<key>KeepAlive</key>' "$plist_path" \
+    && grep -Fq '<key>SuccessfulExit</key>' "$plist_path" \
+    && grep -Fq '<false/>' "$plist_path"; then
+    pass "launchagent plist uses RunAtLoad and retries failed wrapper exits"
   else
-    fail "launchagent plist should use RunAtLoad without KeepAlive"
+    fail "launchagent plist should use RunAtLoad and retry failed wrapper exits"
   fi
 
   if [ -f "$plist_path" ]; then
@@ -2536,6 +2705,68 @@ EOF
     fail 'launchagent wrapper should not report success without runtime verification'
   else
     pass 'launchagent wrapper does not report success without runtime verification'
+  fi
+}
+
+test_launchagent_wrapper_returns_failure_when_vm_never_starts() {
+  local wrapper="$ROOT_DIR/host/scripts/start-utm-vm.sh"
+  local mock_dir="$TEMP_DIR/launchagent-never-starts-bin"
+  local output=''
+  local status=0
+
+  mkdir -p "$mock_dir"
+  cat > "$mock_dir/utmctl" <<'EOF'
+#!/bin/bash
+case "$1" in
+  list)
+    printf 'UUID                                 Status   Name\n'
+    printf '11111111-2222-3333-4444-555555555555 stopped  Test VM\n'
+    exit 0
+    ;;
+  start)
+    exit 0
+    ;;
+esac
+exit 1
+EOF
+  cat > "$mock_dir/osascript" <<'EOF'
+#!/bin/bash
+exit 1
+EOF
+  cat > "$mock_dir/ssh" <<'EOF'
+#!/bin/bash
+exit 255
+EOF
+  cat > "$mock_dir/sleep" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+  chmod +x "$mock_dir/utmctl" "$mock_dir/osascript" "$mock_dir/ssh" "$mock_dir/sleep"
+
+  set +e
+  output="$(
+    CLAWBOX_UTMCTL_BIN="$mock_dir/utmctl" \
+    CLAWBOX_OSASCRIPT_BIN="$mock_dir/osascript" \
+    CLAWBOX_SSH_BIN="$mock_dir/ssh" \
+    CLAWBOX_SLEEP_BIN="$mock_dir/sleep" \
+    CLAWBOX_VM_AUTOSTART_INITIAL_DELAY=0 \
+    CLAWBOX_VM_AUTOSTART_START_ATTEMPTS=1 \
+    CLAWBOX_VM_AUTOSTART_MAX_ATTEMPTS=1 \
+    "$wrapper" 'Test VM' 'tester@192.168.64.6' 2>&1
+  )"
+  status=$?
+  set -e
+
+  if [ "$status" -ne 0 ]; then
+    pass 'launchagent wrapper exits nonzero when the VM never starts'
+  else
+    fail 'launchagent wrapper should exit nonzero when the VM never starts'
+  fi
+
+  if printf '%s' "$output" | grep -Fq 'VM did not report running after startup attempts: Test VM'; then
+    pass 'launchagent wrapper reports unsuccessful autostart for launchd retry'
+  else
+    fail 'launchagent wrapper should report unsuccessful autostart for launchd retry'
   fi
 }
 
@@ -2745,6 +2976,69 @@ test_launchagent_module_requires_vm_host() {
   else
     fail "launchagent setup should not write a plist when VM host is missing"
   fi
+
+  HOME="$original_home"
+}
+
+test_launchagent_mismatched_runtime_recommends_update() {
+  local original_home="$HOME"
+  local output=''
+
+  HOME="$TEMP_DIR/home-mismatched-autostart"
+  BASE_DIR="$ROOT_DIR"
+  VM_MACHINE_NAME='Test VM'
+  VM_HOST='test-vm-host'
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Application Support/ClawBox/bin"
+  cat > "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist" <<'EOF'
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.clawbox.startutmvm</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/old/clawbox/start-utm-vm.sh</string>
+    <string>Old VM</string>
+    <string>old-host</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+EOF
+  : > "$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+  chmod +x "$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+
+  prompt_yes_no() {
+    REPLY='false'
+    return 0
+  }
+
+  prompt_with_suffix() {
+    REPLY='4'
+    return 0
+  }
+
+  launchctl() {
+    case "${1:-}" in
+      print)
+        return 0
+        ;;
+      *)
+        return 0
+        ;;
+    esac
+  }
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/launchagent.sh"
+
+  output="$(setup_launchagent 2>&1)"
+
+  assert_contains 'mismatched VM auto-start runtime identifies host-side service' "$output" 'Existing host VM auto-start service detected.'
+  assert_contains 'mismatched VM auto-start runtime reports mismatch' "$output" 'State: loaded but does not match the expected configuration'
+  assert_contains 'mismatched VM auto-start runtime recommends update' "$output" '2) Reinstall/update host VM auto-start service (recommended)'
+  assert_not_contains 'mismatched VM auto-start runtime does not recommend keeping stale service' "$output" '1) Keep and use the existing host VM auto-start service (recommended)'
+  assert_contains 'mismatched VM auto-start runtime warns old behavior remains' "$output" 'the latest reliability fixes will not be applied'
 
   HOME="$original_home"
 }
@@ -4292,6 +4586,47 @@ test_llama_health_decision_module() {
     fail "llama health verification should succeed after bounded port and API readiness"
   fi
 
+  output="$({
+    local status=0
+    local api_hosts=''
+
+    # shellcheck source=/dev/null
+    . "$ROOT_DIR/lib/llama.sh"
+
+    HOST_IP='192.168.64.1'
+    LLAMA_HOST='0.0.0.0'
+    LLAMA_PORT='11434'
+    LLAMA_ACTIVE_MODE='user'
+
+    step() { printf 'STEP:%s\n' "$1"; }
+    success() { printf 'SUCCESS:%s\n' "$1"; }
+    warn() { printf 'WARN:%s\n' "$1"; }
+    out() { printf 'OUT:%s\n' "$1"; }
+    sleep() { :; }
+    llama_port_in_use() { return 0; }
+    llama_api_responding() {
+      api_hosts="${api_hosts}${api_hosts:+ }$1:$2"
+      [ "$1" = '127.0.0.1' ] && [ "$2" = '11434' ]
+    }
+
+    if llama_verify_service_health; then
+      status=0
+    else
+      status=$?
+    fi
+
+    printf 'STATUS:%s\n' "$status"
+    printf 'API_HOSTS:%s\n' "$api_hosts"
+  } 2>&1)"
+
+  if printf '%s\n' "$output" | grep -Fq 'STATUS:0' \
+    && printf '%s\n' "$output" | grep -Fq 'API_HOSTS:127.0.0.1:11434 192.168.64.1:11434' \
+    && printf '%s\n' "$output" | grep -Fq 'WARN:llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet.'; then
+    pass "llama health verification uses loopback readiness before VM-facing validation"
+  else
+    fail "llama health verification should not block local readiness on VM-facing interface availability"
+  fi
+
   queue_llama_choices ''
   output="$({
     local status=0
@@ -5584,6 +5919,7 @@ run_test test_config_module
 run_test test_ssh_module
 run_test test_runtime_module
 run_test test_runtime_handle_module
+run_test test_context_runtime_module
 run_test test_deploy_module
 run_test test_setup_deployment_flow_updates_active_openclaw_config
 run_test test_setup_deployment_flow_stops_on_openclaw_sync_failure
@@ -5591,9 +5927,11 @@ run_test test_openclaw_webui_module
 run_test test_prompt_module
 run_test test_launchagent_module
 run_test test_launchagent_wrapper_logs_tcc_denial
+run_test test_launchagent_wrapper_returns_failure_when_vm_never_starts
 run_test test_launchagent_wrapper_retries_and_verifies_runtime_before_success
 run_test test_launchagent_wrapper_uses_ssh_reachability_as_success_signal
 run_test test_launchagent_module_requires_vm_host
+run_test test_launchagent_mismatched_runtime_recommends_update
 run_test test_llama_install_mode_selection
 run_test test_llama_bin_resolution_prompt
 run_test test_llama_bin_resolution_hard_blocks_without_install_methods

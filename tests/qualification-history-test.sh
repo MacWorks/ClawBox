@@ -28,6 +28,18 @@ data = {
     "profile": {"id": profile, "name": profile_name},
     "coverage": {"profile": profile, "scenariosRun": 3, "reliabilityIterations": 3 if profile == "fast" else 10, "workflowCases": 3 if profile == "fast" else 5},
     "model": {"alias": "clawbox/local", "configured": model_base, "running": model_base, "path": model_path},
+    "runtime": {
+        "nativeContext": 262144,
+        "configuredContext": 65536,
+        "runtimeContext": 65536,
+        "totalSlots": 1,
+        "perSlotContext": 65536,
+        "openclawContextWindow": 65536,
+        "openclawMaxTokens": 8192,
+        "reserveTokens": 8192,
+        "reserveTokensFloor": 8192,
+        "promptBudgetBeforeReserve": 57344,
+    },
     "overallStatus": status,
     "score": score_value,
     "scoreComplete": score_value is not None,
@@ -98,6 +110,10 @@ test_compare_report_and_badge() {
   markdown="$(CLAWBOX_QUALIFY_DATA_DIR="$CLAWBOX_QUALIFY_DATA_DIR" "$ROOT_DIR/clawbox" qualify report --latest)"
   assert_contains 'markdown report has title' "$markdown" '# ClawBox Model Qualification Report'
   assert_contains 'markdown report includes scenario table' "$markdown" '| Scenario | Status | Score | Duration |'
+  assert_contains 'markdown report includes runtime section' "$markdown" '## Runtime'
+  assert_contains 'markdown report includes native context' "$markdown" '| Native context | 262144 |'
+  assert_contains 'markdown report includes OpenClaw context window' "$markdown" '| OpenClaw contextWindow | 65536 |'
+  assert_contains 'markdown report includes prompt budget' "$markdown" '| Prompt budget before reserve | 57344 |'
 
   report_file="$TEMP_DIR/report.md"
   CLAWBOX_QUALIFY_DATA_DIR="$CLAWBOX_QUALIFY_DATA_DIR" "$ROOT_DIR/clawbox" qualify report --latest --output "$report_file"

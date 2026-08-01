@@ -7,6 +7,7 @@ VM_NAME="$1"
 VM_HOST="$2"
 max_attempts="${CLAWBOX_VM_AUTOSTART_MAX_ATTEMPTS:-10}"
 start_request_attempts="${CLAWBOX_VM_AUTOSTART_START_ATTEMPTS:-3}"
+initial_delay="${CLAWBOX_VM_AUTOSTART_INITIAL_DELAY:-10}"
 attempt=1
 
 log_info() {
@@ -212,6 +213,11 @@ fi
 log_info "ClawBox VM auto-start wrapper launched for VM: $VM_NAME"
 log_info "Configured VM SSH target: ${VM_HOST:-not configured}"
 
+if [ "$initial_delay" -gt 0 ] 2>/dev/null; then
+  log_info "Waiting briefly for the user GUI session and UTM services to become ready."
+  sleep_cmd "$initial_delay"
+fi
+
 if vm_is_running; then
   if vm_is_reachable_via_ssh; then
     log_info "VM already reachable via SSH: $VM_HOST"
@@ -260,4 +266,4 @@ while [ "$attempt" -le "$max_attempts" ]; do
 done
 
 log_warn "VM did not report running after startup attempts: $VM_NAME"
-exit 0
+exit 1

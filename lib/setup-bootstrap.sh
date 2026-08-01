@@ -7,6 +7,56 @@
 # values, llama connection values, model selection, firewall subnet, and
 # OpenClaw provider/autostart values.
 
+maybe_migrate_llama_extra_args() {
+  local original_extra_args="${LLAMA_EXTRA_ARGS:-}"
+  local proposed_extra_args=''
+
+  llama_migrate_managed_runtime_extra_args "$original_extra_args" || return 0
+  proposed_extra_args="$LLAMA_MIGRATION_EXTRA_ARGS"
+
+  if ! [ -t 0 ] && ! [ -p /dev/stdin ]; then
+    error 'LLAMA_EXTRA_ARGS contains settings now managed by first-class ClawBox variables.'
+    error 'Run ./clawbox setup interactively to migrate them, or edit .env manually:'
+    outf ' LLAMA_CTX="%s"' "${LLAMA_MIGRATION_CTX:-${LLAMA_CTX:-32768}}"
+    outf ' LLAMA_PARALLEL="%s"' "${LLAMA_MIGRATION_PARALLEL:-1}"
+    outf ' LLAMA_GPU_LAYERS="%s"' "${LLAMA_MIGRATION_GPU_LAYERS:-}"
+    outf ' LLAMA_FLASH_ATTENTION="%s"' "${LLAMA_MIGRATION_FLASH_ATTENTION:-false}"
+    outf ' LLAMA_MLOCK="%s"' "${LLAMA_MIGRATION_MLOCK:-false}"
+    outf ' LLAMA_EXTRA_ARGS="%s"' "$proposed_extra_args"
+    return 1
+  fi
+
+  warn 'LLAMA_EXTRA_ARGS contains settings that ClawBox now manages directly.'
+  out 'ClawBox can migrate those flags into first-class .env variables while preserving unmanaged passthrough arguments.'
+  blank_line
+  out 'Proposed migration:'
+  outf ' LLAMA_CTX="%s"' "${LLAMA_MIGRATION_CTX:-${LLAMA_CTX:-32768}}"
+  outf ' LLAMA_PARALLEL="%s"' "${LLAMA_MIGRATION_PARALLEL:-1}"
+  outf ' LLAMA_GPU_LAYERS="%s"' "${LLAMA_MIGRATION_GPU_LAYERS:-}"
+  outf ' LLAMA_FLASH_ATTENTION="%s"' "${LLAMA_MIGRATION_FLASH_ATTENTION:-false}"
+  outf ' LLAMA_MLOCK="%s"' "${LLAMA_MIGRATION_MLOCK:-false}"
+  outf ' LLAMA_EXTRA_ARGS="%s"' "$proposed_extra_args"
+
+  prompt_yes_no 'Apply this LLAMA_EXTRA_ARGS migration now?' 'y'
+  if ! is_yes "$REPLY"; then
+    error 'LLAMA_EXTRA_ARGS migration was declined.'
+    error 'Move managed flags to first-class .env settings before setup can continue.'
+    return 1
+  fi
+
+  LLAMA_CTX="${LLAMA_MIGRATION_CTX:-${LLAMA_CTX:-32768}}"
+  LLAMA_PARALLEL="${LLAMA_MIGRATION_PARALLEL:-1}"
+  LLAMA_GPU_LAYERS="${LLAMA_MIGRATION_GPU_LAYERS:-}"
+  LLAMA_FLASH_ATTENTION="${LLAMA_MIGRATION_FLASH_ATTENTION:-false}"
+  LLAMA_MLOCK="${LLAMA_MIGRATION_MLOCK:-false}"
+  LLAMA_EXTRA_ARGS="$proposed_extra_args"
+
+  write_env_from_template
+  source_env_file || return $?
+
+  out 'LLAMA_EXTRA_ARGS migration applied.'
+}
+
 ensure_env_bootstrap() {
   local needs_setup=false
   local required_keys
@@ -42,14 +92,24 @@ ensure_env_bootstrap() {
   local llama_bin_default
   local llama_port_discovery_mode='discover'
   local openclaw_max_tokens_value
+  local llama_parallel_value
+  local llama_gpu_layers_value
+  local llama_flash_attention_value
+  local llama_mlock_value
+  local native_context_value=''
 
   if [ ! -f "$ENV_FILE" ]; then
     ENV_CREATED_FROM_EXAMPLE=true
   fi
 
   source_env_file
+  maybe_migrate_llama_extra_args || return $?
 
   validate_openclaw_token_context_values "${LLAMA_CTX:-32768}" "${OPENCLAW_MAX_TOKENS:-8192}" '.env' || return $?
+  LLAMA_PARALLEL="${LLAMA_PARALLEL:-1}"
+  LLAMA_GPU_LAYERS="${LLAMA_GPU_LAYERS:-}"
+  LLAMA_FLASH_ATTENTION="${LLAMA_FLASH_ATTENTION:-false}"
+  LLAMA_MLOCK="${LLAMA_MLOCK:-false}"
 
   if [ "$VM_REPAIR_MODE" = true ]; then
     required_keys='VM_IP VM_USER VM_USER_PATH VM_HOST VM_RUNTIME_PATH VM_MACHINE_NAME'
@@ -144,6 +204,12 @@ ensure_env_bootstrap() {
   fi
 
   selected_model_name="$REPLY"
+  if gguf_native_context_from_file "${MODEL_PATH:-}" >/dev/null 2>&1; then
+    native_context_value="$(gguf_native_context_from_file "$MODEL_PATH" 2>/dev/null || true)"
+    [ -z "$native_context_value" ] || outf 'Model native context: %s' "$native_context_value"
+  else
+    warn 'Model native context metadata is unavailable; using ClawBox defaults.'
+  fi
 
   derive_llama_bin_path
   configured_or_default 'LLAMA_BIN' "${LLAMA_BIN:-}" "$REPLY"
@@ -215,7 +281,7 @@ ensure_env_bootstrap() {
   if [ "$LLAMA_USE_EXISTING_INSTANCE" = true ]; then
     configured_or_default 'OPENCLAW_MAX_TOKENS' "${OPENCLAW_MAX_TOKENS:-}" '8192'
     openclaw_max_tokens_value="$REPLY"
-    configured_or_default 'LLAMA_CTX' "${LLAMA_CTX:-}" '32768'
+    configured_or_default 'LLAMA_CTX' "${LLAMA_CTX:-}" "${native_context_value:-32768}"
     llama_ctx_value="$REPLY"
     validate_openclaw_token_context_values "$llama_ctx_value" "$openclaw_max_tokens_value" 'setup input' || return $?
     llama_bin_value="$llama_bin_default"
@@ -227,8 +293,13 @@ ensure_env_bootstrap() {
   else
     configured_or_default 'OPENCLAW_MAX_TOKENS' "${OPENCLAW_MAX_TOKENS:-}" '8192'
     openclaw_max_tokens_value="$REPLY"
-    prompt_llama_context_for_openclaw "${LLAMA_CTX:-}" '32768' "$openclaw_max_tokens_value"
+    prompt_llama_context_for_openclaw "${LLAMA_CTX:-}" "${native_context_value:-32768}" "$openclaw_max_tokens_value"
     llama_ctx_value="$REPLY"
+    if [ -n "$native_context_value" ] && [ "$llama_ctx_value" -gt "$native_context_value" ] 2>/dev/null; then
+      warn "Configured LLAMA_CTX=$llama_ctx_value exceeds model native context $native_context_value."
+      prompt_yes_no 'Use this larger context anyway?' 'n'
+      is_yes "$REPLY" || return "$LLAMA_EXIT_GRACEFUL"
+    fi
 
     llama_bin_value="$llama_bin_default"
     llama_capture_status resolve_configured_llama_bin "$llama_bin_value"
@@ -263,6 +334,18 @@ ensure_env_bootstrap() {
   LLAMA_HOST="$llama_host_value"
   LLAMA_PORT="$llama_port_value"
   LLAMA_CTX="$llama_ctx_value"
+  configured_or_default 'LLAMA_PARALLEL' "${LLAMA_PARALLEL:-}" '1'
+  llama_parallel_value="$REPLY"
+  configured_or_default 'LLAMA_GPU_LAYERS' "${LLAMA_GPU_LAYERS:-}" ''
+  llama_gpu_layers_value="$REPLY"
+  configured_or_default 'LLAMA_FLASH_ATTENTION' "${LLAMA_FLASH_ATTENTION:-}" 'false'
+  llama_flash_attention_value="$REPLY"
+  configured_or_default 'LLAMA_MLOCK' "${LLAMA_MLOCK:-}" 'false'
+  llama_mlock_value="$REPLY"
+  LLAMA_PARALLEL="$llama_parallel_value"
+  LLAMA_GPU_LAYERS="$llama_gpu_layers_value"
+  LLAMA_FLASH_ATTENTION="$llama_flash_attention_value"
+  LLAMA_MLOCK="$llama_mlock_value"
   LLAMA_BASE_URL="$llama_base_url_value"
   OPENCLAW_MAX_TOKENS="$openclaw_max_tokens_value"
   write_env_from_template
@@ -295,6 +378,10 @@ ensure_env_bootstrap() {
   LLAMA_HOST="$llama_host_value"
   LLAMA_PORT="$llama_port_value"
   LLAMA_CTX="$llama_ctx_value"
+  LLAMA_PARALLEL="$llama_parallel_value"
+  LLAMA_GPU_LAYERS="$llama_gpu_layers_value"
+  LLAMA_FLASH_ATTENTION="$llama_flash_attention_value"
+  LLAMA_MLOCK="$llama_mlock_value"
   LLAMA_BASE_URL="$llama_base_url_value"
   OPENCLAW_MAX_TOKENS="${OPENCLAW_MAX_TOKENS:-8192}"
   FIREWALL_SHARED_SUBNET="$firewall_shared_subnet_value"
@@ -319,6 +406,10 @@ ensure_env_bootstrap() {
   print_summary_value "LLAMA_HOST" "${LLAMA_HOST:-}"
   print_summary_value "LLAMA_PORT" "${LLAMA_PORT:-}"
   print_summary_value "LLAMA_CTX" "${LLAMA_CTX:-}"
+  print_summary_value "LLAMA_PARALLEL" "${LLAMA_PARALLEL:-}"
+  print_summary_value "LLAMA_GPU_LAYERS" "${LLAMA_GPU_LAYERS:-}"
+  print_summary_value "LLAMA_FLASH_ATTENTION" "${LLAMA_FLASH_ATTENTION:-}"
+  print_summary_value "LLAMA_MLOCK" "${LLAMA_MLOCK:-}"
   print_summary_value "LLAMA_BASE_URL" "${LLAMA_BASE_URL:-}"
   print_summary_value "OPENCLAW_MAX_TOKENS" "${OPENCLAW_MAX_TOKENS:-}"
   print_summary_value "MODEL_PATH" "${MODEL_PATH:-}"

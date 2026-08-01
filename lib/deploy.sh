@@ -1,4 +1,5 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/output.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/context-runtime.sh"
 
 # Normal setup owns only these OpenClaw paths. Existing config files are never
 # uploaded or regenerated here; updates go through OpenClaw's config CLI.
@@ -482,6 +483,7 @@ openclaw_config_desired_entries_for_scope() {
     printf '%s\t%s\n' "models.providers.$provider.baseUrl" "${LLAMA_BASE_URL:-}"
     printf '%s\t%s\n' "models.providers.$provider.api" 'openai-completions'
     printf '%s\t%s\n' "models.providers.$provider.models" "$models"
+    openclaw_managed_token_budget_entries "${OPENCLAW_EFFECTIVE_CONTEXT_WINDOW:-${LLAMA_CTX:-32768}}" "${OPENCLAW_MAX_TOKENS:-8192}" || return 1
   fi
 
   if { [ "$scope" = all ] || [ "$scope" = memorySearch ]; } \

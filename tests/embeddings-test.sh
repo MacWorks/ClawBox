@@ -39,39 +39,49 @@ test_wrapper_arguments_are_profile_specific() {
   local primary_model="$TEMP_DIR/models/primary.gguf"
   local embed_model="$TEMP_DIR/models/embed.gguf"
   local primary_env="$TEMP_DIR/primary.env"
+  local primary_conflict_env="$TEMP_DIR/primary-conflict.env"
   local primary_empty_env="$TEMP_DIR/primary-empty.env"
   local primary_absent_env="$TEMP_DIR/primary-absent.env"
   local embed_env="$TEMP_DIR/embed-wrapper.env"
   local embed_empty_env="$TEMP_DIR/embed-empty.env"
   local embed_absent_env="$TEMP_DIR/embed-absent.env"
   local primary_output='' primary_empty_output='' primary_absent_output=''
+  local primary_conflict_output='' primary_conflict_status=0
   local embed_output='' embed_empty_output='' embed_absent_output=''
   mkdir -p "$(dirname "$primary_model")" "$(dirname "$embed_model")"
   : > "$primary_model"
   : > "$embed_model"
-  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS="-ngl 99"\n' "$fake_bin" "$primary_model" > "$primary_env"
-  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS=""\n' "$fake_bin" "$primary_model" > "$primary_empty_env"
+  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_FLASH_ATTENTION="true"\nLLAMA_MLOCK="true"\nLLAMA_EXTRA_ARGS="--threads 8"\n' "$fake_bin" "$primary_model" > "$primary_env"
+  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS="-ngl 99"\n' "$fake_bin" "$primary_model" > "$primary_conflict_env"
+  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_FLASH_ATTENTION="false"\nLLAMA_MLOCK="true"\nLLAMA_EXTRA_ARGS=""\n' "$fake_bin" "$primary_model" > "$primary_empty_env"
   printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\n' "$fake_bin" "$primary_model" > "$primary_absent_env"
   printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\nEMBEDDINGS_LLAMA_EXTRA_ARGS="--embedding -fa on"\n' "$fake_bin" "$embed_model" > "$embed_env"
   printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\nEMBEDDINGS_LLAMA_EXTRA_ARGS=""\n' "$fake_bin" "$embed_model" > "$embed_empty_env"
   printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\n' "$fake_bin" "$embed_model" > "$embed_absent_env"
   lsof() { return 1; }; export -f lsof
   primary_output="$(CLAWBOX_ENV_FILE="$primary_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
+  set +e
+  primary_conflict_output="$(CLAWBOX_ENV_FILE="$primary_conflict_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh" 2>&1)"
+  primary_conflict_status=$?
+  set -e
   primary_empty_output="$(CLAWBOX_ENV_FILE="$primary_empty_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   primary_absent_output="$(CLAWBOX_ENV_FILE="$primary_absent_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   embed_output="$(CLAWBOX_ENV_FILE="$embed_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   embed_empty_output="$(CLAWBOX_ENV_FILE="$embed_empty_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   embed_absent_output="$(CLAWBOX_ENV_FILE="$embed_absent_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
-  assert_contains 'primary wrapper appends primary args after required args' "$primary_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 -ngl 99"
+  assert_contains 'primary wrapper renders flash attention true with explicit value before mlock' "$primary_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 --parallel 1 --flash-attn on --mlock --threads 8"
+  assert_equals 'primary wrapper rejects managed flags in LLAMA_EXTRA_ARGS' "$primary_conflict_status" '1'
+  assert_contains 'primary wrapper reports managed flag conflicts' "$primary_conflict_output" 'LLAMA_EXTRA_ARGS conflicts with ClawBox-managed llama-server settings: -ngl'
   assert_not_contains 'primary wrapper excludes embeddings arg by default' "$primary_output" '--embedding'
-  assert_contains 'primary wrapper accepts empty LLAMA_EXTRA_ARGS' "$primary_empty_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384"
+  assert_contains 'primary wrapper renders flash attention false with explicit value before mlock' "$primary_empty_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 --parallel 1 --flash-attn off --mlock"
   assert_not_contains 'primary wrapper empty LLAMA_EXTRA_ARGS appends nothing' "$primary_empty_output" '-ngl'
-  assert_contains 'primary wrapper accepts absent LLAMA_EXTRA_ARGS under set -u' "$primary_absent_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384"
+  assert_contains 'primary wrapper accepts absent LLAMA_EXTRA_ARGS under set -u' "$primary_absent_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 --parallel 1 --flash-attn off"
   assert_not_contains 'primary wrapper absent LLAMA_EXTRA_ARGS appends nothing' "$primary_absent_output" '-ngl'
-  assert_contains 'embeddings wrapper uses embeddings model and args' "$embed_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --embedding -fa on"
-  assert_contains 'embeddings wrapper accepts empty EMBEDDINGS_LLAMA_EXTRA_ARGS' "$embed_empty_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192"
+  assert_contains 'embeddings wrapper uses embeddings model and args' "$embed_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --parallel 1 --embedding -fa on"
+  assert_not_contains 'embeddings wrapper does not inherit primary flash attention management' "$embed_output" '--flash-attn'
+  assert_contains 'embeddings wrapper accepts empty EMBEDDINGS_LLAMA_EXTRA_ARGS' "$embed_empty_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --parallel 1"
   assert_not_contains 'embeddings wrapper empty extra args appends nothing' "$embed_empty_output" '--embedding'
-  assert_contains 'embeddings wrapper accepts absent EMBEDDINGS_LLAMA_EXTRA_ARGS under set -u' "$embed_absent_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192"
+  assert_contains 'embeddings wrapper accepts absent EMBEDDINGS_LLAMA_EXTRA_ARGS under set -u' "$embed_absent_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --parallel 1"
   assert_not_contains 'embeddings wrapper absent extra args appends nothing' "$embed_absent_output" '--embedding'
 }
 
@@ -108,7 +118,7 @@ test_runtime_env_writes_empty_extra_args_for_fresh_users() {
   assert_contains 'fresh embeddings runtime env includes empty EMBEDDINGS_LLAMA_EXTRA_ARGS' "$output" 'EMBEDDINGS_LLAMA_EXTRA_ARGS=""'
 }
 
-test_configured_endpoint_is_authoritative_for_setup() {
+test_configured_endpoint_failure_with_available_interface_requires_repair() {
   local output=''
   local status=0
   local curl_log="$TEMP_DIR/embeddings-curl.log"
@@ -117,6 +127,8 @@ test_configured_endpoint_is_authoritative_for_setup() {
   output="$({
     export BASE_DIR="$ROOT_DIR"
     export CLAWBOX_EMBEDDINGS_CURL_LOG="$curl_log"
+    export HOST_IP='192.168.64.1'
+    export EMBEDDINGS_LLAMA_HOST='0.0.0.0'
     export EMBEDDINGS_LLAMA_PORT=11435
     export EMBEDDINGS_LLAMA_BASE_URL='http://192.168.64.1:11435/v1'
     curl() {
@@ -130,6 +142,10 @@ test_configured_endpoint_is_authoritative_for_setup() {
       printf 'UNEXPECTED_CURL:%s\n' "$*"
       return 2
     }
+    ifconfig() {
+      printf '%s\n' 'bridge100: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST>'
+      printf '%s\n' 'inet 192.168.64.1 netmask 0xffffff00 broadcast 192.168.64.255'
+    }
     . "$ROOT_DIR/lib/llama.sh"
     set +e
     embeddings_llama_verify_configured_endpoint
@@ -138,12 +154,113 @@ test_configured_endpoint_is_authoritative_for_setup() {
     printf 'STATUS=%s\n' "$status"
   } 2>&1)"
 
-  assert_contains 'embeddings setup fails when only loopback responds' "$output" 'STATUS=1'
-  assert_contains 'embeddings setup reports configured VM-facing endpoint failure' "$output" 'Embeddings llama-server responds on loopback but not at the configured VM-facing endpoint: http://192.168.64.1:11435/v1'
+  assert_contains 'embeddings setup fails when interface exists but only loopback responds' "$output" 'STATUS=1'
+  assert_contains 'embeddings setup reports configured VM-facing endpoint failure' "$output" 'Embeddings llama-server responds locally but not at the configured VM-facing endpoint: http://192.168.64.1:11435/v1'
   curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
   assert_contains 'embeddings setup probes the configured /v1/models endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'
   assert_contains 'embeddings setup probes loopback only as diagnostic' "$curl_output" 'http://127.0.0.1:11435/v1/models'
   assert_not_contains 'embeddings setup does not probe legacy root models path' "$curl_output" 'http://192.168.64.1:11435/models'
+}
+
+test_configured_endpoint_absent_interface_allows_loopback_reuse() {
+  local output=''
+  local status=0
+  local curl_log="$TEMP_DIR/embeddings-absent-interface-curl.log"
+  local curl_output=''
+
+  output="$({
+    export BASE_DIR="$ROOT_DIR"
+    export CLAWBOX_EMBEDDINGS_CURL_LOG="$curl_log"
+    export HOST_IP='192.168.64.1'
+    export EMBEDDINGS_LLAMA_HOST='0.0.0.0'
+    export EMBEDDINGS_LLAMA_PORT=11435
+    export EMBEDDINGS_LLAMA_BASE_URL='http://192.168.64.1:11435/v1'
+    curl() {
+      printf '%s\n' "$*" >> "$CLAWBOX_EMBEDDINGS_CURL_LOG"
+      if [[ "$*" == *'http://192.168.64.1:11435/v1/models'* ]]; then
+        return 1
+      fi
+      if [[ "$*" == *'http://127.0.0.1:11435/v1/models'* ]]; then
+        return 0
+      fi
+      printf 'UNEXPECTED_CURL:%s\n' "$*"
+      return 2
+    }
+    ifconfig() {
+      printf '%s\n' 'lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>'
+      printf '%s\n' 'inet 127.0.0.1 netmask 0xff000000'
+    }
+    . "$ROOT_DIR/lib/llama.sh"
+    set +e
+    embeddings_llama_verify_configured_endpoint
+    status=$?
+    set -e
+    printf 'STATUS=%s\n' "$status"
+  } 2>&1)"
+
+  assert_contains 'embeddings setup accepts local health when VM-facing interface is absent' "$output" 'STATUS=0'
+  assert_contains 'embeddings setup reports missing VM-facing interface' "$output" 'Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet.'
+  assert_contains 'embeddings setup reports local readiness endpoint' "$output" 'Local readiness: http://127.0.0.1:11435/v1'
+  assert_contains 'embeddings setup reports configured VM-facing endpoint' "$output" 'VM-facing endpoint: http://192.168.64.1:11435/v1'
+  assert_not_contains 'embeddings setup local readiness line has no leading whitespace' "$output" $'\n  Local readiness:'
+  assert_not_contains 'embeddings setup vm-facing line has no leading whitespace' "$output" $'\n  VM-facing endpoint:'
+  assert_not_contains 'embeddings setup vm-interface explanation has no leading whitespace' "$output" $'\n  The UTM/VM host network interface'
+  assert_not_contains 'embeddings setup absent interface does not recommend rebind' "$output" 'Restart/update embeddings setup'
+  curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
+  assert_contains 'embeddings setup absent interface probes configured endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'
+  assert_contains 'embeddings setup absent interface probes local readiness' "$curl_output" 'http://127.0.0.1:11435/v1/models'
+}
+
+test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint() {
+  local output=''
+  local status=0
+  local curl_log="$TEMP_DIR/embeddings-start-curl.log"
+  local model_path="$TEMP_DIR/models/embed-start.gguf"
+  local fake_bin='/bin/echo'
+
+  mkdir -p "$(dirname "$model_path")"
+  : > "$model_path"
+
+  output="$({
+    export HOME="$TEMP_DIR/embeddings-start-home"
+    export BASE_DIR="$ROOT_DIR"
+    export CLAWBOX_EMBEDDINGS_CURL_LOG="$curl_log"
+    export LLAMA_BIN="$fake_bin"
+    export EMBEDDINGS_MODEL_PATH="$model_path"
+    export EMBEDDINGS_LLAMA_HOST='0.0.0.0'
+    export EMBEDDINGS_LLAMA_PORT=11435
+    export EMBEDDINGS_LLAMA_CTX=8192
+    export EMBEDDINGS_LLAMA_EXTRA_ARGS='--embedding'
+    export EMBEDDINGS_LLAMA_BASE_URL='http://192.168.64.1:11435/v1'
+    curl() {
+      printf '%s\n' "$*" >> "$CLAWBOX_EMBEDDINGS_CURL_LOG"
+      if [[ "$*" == *'http://127.0.0.1:11435/v1/models'* ]]; then
+        return 0
+      fi
+      if [[ "$*" == *'http://192.168.64.1:11435/v1/models'* ]]; then
+        return 1
+      fi
+      printf 'UNEXPECTED_CURL:%s\n' "$*"
+      return 2
+    }
+    ifconfig() {
+      printf '%s\n' 'lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>'
+      printf '%s\n' 'inet 127.0.0.1 netmask 0xff000000'
+    }
+    launchctl() { return 0; }
+    sleep() { :; }
+    . "$ROOT_DIR/lib/llama.sh"
+    set +e
+    setup_embeddings_llama_service_for_mode user
+    status=$?
+    set -e
+    printf 'STATUS=%s\n' "$status"
+  } 2>&1)"
+
+  assert_contains 'embeddings service start succeeds from local readiness' "$output" 'STATUS=0'
+  curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
+  assert_contains 'embeddings service start probes local readiness' "$curl_output" 'http://127.0.0.1:11435/v1/models'
+  assert_contains 'embeddings service start separately probes VM-facing endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'
 }
 
 test_disabled_status_and_model_preservation_contract() {
@@ -266,6 +383,64 @@ test_setup_rerun_preserves_existing_embeddings_service() {
   assert_not_contains 'existing embeddings reuse does not rewrite env' "$output" 'WRITE_ENV_UNEXPECTED'
 }
 
+test_setup_rerun_reuses_embeddings_when_loopback_healthy_and_vm_interface_absent() {
+  local embed_model="$TEMP_DIR/models/existing-loopback-embed.gguf"
+  local output
+  local curl_log="$TEMP_DIR/existing-embeddings-loopback-curl.log"
+  mkdir -p "$(dirname "$embed_model")"
+  : > "$embed_model"
+  output="$({
+    export TEMP_DIR ROOT_DIR
+    export TEST_EMBED_MODEL="$embed_model"
+    export CLAWBOX_EMBEDDINGS_CURL_LOG="$curl_log"
+    . "$ROOT_DIR/tests/helpers/setup-harness.sh"
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers '1'
+    HOST_IP=192.168.64.1
+    LLAMA_BIN=/opt/homebrew/bin/llama-server
+    LLAMA_PORT=11434
+    EMBEDDINGS_ENABLED=true
+    EMBEDDINGS_MODEL_PATH="$TEST_EMBED_MODEL"
+    EMBEDDINGS_LLAMA_HOST=0.0.0.0
+    EMBEDDINGS_LLAMA_PORT=11435
+    EMBEDDINGS_LLAMA_BASE_URL=http://192.168.64.1:11435/v1
+    embeddings_llama_service_loaded() { [ "$1" = user ]; }
+    llama_port_in_use() { return 0; }
+    curl() {
+      printf '%s\n' "$*" >> "$CLAWBOX_EMBEDDINGS_CURL_LOG"
+      if [[ "$*" == *'http://192.168.64.1:11435/v1/models'* ]]; then
+        return 1
+      fi
+      if [[ "$*" == *'http://127.0.0.1:11435/v1/models'* ]]; then
+        return 0
+      fi
+      printf 'UNEXPECTED_CURL:%s\n' "$*"
+      return 2
+    }
+    ifconfig() {
+      printf '%s\n' 'lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>'
+      printf '%s\n' 'inet 127.0.0.1 netmask 0xff000000'
+    }
+    write_env_from_template() { printf 'WRITE_ENV_UNEXPECTED\n'; }
+    source_env_file() { :; }
+    setup_embeddings_llama_service_for_mode() { printf 'RESTART_UNEXPECTED\n'; }
+    setup_embeddings_service_phase
+    printf 'FINAL:%s:%s:%s:%s\n' "$EMBEDDINGS_ENABLED" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_LLAMA_PORT" "$EMBEDDINGS_LLAMA_BASE_URL"
+  } 2>&1)"
+  assert_contains 'existing embeddings loopback reuse reports local health' "$output" 'Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet.'
+  assert_contains 'existing embeddings loopback reuse accepts existing service' "$output" 'Using existing embeddings llama-server.'
+  assert_contains 'existing embeddings loopback reuse reports local endpoint' "$output" 'Local endpoint: http://127.0.0.1:11435/v1'
+  assert_contains 'existing embeddings loopback reuse reports configured VM endpoint' "$output" 'Configured VM endpoint: http://192.168.64.1:11435/v1'
+  assert_contains 'existing embeddings loopback reuse preserves enabled config' "$output" "FINAL:true:$embed_model:11435:http://192.168.64.1:11435/v1"
+  assert_not_contains 'existing embeddings loopback local readiness line has no leading whitespace' "$output" $'\n  Local readiness:'
+  assert_not_contains 'existing embeddings loopback vm-facing line has no leading whitespace' "$output" $'\n  VM-facing endpoint:'
+  assert_not_contains 'existing embeddings loopback vm-interface explanation has no leading whitespace' "$output" $'\n  The UTM/VM host network interface'
+  assert_not_contains 'existing embeddings loopback reuse does not recommend restart' "$output" 'Choose restart/update'
+  assert_not_contains 'existing embeddings loopback reuse does not restart service' "$output" 'RESTART_UNEXPECTED'
+  assert_not_contains 'existing embeddings loopback reuse does not rewrite env' "$output" 'WRITE_ENV_UNEXPECTED'
+}
+
 test_setup_rerun_stopped_embeddings_offers_repair_not_fresh_enable() {
   local embed_model="$TEMP_DIR/models/stopped-embed.gguf"
   local output
@@ -326,10 +501,13 @@ test_disabled_embeddings_keeps_fresh_enable_prompt() {
 run_test test_runtime_artifacts_are_distinct
 run_test test_wrapper_arguments_are_profile_specific
 run_test test_runtime_env_writes_empty_extra_args_for_fresh_users
-run_test test_configured_endpoint_is_authoritative_for_setup
+run_test test_configured_endpoint_failure_with_available_interface_requires_repair
+run_test test_configured_endpoint_absent_interface_allows_loopback_reuse
+run_test test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint
 run_test test_disabled_status_and_model_preservation_contract
 run_test test_port_selection_contract
 run_test test_setup_rerun_preserves_existing_embeddings_service
+run_test test_setup_rerun_reuses_embeddings_when_loopback_healthy_and_vm_interface_absent
 run_test test_setup_rerun_stopped_embeddings_offers_repair_not_fresh_enable
 run_test test_disabled_embeddings_keeps_fresh_enable_prompt
 [ "$FAILURES" -eq 0 ] && { echo 'PASS: embeddings test suite succeeded'; exit 0; }

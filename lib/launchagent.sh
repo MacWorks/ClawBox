@@ -33,9 +33,17 @@ launchagent_plist_matches() {
     }
   ' "$LAUNCHAGENT_PATH" || return 1
 
-  if grep -Fq '<key>KeepAlive</key>' "$LAUNCHAGENT_PATH"; then
-    return 1
-  fi
+  awk '
+    /<key>KeepAlive<\/key>/ { in_keepalive=1; next }
+    in_keepalive && /<\/dict>/ { exit }
+    in_keepalive && /<key>SuccessfulExit<\/key>/ {
+      getline
+      if ($0 ~ /<false\/>/) found=1
+    }
+    END {
+      if (!found) exit 1
+    }
+  ' "$LAUNCHAGENT_PATH" || return 1
 
   return 0
 }
@@ -46,6 +54,13 @@ launchagent_service_target() {
 
 launchagent_service_loaded() {
   launchctl print "$(launchagent_service_target)" >/dev/null 2>&1
+}
+
+launchagent_runtime_operational() {
+  [ -x "$LAUNCHAGENT_WRAPPER_DEST" ] || return 1
+  [ -f "$LAUNCHAGENT_PATH" ] || return 1
+  launchagent_plist_matches || return 1
+  launchagent_service_loaded || return 1
 }
 
 setup_launchagent() {
@@ -68,7 +83,7 @@ setup_launchagent() {
 
   if [ "$existing_runtime" = true ]; then
     blank_line
-    out 'Existing VM auto-start runtime service detected.'
+    out 'Existing host VM auto-start service detected.'
 
     if [ -f "$LAUNCHAGENT_PATH" ] && launchagent_plist_matches && launchagent_service_loaded; then
       runtime_state='loaded and matches the expected configuration'
@@ -85,8 +100,19 @@ setup_launchagent() {
     out "  Service: $(if launchagent_service_loaded; then printf 'loaded'; else printf 'not loaded'; fi)"
     out "  Wrapper: $(if [ -x "$LAUNCHAGENT_WRAPPER_DEST" ]; then printf 'installed'; else printf 'missing'; fi)"
     blank_line
-    out '1) Keep and use the existing runtime service (recommended)'
-    out '2) Reinstall/update runtime service'
+    case "$runtime_state" in
+      'loaded and matches the expected configuration'|'present on disk and matches the expected configuration')
+        out '1) Keep and use the existing host VM auto-start service (recommended)'
+        out '2) Reinstall/update host VM auto-start service'
+        ;;
+      *)
+        warn 'The existing host VM auto-start service does not match this ClawBox version.'
+        out 'Keeping it will preserve the old behavior; the latest reliability fixes will not be applied.'
+        blank_line
+        out '1) Keep the existing host VM auto-start service'
+        out '2) Reinstall/update host VM auto-start service (recommended)'
+        ;;
+    esac
     out '3) Disable/remove runtime service'
     out '4) Skip runtime service management during setup'
     blank_line
@@ -102,7 +128,11 @@ setup_launchagent() {
       case "$runtime_choice" in
         1|4)
           if [ "$runtime_choice" = '1' ]; then
-            VM_AUTOSTART_STATE='kept'
+            if launchagent_runtime_operational; then
+              VM_AUTOSTART_STATE='kept'
+            else
+              VM_AUTOSTART_STATE='unverified'
+            fi
           else
             VM_AUTOSTART_STATE='skipped'
           fi
@@ -166,6 +196,12 @@ setup_launchagent() {
     <key>RunAtLoad</key>
     <true/>
 
+    <key>KeepAlive</key>
+    <dict>
+      <key>SuccessfulExit</key>
+      <false/>
+    </dict>
+
   <key>StandardOutPath</key>
   <string>$LAUNCHAGENT_STDOUT_LOG</string>
 
@@ -175,7 +211,16 @@ setup_launchagent() {
 </plist>
 EOF
   launchctl unload "$LAUNCHAGENT_PATH" 2>/dev/null || true
-  launchctl load "$LAUNCHAGENT_PATH"
+  launchctl load "$LAUNCHAGENT_PATH" || {
+    VM_AUTOSTART_STATE='unverified'
+    llama_fail "VM auto-start LaunchAgent could not be loaded."
+    return 1
+  }
+  if ! launchagent_runtime_operational; then
+    VM_AUTOSTART_STATE='unverified'
+    llama_fail "VM auto-start LaunchAgent was installed but could not be verified as loaded."
+    return 1
+  fi
   VM_AUTOSTART_STATE='enabled'
   out "LaunchAgent installed."
 }

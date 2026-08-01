@@ -65,6 +65,11 @@ three reliability iterations, while `--scenario 01-tool-reliability` runs ten.
 `--json` writes only the aggregate JSON document to stdout. Progress and
 diagnostics are written to stderr. The aggregate `model` field is an object with
 `alias`, `configured`, and `running` values.
+The aggregate `runtime` field records the token-budget contract observed before
+the run: native GGUF context when available, configured `LLAMA_CTX`, effective
+llama-server context, slot counts, OpenClaw `contextWindow`, OpenClaw
+`maxTokens`, compaction reserves, and the prompt budget before reserve. These
+values are diagnostic metadata; qualification does not edit runtime settings.
 
 Before publishing or running scenarios, ClawBox verifies that the configured
 host model from `.env` matches the model currently reported by the host

@@ -357,6 +357,60 @@ EOF
   assert_contains 'source_env_file returns failure for invalid env syntax' "$output" 'STATUS:1'
 }
 
+test_llama_extra_args_migration_preserves_runtime_behavior() {
+  local output
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers ''
+
+    BASE_DIR="$TEMP_DIR"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_FILE="$TEMP_DIR/.env"
+    cp "$ENV_EXAMPLE_FILE" "$ENV_FILE"
+
+    awk '
+      /^LLAMA_CTX=/ { print "LLAMA_CTX=\"32768\""; next }
+      /^LLAMA_PARALLEL=/ { print "LLAMA_PARALLEL=\"1\""; next }
+      /^LLAMA_GPU_LAYERS=/ { print "LLAMA_GPU_LAYERS=\"\""; next }
+      /^LLAMA_FLASH_ATTENTION=/ { print "LLAMA_FLASH_ATTENTION=\"false\""; next }
+      /^LLAMA_MLOCK=/ { print "LLAMA_MLOCK=\"false\""; next }
+      /^LLAMA_EXTRA_ARGS=/ { print "LLAMA_EXTRA_ARGS=\"-ngl 99 --jinja -fa on --mlock --parallel 1\""; next }
+      { print }
+    ' "$ENV_FILE" > "$TEMP_DIR/env-migrated"
+    mv "$TEMP_DIR/env-migrated" "$ENV_FILE"
+
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    source_env_file
+    maybe_migrate_llama_extra_args < <(printf '\n')
+
+    printf 'CTX:%s\n' "$LLAMA_CTX"
+    printf 'PARALLEL:%s\n' "$LLAMA_PARALLEL"
+    printf 'GPU:%s\n' "$LLAMA_GPU_LAYERS"
+    printf 'FLASH:%s\n' "$LLAMA_FLASH_ATTENTION"
+    printf 'MLOCK:%s\n' "$LLAMA_MLOCK"
+    printf 'EXTRA:%s\n' "$LLAMA_EXTRA_ARGS"
+    printf 'ENV_GPU:%s\n' "$(grep '^LLAMA_GPU_LAYERS=' "$ENV_FILE")"
+    printf 'ENV_FLASH:%s\n' "$(grep '^LLAMA_FLASH_ATTENTION=' "$ENV_FILE")"
+    printf 'ENV_MLOCK:%s\n' "$(grep '^LLAMA_MLOCK=' "$ENV_FILE")"
+    printf 'ENV_EXTRA:%s\n' "$(grep '^LLAMA_EXTRA_ARGS=' "$ENV_FILE")"
+  } 2>&1)"
+
+  assert_contains 'llama extra args migration reports proposed first-class values' "$output" 'Proposed migration:'
+  assert_contains 'llama extra args migration keeps existing context' "$output" 'CTX:32768'
+  assert_contains 'llama extra args migration preserves parallel value' "$output" 'PARALLEL:1'
+  assert_contains 'llama extra args migration moves gpu layers' "$output" 'GPU:99'
+  assert_contains 'llama extra args migration enables flash attention' "$output" 'FLASH:true'
+  assert_contains 'llama extra args migration enables mlock' "$output" 'MLOCK:true'
+  assert_contains 'llama extra args migration preserves unmanaged jinja passthrough' "$output" 'EXTRA:--jinja'
+  assert_contains 'llama extra args migration persists gpu layers' "$output" 'ENV_GPU:LLAMA_GPU_LAYERS="99"'
+  assert_contains 'llama extra args migration persists flash attention' "$output" 'ENV_FLASH:LLAMA_FLASH_ATTENTION="true"'
+  assert_contains 'llama extra args migration persists mlock' "$output" 'ENV_MLOCK:LLAMA_MLOCK="true"'
+  assert_contains 'llama extra args migration persists only passthrough args' "$output" 'ENV_EXTRA:LLAMA_EXTRA_ARGS="--jinja"'
+}
+
 test_prompt_openclaw_autostart_respects_existing_default_and_reprompts_on_invalid_input() {
   local output
 
@@ -614,6 +668,7 @@ run_test test_write_env_from_template_creates_backup_when_explicitly_enabled
 run_test test_write_env_from_template_is_safe_without_setup_backup_globals
 run_test test_normalize_openclaw_autostart_maps_inputs
 run_test test_source_env_file_rejects_invalid_env_syntax
+run_test test_llama_extra_args_migration_preserves_runtime_behavior
 run_test test_prompt_openclaw_autostart_respects_existing_default_and_reprompts_on_invalid_input
 run_test test_host_ip_and_firewall_subnet_derivation_use_vm_ip_defaults
 run_test test_resolve_configured_llama_bin_uses_real_wrapper_logic

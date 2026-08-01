@@ -375,6 +375,8 @@ sync_model_openclaw_config_scope() {
 }
 
 switch_primary_model() {
+  local native_context=''
+
   [ -f "$ENV_FILE" ] || { error 'Missing .env. Run ./clawbox setup first.'; return 1; }
   source_env_file || return $?
 
@@ -393,6 +395,16 @@ switch_primary_model() {
   is_yes "$REPLY" || { out 'Model switch cancelled; host model is unchanged.'; return 0; }
 
   setup_configure_model_selection || return $?
+  if native_context="$(gguf_native_context_from_file "${MODEL_PATH:-}" 2>/dev/null || true)" \
+    && [ -n "$native_context" ]
+  then
+    out "Model native context: $native_context"
+    if [ -n "${LLAMA_CTX:-}" ] && [[ "${LLAMA_CTX:-}" =~ ^[0-9]+$ ]] && [ "$LLAMA_CTX" -gt "$native_context" ]; then
+      warn "Configured LLAMA_CTX=$LLAMA_CTX exceeds model native context $native_context; llama-server may cap the effective runtime context."
+    fi
+  else
+    warn 'Model native context could not be read from GGUF metadata; preserving configured LLAMA_CTX.'
+  fi
   OPENCLAW_DEFAULT_MODEL="${OPENCLAW_DEFAULT_MODEL:-local}"
   write_env_from_template || return $?
   source_env_file || return $?
@@ -403,6 +415,7 @@ switch_primary_model() {
     out 'Review the llama-server logs, correct the host service, then run ./clawbox model again.'
     return 1
   fi
+  llama_refresh_openclaw_effective_context_window || return $?
   sync_model_openclaw_config_scope primary
   success "Host llama-server now uses ${MODEL_PATH##*/}."
   out "Selected GGUF: $MODEL_PATH"

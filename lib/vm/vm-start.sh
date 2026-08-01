@@ -29,6 +29,20 @@ vm_network_wait_interval() {
   printf '%s\n' '2'
 }
 
+vm_ssh_wait_interval() {
+  if [ -n "${CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS:-}" ]; then
+    printf '%s\n' "$CLAWBOX_VM_SSH_WAIT_INTERVAL_SECONDS"
+    return 0
+  fi
+
+  if [ "${VM_RECENTLY_STARTED:-false}" = true ]; then
+    printf '%s\n' '2'
+    return 0
+  fi
+
+  status_tick_interval
+}
+
 vm_ssh_wait_max_attempts() {
   printf '%s\n' "${CLAWBOX_VM_SSH_WAIT_MAX_ATTEMPTS:-200}"
 }
@@ -109,7 +123,7 @@ print_utm_start_attempt_summary() {
     out "Last startup exit status: ${UTM_START_LAST_STATUS:-unknown}"
     out 'Last startup output:'
     while IFS= read -r line; do
-      out "  $line"
+      out "$line"
     done <<EOF
 ${UTM_START_LAST_OUTPUT:-'(no output)'}
 EOF
@@ -421,7 +435,7 @@ wait_for_vm_running() {
   local wait_interval=''
 
   max_attempts="$(vm_runtime_wait_max_attempts)"
-  wait_interval="$(vm_onboarding_wait_interval)"
+  wait_interval="$(vm_ssh_wait_interval)"
 
   status_begin 'Waiting for VM runtime...'
 
@@ -445,7 +459,7 @@ wait_for_manual_vm_running() {
   local wait_interval=''
 
   max_attempts="$(manual_vm_runtime_wait_max_attempts)"
-  wait_interval="$(vm_onboarding_wait_interval)"
+  wait_interval="$(vm_ssh_wait_interval)"
 
   status_begin 'Checking for VM runtime...'
 
@@ -521,7 +535,16 @@ wait_for_vm_ssh_service() {
         status_end 'SSH readiness detected.' 'success'
         return 0
         ;;
-      ssh-refused|invalid-target|unreachable)
+      ssh-refused|unreachable)
+        if [ "${VM_RECENTLY_STARTED:-false}" = true ]; then
+          :
+        else
+          REPLY="$probe_state"
+          status_end 'SSH readiness check stopped.' 'warning'
+          return 1
+        fi
+        ;;
+      invalid-target)
         REPLY="$probe_state"
         status_end 'SSH readiness check stopped.' 'warning'
         return 1
@@ -533,6 +556,10 @@ wait_for_vm_ssh_service() {
   done
 
   REPLY='ssh-timeout'
-  status_end 'SSH readiness was not detected.' 'warning'
+  if [ "${VM_RECENTLY_STARTED:-false}" = true ]; then
+    status_end 'VM was started but did not become SSH-ready before the timeout.' 'warning'
+  else
+    status_end 'SSH readiness was not detected.' 'warning'
+  fi
   return 1
 }

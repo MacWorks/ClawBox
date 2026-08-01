@@ -26,6 +26,26 @@ repo_qualification_data_snapshot() {
 
 REPO_QUALIFICATION_DATA_SNAPSHOT="$(repo_qualification_data_snapshot)"
 
+write_qualify_mock_curl() {
+  local model_id="$1"
+  write_mock_command curl "#!/bin/bash
+last_arg=\"\"
+for arg in \"\$@\"; do last_arg=\"\$arg\"; done
+case \"\$last_arg\" in
+  */props)
+    [ -n \"\${CLAWBOX_TEST_QUALIFY_PROPS_JSON:-}\" ] && printf '%s\n' \"\$CLAWBOX_TEST_QUALIFY_PROPS_JSON\"
+    ;;
+  */slots)
+    [ -n \"\${CLAWBOX_TEST_QUALIFY_SLOTS_JSON:-}\" ] && printf '%s\n' \"\$CLAWBOX_TEST_QUALIFY_SLOTS_JSON\"
+    ;;
+  *)
+    printf '{\"data\":[{\"id\":\"$model_id\"}]}\n'
+    ;;
+esac
+exit \"\${CLAWBOX_TEST_QUALIFY_CURL_EXIT_CODE:-0}\"
+"
+}
+
 install_fake_openclaw() {
   setup_mock_bin_dir
   export CLAWBOX_QUALIFY_SESSION_DIR="$TEMP_DIR/sessions"
@@ -290,7 +310,7 @@ PY
 test_qualify_runner_default_json_runs_real_scenarios_with_fake_openclaw() {
   local output status=0
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='test-run' CLAWBOX_QUALIFY_STARTED_AT='2026-07-15T13:03:52Z' CLAWBOX_QUALIFY_START_EPOCH=100 CLAWBOX_QUALIFY_COMPLETED_AT='2026-07-15T13:24:17Z' CLAWBOX_QUALIFY_COMPLETED_EPOCH=1325 CLAWBOX_QUALIFY_SUITE_CHECKSUM='suite-checksum' CLAWBOX_QUALIFY_CLAWBOX_COMMIT='abc123' CLAWBOX_QUALIFY_CLAWBOX_DIRTY=false CLAWBOX_QUALIFY_MODEL_ALIAS='clawbox/local' CLAWBOX_QUALIFY_MODEL_CONFIGURED='Configured.gguf' CLAWBOX_QUALIFY_MODEL_RUNNING='Running.gguf' CLAWBOX_QUALIFY_MODEL_WARNING='configured and running differ' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='test-run' CLAWBOX_QUALIFY_STARTED_AT='2026-07-15T13:03:52Z' CLAWBOX_QUALIFY_START_EPOCH=100 CLAWBOX_QUALIFY_COMPLETED_AT='2026-07-15T13:24:17Z' CLAWBOX_QUALIFY_COMPLETED_EPOCH=1325 CLAWBOX_QUALIFY_SUITE_CHECKSUM='suite-checksum' CLAWBOX_QUALIFY_CLAWBOX_COMMIT='abc123' CLAWBOX_QUALIFY_CLAWBOX_DIRTY=false CLAWBOX_QUALIFY_MODEL_ALIAS='clawbox/local' CLAWBOX_QUALIFY_MODEL_CONFIGURED='Configured.gguf' CLAWBOX_QUALIFY_MODEL_RUNNING='Running.gguf' CLAWBOX_QUALIFY_MODEL_WARNING='configured and running differ' CLAWBOX_QUALIFY_NATIVE_CONTEXT=131072 CLAWBOX_QUALIFY_CONFIGURED_CONTEXT=65536 CLAWBOX_QUALIFY_RUNTIME_CONTEXT=32768 CLAWBOX_QUALIFY_TOTAL_SLOTS=1 CLAWBOX_QUALIFY_SLOT_CONTEXT=32768 CLAWBOX_QUALIFY_OPENCLAW_CONTEXT_WINDOW=32768 CLAWBOX_QUALIFY_OPENCLAW_MAX_TOKENS=8192 CLAWBOX_QUALIFY_RESERVE_TOKENS=8192 CLAWBOX_QUALIFY_RESERVE_TOKENS_FLOOR=8192 CLAWBOX_QUALIFY_PROMPT_BUDGET_BEFORE_RESERVE=24576 CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --json)"; status=$?; set -e
   assert_equals 'runner exits success when fake model passes all scenarios' "$status" '0'
   python3 - "$output" <<'PY'
 import json, sys
@@ -314,6 +334,16 @@ assert data['coverage']['workflowCases']==5
 assert data['model']['alias']=='clawbox/local'
 assert data['model']['configured']=='Configured.gguf'
 assert data['model']['running']=='Running.gguf'
+assert data['runtime']['nativeContext']==131072
+assert data['runtime']['configuredContext']==65536
+assert data['runtime']['runtimeContext']==32768
+assert data['runtime']['totalSlots']==1
+assert data['runtime']['perSlotContext']==32768
+assert data['runtime']['openclawContextWindow']==32768
+assert data['runtime']['openclawMaxTokens']==8192
+assert data['runtime']['reserveTokens']==8192
+assert data['runtime']['reserveTokensFloor']==8192
+assert data['runtime']['promptBudgetBeforeReserve']==24576
 assert 'configured and running differ' in data['warnings']
 assert data['overallStatus']=='PASS'
 assert len(data['scenarios'])==3
@@ -754,6 +784,7 @@ LLAMA_BASE_URL="http://127.0.0.1:11434/v1"
 MODEL_PATH="/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 OPENCLAW_PROVIDER_NAME="clawbox"
 OPENCLAW_DEFAULT_MODEL="local"
+OPENCLAW_CONFIG_PATH="$remote_runtime/openclaw.json"
 EOF_ENV
   export CLAWBOX_FAKE_REMOTE_ROOT="$remote_root"
   export CLAWBOX_FAKE_REMOTE_HOME="$remote_home"
@@ -761,13 +792,68 @@ EOF_ENV
   export CLAWBOX_HOST_REPO_ROOT="$ROOT_DIR"
   export CLAWBOX_FAKE_SSH_LOG="$log_file"
   mkdir -p "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-a" \
-    "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-b"
+    "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-b" \
+    "$remote_home/.openclaw" \
+    "$remote_runtime"
   printf 'keep-a\n' > "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-a/sentinel.txt"
   printf 'keep-b\n' > "$remote_home/.openclaw/workspace/.clawbox/qualification/runs/old-run-b/sentinel.txt"
-  write_mock_command curl '#!/bin/bash
-printf "{\"data\":[{\"id\":\"/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"}]}\n"
-exit 0
-'
+  cat > "$remote_home/.openclaw/openclaw.json" <<'EOF_ACTIVE_OPENCLAW'
+{
+  "agents": {
+    "defaults": {
+      "model": {"primary": "clawbox/local"},
+      "compaction": {
+        "reserveTokens": 8192,
+        "reserveTokensFloor": 8192
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "clawbox": {
+        "models": [
+          {
+            "id": "local",
+            "name": "local",
+            "api": "openai-completions",
+            "contextWindow": 65536,
+            "maxTokens": 8192
+          }
+        ]
+      }
+    }
+  }
+}
+EOF_ACTIVE_OPENCLAW
+  cat > "$remote_runtime/openclaw.json" <<'EOF_STAGED_OPENCLAW'
+{
+  "agents": {
+    "defaults": {
+      "model": {"primary": "clawbox/local"},
+      "compaction": {
+        "reserveTokens": 2048,
+        "reserveTokensFloor": 2048
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "clawbox": {
+        "models": [
+          {
+            "id": "local",
+            "name": "local",
+            "api": "openai-completions",
+            "contextWindow": 32768,
+            "maxTokens": 2048
+          }
+        ]
+      }
+    }
+  }
+}
+EOF_STAGED_OPENCLAW
+  write_qualify_mock_curl "/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
   write_mock_command scp '#!/bin/bash
 set -euo pipefail
 src=""
@@ -800,6 +886,8 @@ shift
 command="$*"
 printf "%s\n" "$command" >> "$CLAWBOX_FAKE_SSH_LOG"
 if [ "$command" = "echo ok" ]; then exit 0; fi
+if [[ "$command" == *"jq -cer --arg provider"* ]]; then HOME="$CLAWBOX_FAKE_REMOTE_HOME" bash -c "$command"; exit $?; fi
+if [[ "$command" == *"agents.defaults.compaction.reserveTokens"* ]]; then HOME="$CLAWBOX_FAKE_REMOTE_HOME" bash -c "$command"; exit $?; fi
 if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
 if [[ "$command" == rm\ -f* ]]; then exit 0; fi
 if [[ "$command" == *"tar -C"* ]]; then
@@ -824,6 +912,11 @@ if [[ "$command" == *"runner.sh"* ]]; then
   [[ "$command" == *"CLAWBOX_QUALIFY_PROFILE_ID=full"* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_SUITE_CHECKSUM="* ]]
   [[ "$command" == *"CLAWBOX_QUALIFY_CLAWBOX_COMMIT="* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_OPENCLAW_CONTEXT_WINDOW=65536"* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_OPENCLAW_MAX_TOKENS=8192"* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_RESERVE_TOKENS=8192"* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_RESERVE_TOKENS_FLOOR=8192"* ]]
+  [[ "$command" == *"CLAWBOX_QUALIFY_PROMPT_BUDGET_BEFORE_RESERVE=57344"* ]]
   printf "CLAWBOX_PROGRESS\t1\t10\t01-tool-reliability\titeration 1\n" >&2
   printf "remote diagnostic line\n" >&2
   printf "CLAWBOX_PROGRESS\t10\t10\t01-tool-reliability\titeration 10\n" >&2
@@ -877,6 +970,12 @@ PY
   assert_contains 'qualify self-heal passes default full profile to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_PROFILE_ID=full'
   assert_contains 'qualify self-heal passes suite checksum to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_SUITE_CHECKSUM='
   assert_contains 'qualify self-heal passes ClawBox commit to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_CLAWBOX_COMMIT='
+  assert_contains 'qualify self-heal passes active OpenClaw context window to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_OPENCLAW_CONTEXT_WINDOW=65536'
+  assert_contains 'qualify self-heal passes active OpenClaw reserve to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_RESERVE_TOKENS=8192'
+  assert_contains 'qualify self-heal passes active OpenClaw reserve floor to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_RESERVE_TOKENS_FLOOR=8192'
+  assert_contains 'qualify self-heal passes derived prompt budget to remote runner' "$(cat "$log_file")" 'CLAWBOX_QUALIFY_PROMPT_BUDGET_BEFORE_RESERVE=57344'
+  assert_contains 'qualify self-heal checks runtime evidence before publishing' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Checking runtime context evidence'
+  assert_contains 'qualify missing runtime endpoint evidence remains non-blocking' "$(cat "$log_file")" 'RUNNER'
   assert_contains 'qualify self-heal progress stays on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Publishing qualification suite to VM'
   assert_contains 'json mode progress is line-oriented on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Qualification progress: 1/10'
   assert_contains 'json mode progress reaches final unit on stderr' "$(cat "$TEMP_DIR/self-heal.stderr")" 'Qualification progress: 10/10'
@@ -903,10 +1002,7 @@ OPENCLAW_DEFAULT_MODEL="local"
 EOF_ENV
   export CLAWBOX_FAKE_REMOTE_HOME="$remote_home"
   export CLAWBOX_FAKE_SSH_LOG="$log_file"
-  write_mock_command curl '#!/bin/bash
-printf "{\"data\":[{\"id\":\"/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"}]}\n"
-exit 0
-'
+  write_qualify_mock_curl "/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
   write_mock_command scp '#!/bin/bash
 set -euo pipefail
 src=""; dest=""
@@ -959,7 +1055,7 @@ exit 0
   assert_contains 'human output shows compact model identity' "$output" 'Model under qualification: Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf'
   assert_contains 'human output shows OpenClaw alias' "$output" 'OpenClaw alias: clawbox/local'
   assert_contains 'human output shows qualification profile metadata' "$output" 'Qualification profile: Full'
-  assert_contains 'human output separates checks from model metadata' "$output" $'Checking configured model matches running model... ✓\n\nModel under qualification:'
+  assert_contains 'human output separates checks from model metadata' "$output" $'Checking runtime context evidence... ✓\n\nModel under qualification:'
   assert_contains 'human output separates metadata from execution group once' "$output" $'Qualification profile: Full\n\nRunning 01-tool-reliability qualification'
   assert_not_contains 'human output does not over-separate metadata from execution group' "$output" $'Qualification profile: Full\n\n\nRunning 01-tool-reliability qualification'
   assert_not_contains 'human output omits redundant configured model line' "$output" 'Configured model:'
@@ -1012,10 +1108,7 @@ OPENCLAW_DEFAULT_MODEL="local"
 EOF_ENV
   export CLAWBOX_FAKE_REMOTE_HOME="$remote_home"
   export CLAWBOX_FAKE_SSH_LOG="$log_file"
-  write_mock_command curl '#!/bin/bash
-printf "{\"data\":[{\"id\":\"/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf\"}]}\n"
-exit 0
-'
+  write_qualify_mock_curl "/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
   write_mock_command scp '#!/bin/bash
 set -euo pipefail
 src=""; dest=""
@@ -1142,10 +1235,7 @@ EOF_ENV
   export CLAWBOX_FAKE_REMOTE_HOME="$remote_home"
   export CLAWBOX_FAKE_SSH_LOG="$log_file"
   : > "$log_file"
-  write_mock_command curl '#!/bin/bash
-printf "{\"data\":[{\"id\":\"/Users/Shared/AI-Models/Running.gguf\"}]}\n"
-exit 0
-'
+  write_qualify_mock_curl "/Users/Shared/AI-Models/Running.gguf"
   write_mock_command scp '#!/bin/bash
 set -euo pipefail
 src=""; dest=""
@@ -1193,6 +1283,72 @@ PY
   assert_not_contains 'model mismatch prevents remote runner execution' "$(cat "$log_file")" 'runner.sh'
   assert_not_contains 'model mismatch JSON stdout has no progress' "$(cat "$stdout_file")" 'Checking host inference endpoint'
   assert_not_contains 'model mismatch JSON stdout has no spinner marker' "$(cat "$stdout_file")" '✓'
+}
+
+test_qualify_runtime_context_mismatch_stops_before_publish() {
+  local env_file="$TEMP_DIR/qualify-runtime-mismatch.env" stdout_file="$TEMP_DIR/runtime-mismatch.json" stderr_file="$TEMP_DIR/runtime-mismatch.progress" status=0
+  local remote_home="$TEMP_DIR/runtime-mismatch-remote/home" log_file="$TEMP_DIR/runtime-mismatch.log"
+  setup_mock_bin_dir
+  mkdir -p "$remote_home"
+  cat > "$env_file" <<EOF_ENV
+VM_HOST="vm-user@192.168.64.8"
+VM_RUNTIME_PATH="$TEMP_DIR/runtime-mismatch-runtime"
+LLAMA_BASE_URL="http://127.0.0.1:11434/v1"
+MODEL_PATH="/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+LLAMA_CTX="65536"
+LLAMA_PARALLEL="1"
+EOF_ENV
+  export CLAWBOX_FAKE_REMOTE_HOME="$remote_home"
+  export CLAWBOX_FAKE_SSH_LOG="$log_file"
+  export CLAWBOX_TEST_QUALIFY_PROPS_JSON='{"default_generation_settings":{"n_ctx":32768},"total_slots":1}'
+  export CLAWBOX_TEST_QUALIFY_SLOTS_JSON='[{"id":0,"n_ctx":32768}]'
+  : > "$log_file"
+  write_qualify_mock_curl "/Users/Shared/AI-Models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+  write_mock_command scp '#!/bin/bash
+set -euo pipefail
+src=""; dest=""
+while [ "$#" -gt 0 ]; do case "$1" in -*) shift ;; *) if [ -z "$src" ]; then src="$1"; else dest="$1"; fi; shift ;; esac; done
+rel="${dest#*:}"; rel="${rel#~/}"
+mkdir -p "$CLAWBOX_FAKE_REMOTE_HOME/$(dirname "$rel")"
+cp "$src" "$CLAWBOX_FAKE_REMOTE_HOME/$rel"
+'
+  write_mock_command ssh '#!/bin/bash
+set -euo pipefail
+while [ "$#" -gt 0 ]; do case "$1" in -n|-o) if [ "$1" = "-o" ]; then shift 2; else shift; fi ;; *) break ;; esac; done
+host="$1"; shift; command="$*"
+printf "%s\n" "$command" >> "$CLAWBOX_FAKE_SSH_LOG"
+if [ "$command" = "echo ok" ]; then exit 0; fi
+if [[ "$command" == mkdir\ -p\ ~/.clawbox/tmp* ]]; then exit 0; fi
+if [[ "$command" == rm\ -f* ]]; then exit 0; fi
+if [[ "$command" == *"tar -C"* ]] || [[ "$command" == *"runner.sh"* ]]; then exit 88; fi
+if [[ "$command" == *"zsh -l"* ]]; then
+  remote_path="${command#*zsh -l }"; remote_path="${remote_path%\"}"; remote_path="${remote_path#\"}"; remote_path="${remote_path#\$HOME/}"
+  script="$CLAWBOX_FAKE_REMOTE_HOME/$remote_path"
+  if grep -Fq "openclaw config get agents.defaults.model.primary" "$script"; then printf "clawbox/local\n"; exit 0; fi
+  if grep -Fq "command -v openclaw" "$script"; then exit 0; fi
+  if grep -Fq ".clawbox-manifest.json" "$script"; then exit 0; fi
+fi
+exit 0
+'
+  set +e
+  PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_ENV_FILE="$env_file" bash "$ROOT_DIR/scripts/qualify.sh" --json --scenario 01-tool-reliability >"$stdout_file" 2>"$stderr_file"
+  status=$?
+  set -e
+  assert_equals 'qualification runtime mismatch exits infrastructure error' "$status" '2'
+  python3 - "$stdout_file" <<'PY'
+import json, sys
+with open(sys.argv[1], 'r', encoding='utf-8') as fh:
+    data=json.load(fh)
+assert data['overallStatus']=='ERROR'
+assert data['errorCode']=='RUNTIME_CONTEXT_MISMATCH'
+PY
+  pass 'qualification runtime mismatch stdout remains valid JSON'
+  assert_contains 'qualification runtime mismatch preflight fails clearly' "$(cat "$stderr_file")" 'Checking runtime context evidence... ✗'
+  assert_contains 'qualification runtime mismatch reports configured context' "$(cat "$stderr_file")" 'llama-server runtime context (32768) differs from configured LLAMA_CTX (65536)'
+  assert_not_contains 'qualification runtime mismatch prevents publication' "$(cat "$log_file")" 'tar -C'
+  assert_not_contains 'qualification runtime mismatch prevents remote runner execution' "$(cat "$log_file")" 'runner.sh'
 }
 
 test_tool_reliability_extra_calls_warn_but_do_not_fail() {
@@ -1466,7 +1622,8 @@ test_payload_excludes_prototypes_and_tests() {
 test_qualify_sources_avoid_openclaw_config_replacement() {
   local source_text
   source_text="$(cat "$ROOT_DIR/scripts/qualify.sh" "$ROOT_DIR/lib/qualify/qualify.sh")"
-  assert_not_contains 'qualify command does not replace openclaw config' "$source_text" 'openclaw.json'
+  assert_not_contains 'qualify command does not set openclaw config' "$source_text" 'openclaw config set'
+  assert_not_contains 'qualify command does not reset openclaw config' "$source_text" 'openclaw reset'
   assert_not_contains 'qualify command does not run onboarding' "$source_text" 'openclaw onboard'
   assert_not_contains 'qualify command does not switch models' "$source_text" 'MODEL_PATH='
 }
@@ -1510,6 +1667,7 @@ run_test test_qualify_command_self_heals_without_setup
 run_test test_qualify_human_output_is_polished
 run_test test_qualify_renders_valid_remote_results_before_returning_status
 run_test test_qualify_model_mismatch_stops_before_publish
+run_test test_qualify_runtime_context_mismatch_stops_before_publish
 run_test test_tool_reliability_extra_calls_warn_but_do_not_fail
 run_test test_tool_reliability_reply_mismatch_is_precise_failure
 run_test test_tool_reliability_fabricated_success_fails

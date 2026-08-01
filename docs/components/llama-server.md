@@ -40,6 +40,10 @@ Relevant values:
 - `LLAMA_HOST`
 - `LLAMA_PORT`
 - `LLAMA_CTX`
+- `LLAMA_PARALLEL`
+- `LLAMA_GPU_LAYERS`
+- `LLAMA_FLASH_ATTENTION`
+- `LLAMA_MLOCK`
 - `LLAMA_EXTRA_ARGS` (optional simple whitespace-separated flags appended after
   ClawBox's required arguments; quoting, embedded spaces, and shell expansion
   inside this value are not supported)
@@ -62,12 +66,26 @@ The configured embeddings base URL is authoritative. A server that responds on
 host loopback but not at `EMBEDDINGS_LLAMA_BASE_URL` is reported as unhealthy,
 because the VM and OpenClaw use the configured host-facing endpoint.
 
-New setups default `LLAMA_PORT` to `11434` and `LLAMA_CTX` to `32768`.
+New setups default `LLAMA_PORT` to `11434`, `LLAMA_CTX` to `32768`, and
+`LLAMA_PARALLEL` to `1`. `LLAMA_PARALLEL` controls llama.cpp slot parallelism;
+each slot receives an effective context slice, so raising it can reduce the
+per-request context available to OpenClaw. `LLAMA_GPU_LAYERS`,
+`LLAMA_FLASH_ATTENTION`, and `LLAMA_MLOCK` expose common llama.cpp runtime
+flags without requiring users to place managed flags in `LLAMA_EXTRA_ARGS`.
 Existing `.env` values are kept as-is. `OPENCLAW_MAX_TOKENS` is a separate
 OpenClaw output-token setting and must be lower than the effective context
 window. If llama-server reports that it capped the configured `LLAMA_CTX`, setup
 uses the reported effective value for OpenClaw `contextWindow` without rewriting
 the requested `.env` value.
+
+ClawBox owns the following llama-server arguments for the primary managed
+service: context size, parallel slots, GPU layers, flash attention, and mlock.
+If `LLAMA_EXTRA_ARGS` includes equivalent flags such as `--ctx-size`,
+`--parallel`, `--n-gpu-layers`, `--flash-attn`, or `--mlock`, setup fails
+clearly and asks the user to move those values into first-class `.env` keys.
+This prevents launchd from starting with contradictory managed and extra
+arguments. Optional embeddings runtime settings stay under `EMBEDDINGS_*` and
+are not inferred from primary model settings.
 
 Before ClawBox starts or reconfigures any managed host service, setup checks `http://HOST_IP:LLAMA_PORT/v1/models` and requires the response to parse as valid JSON. After starting a managed service, setup first waits for the TCP port to open and then keeps polling that API until it responds or the 120 second timeout expires.
 
@@ -103,6 +121,10 @@ If Homebrew is installed but not writable by the current user, setup warns and d
 - verifies that `LLAMA_BIN` is executable
 - verifies that `MODEL_PATH` exists
 - starts `llama-server` with the configured host, port, and context size
+- starts it with the configured parallel slot count, optional GPU layer count,
+  flash-attention flag, and mlock flag
+- rejects `LLAMA_EXTRA_ARGS` values that duplicate ClawBox-managed runtime
+  flags
 
 ## Expected verification
 

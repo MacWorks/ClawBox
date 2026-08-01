@@ -52,6 +52,8 @@ The managed primary keys are:
 - `models.providers.<provider>.baseUrl`
 - `models.providers.<provider>.api`
 - `models.providers.<provider>.models`
+- `agents.defaults.compaction.reserveTokens`
+- `agents.defaults.compaction.reserveTokensFloor`
 - `gateway.auth.token` when no persistent gateway token exists
 
 The generated `clawbox/local` model entry sets `maxTokens` from
@@ -67,6 +69,14 @@ must remain lower than the effective context window. Raising
 responses avoid ending with `stopReason=length`, but it does not by itself
 recover interrupted or non-replay-safe tool turns such as an incomplete
 `stopReason=toolUse` turn.
+
+ClawBox also manages OpenClaw's default compaction reserve for the local model
+context. The reserve is derived from the effective context window, bounded to a
+useful floor and ceiling, and written to both `reserveTokens` and
+`reserveTokensFloor`. This replaces legacy fixed reserve values such as
+`20000` when they no longer fit the active runtime context. The managed reserve
+is part of OpenClaw's prompt-budget contract; it is separate from
+`OPENCLAW_MAX_TOKENS`, which controls the advertised response budget.
 
 Managed setup also ensures the gateway has a persistent auth token. If an
 existing token is present, ClawBox preserves it. If the token is missing,

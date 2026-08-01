@@ -26,6 +26,15 @@ llama_api_responding() {
   curl -sS --fail --connect-timeout "$connect_timeout" --max-time "$max_time" "$api_url" >/dev/null 2>&1
 }
 
+llama_local_api_responding() {
+  local port="${1:-${LLAMA_PORT:-}}"
+  local local_host=''
+
+  [ -n "$port" ] || return 1
+  local_host="$(llama_local_readiness_host "${LLAMA_HOST:-}")"
+  llama_api_responding "$local_host" "$port"
+}
+
 llama_effective_context_probe_url() {
   local endpoint="${LLAMA_BASE_URL:-}"
   local path="$1"
@@ -725,17 +734,20 @@ LLAMA_INSTANCE_HEALTH='inactive'
 LLAMA_INSTANCE_HAS_PROCESS=false
 LLAMA_INSTANCE_HAS_LISTENER=false
 LLAMA_INSTANCE_HEALTHCHECK_OK=false
+LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK=false
 LLAMA_INSTANCE_LAUNCHD_LOADED=false
 
 llama_classify_runtime_health() {
   local host_ip="${1:-${HOST_IP:-}}"
   local port="${2:-${LLAMA_PORT:-}}"
+  local local_host=''
   local process_line=''
 
   LLAMA_INSTANCE_HEALTH='inactive'
   LLAMA_INSTANCE_HAS_PROCESS=false
   LLAMA_INSTANCE_HAS_LISTENER=false
   LLAMA_INSTANCE_HEALTHCHECK_OK=false
+  LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK=false
   LLAMA_INSTANCE_LAUNCHD_LOADED=false
 
   if [ -z "$port" ]; then
@@ -761,15 +773,24 @@ llama_classify_runtime_health() {
     LLAMA_INSTANCE_HEALTHCHECK_OK=true
   fi
 
+  if [ "${LLAMA_EXTERNAL:-false}" != true ]; then
+    local_host="$(llama_local_readiness_host "${LLAMA_HOST:-}")"
+    if [ -n "$local_host" ] && [ "$local_host" != "$host_ip" ] && llama_api_responding "$local_host" "$port"; then
+      LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK=true
+    fi
+  fi
+
   if llama_service_loaded user; then
     LLAMA_INSTANCE_LAUNCHD_LOADED=true
   fi
 
-  if [ "$LLAMA_INSTANCE_HAS_LISTENER" = true ] && [ "$LLAMA_INSTANCE_HEALTHCHECK_OK" = true ]; then
+  if [ "$LLAMA_INSTANCE_HAS_LISTENER" = true ] \
+    && { [ "$LLAMA_INSTANCE_HEALTHCHECK_OK" = true ] || [ "$LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK" = true ]; }; then
     LLAMA_INSTANCE_HEALTH='healthy'
   elif [ "$LLAMA_INSTANCE_HAS_PROCESS" = true ] \
     || [ "$LLAMA_INSTANCE_HAS_LISTENER" = true ] \
     || [ "$LLAMA_INSTANCE_HEALTHCHECK_OK" = true ] \
+    || [ "$LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK" = true ] \
     || [ "$LLAMA_INSTANCE_LAUNCHD_LOADED" = true ]; then
     LLAMA_INSTANCE_HEALTH='unhealthy'
   else
@@ -920,9 +941,11 @@ llama_verify_service_health() {
   local selected_port=''
   local stdout_path=''
   local stderr_path=''
+  local local_readiness_host=''
 
   stdout_path="$(llama_mode_stdout_log "${LLAMA_ACTIVE_MODE:-user}")"
   stderr_path="$(llama_mode_stderr_log "${LLAMA_ACTIVE_MODE:-user}")"
+  local_readiness_host="$(llama_local_readiness_host "${LLAMA_HOST:-}")"
   out "llama-server stdout: $stdout_path"
   out "llama-server stderr: $stderr_path"
   step "Waiting for llama-server port"
@@ -941,8 +964,15 @@ llama_verify_service_health() {
   if [ "$attempt" -le 120 ]; then
     attempt=1
     while [ "$attempt" -le 120 ]; do
-      if llama_api_responding "${HOST_IP:-}" "$LLAMA_PORT"; then
+      if llama_local_api_responding "$LLAMA_PORT"; then
         success "llama-server is responding on port $LLAMA_PORT"
+        if [ -n "${HOST_IP:-}" ] && [ "${HOST_IP:-}" != "$local_readiness_host" ] \
+          && ! llama_api_responding "${HOST_IP:-}" "$LLAMA_PORT"; then
+          warn "llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
+          out "Local readiness: http://$local_readiness_host:$LLAMA_PORT/v1/models"
+          out "VM-facing endpoint: $(llama_api_url "${HOST_IP:-}" "$LLAMA_PORT" 2>/dev/null || printf 'unavailable')"
+          out 'This usually means the UTM VM interface is not available yet; setup will validate VM reachability separately.'
+        fi
         return 0
       fi
 
