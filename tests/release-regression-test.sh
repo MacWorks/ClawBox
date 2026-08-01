@@ -1803,6 +1803,7 @@ HOST_IP="127.0.0.1"
 VM_HOST="vm-user@192.168.64.2"
 LLAMA_PORT="18080"
 LLAMA_BASE_URL="http://127.0.0.1:18080/v1"
+LLAMA_JINJA="true"
 MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 OPENCLAW_PROVIDER_NAME="clawbox"
 OPENCLAW_DEFAULT_MODEL="local"
@@ -1869,6 +1870,7 @@ EOF
   assert_equals 'status normalized OpenClaw provider model exits healthy' "$status" '0'
   assert_contains 'status normalized OpenClaw provider model reports stable alias' "$output" 'PASS: OpenClaw stable alias model entry is configured'
   assert_contains 'status normalized OpenClaw provider model reports context section' "$output" 'Context and Token Budget'
+  assert_contains 'status normalized OpenClaw provider model reports configured Jinja' "$output" 'Configured LLAMA_JINJA: true'
   assert_contains 'status normalized OpenClaw provider model reports runtime context' "$output" 'Runtime context: 65536'
   assert_contains 'status normalized OpenClaw provider model reports OpenClaw context' "$output" 'OpenClaw contextWindow: 65536'
   assert_contains 'status normalized OpenClaw provider model reports OpenClaw maxTokens' "$output" 'OpenClaw maxTokens: 8192'

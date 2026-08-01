@@ -259,11 +259,13 @@ test_dedicated_port_marks_runtime_env_drift_for_restart() {
     LLAMA_HOST='0.0.0.0'
     LLAMA_PORT='11435'
     LLAMA_CTX='32768'
-    LLAMA_EXTRA_ARGS='-ngl 99 --jinja -fa on'
+    LLAMA_JINJA='true'
+    LLAMA_EXTRA_ARGS='-ngl 99 -fa on'
     CLAWBOX_LLAMA_USER_ENV_DEST="$TEMP_DIR/dedicated-drift-clawbox.env"
 
-    # Model an installed runtime env from before LLAMA_EXTRA_ARGS was added.
-    # The desired rendered env includes the configured extra arguments.
+    # Model an installed runtime env from before first-class Jinja/extra args
+    # were added. The desired rendered env includes the configured runtime
+    # settings.
     printf '%s\n' \
       'LLAMA_BIN="/opt/homebrew/bin/llama-server"' \
       'MODEL_PATH="/tmp/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"' \
@@ -305,11 +307,12 @@ test_prestart_current_user_launchagent_marks_runtime_env_drift_for_restart() {
     LLAMA_HOST='0.0.0.0'
     LLAMA_PORT='11434'
     LLAMA_CTX='32768'
-    LLAMA_EXTRA_ARGS='-ngl 99 --jinja -fa on'
+    LLAMA_JINJA='true'
+    LLAMA_EXTRA_ARGS='-ngl 99 -fa on'
     CLAWBOX_LLAMA_USER_ENV_DEST="$TEMP_DIR/prestart-drift-clawbox.env"
 
     # The launchd process remains current-user managed, while its installed
-    # runtime env predates the configured extra arguments.
+    # runtime env predates the configured Jinja and extra arguments.
     printf '%s\n' \
       'LLAMA_BIN="/opt/homebrew/bin/llama-server"' \
       'MODEL_PATH="/tmp/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"' \

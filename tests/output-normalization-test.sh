@@ -674,9 +674,11 @@ test_first_run_bootstrap_honors_explicit_custom_llama_port() {
     printf 'STATUS:%s\n' "$?"
     printf 'LLAMA_PORT:%s\n' "$LLAMA_PORT"
     printf 'LLAMA_CTX:%s\n' "$LLAMA_CTX"
+    printf 'LLAMA_JINJA:%s\n' "$LLAMA_JINJA"
     printf 'LLAMA_BASE_URL:%s\n' "$LLAMA_BASE_URL"
     printf 'ENV_FILE_PORT:%s\n' "$(grep '^LLAMA_PORT=' "$ENV_FILE")"
     printf 'ENV_FILE_CTX:%s\n' "$(grep '^LLAMA_CTX=' "$ENV_FILE")"
+    printf 'ENV_FILE_JINJA:%s\n' "$(grep '^LLAMA_JINJA=' "$ENV_FILE")"
     printf 'ENV_FILE_BASE_URL:%s\n' "$(grep '^LLAMA_BASE_URL=' "$ENV_FILE")"
   } 2>&1)"
 
@@ -684,9 +686,11 @@ test_first_run_bootstrap_honors_explicit_custom_llama_port() {
   assert_contains 'first-run explicit custom port flow succeeds' "$output" 'STATUS:0'
   assert_contains 'first-run explicit custom port remains in memory' "$output" 'LLAMA_PORT:11801'
   assert_contains 'first-run default context is raised to 32768' "$output" 'LLAMA_CTX:32768'
+  assert_contains 'first-run default Jinja is enabled' "$output" 'LLAMA_JINJA:true'
   assert_contains 'first-run explicit custom port sets the base URL' "$output" 'LLAMA_BASE_URL:http://192.168.64.1:11801/v1'
   assert_contains 'first-run explicit custom port persists to .env' "$output" 'ENV_FILE_PORT:LLAMA_PORT="11801"'
   assert_contains 'first-run default context persists to .env' "$output" 'ENV_FILE_CTX:LLAMA_CTX="32768"'
+  assert_contains 'first-run default Jinja persists to .env' "$output" 'ENV_FILE_JINJA:LLAMA_JINJA="true"'
   assert_contains 'first-run custom port base URL persists to .env' "$output" 'ENV_FILE_BASE_URL:LLAMA_BASE_URL="http://192.168.64.1:11801/v1"'
   assert_not_contains 'first-run explicit custom port does not discover default service' "$output" 'UNEXPECTED_DISCOVERY'
   assert_not_contains 'first-run explicit custom port does not probe the default llama port' "$output" 'API_PROBE:11434'

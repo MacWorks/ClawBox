@@ -51,11 +51,11 @@ test_wrapper_arguments_are_profile_specific() {
   mkdir -p "$(dirname "$primary_model")" "$(dirname "$embed_model")"
   : > "$primary_model"
   : > "$embed_model"
-  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_FLASH_ATTENTION="true"\nLLAMA_MLOCK="true"\nLLAMA_EXTRA_ARGS="--threads 8"\n' "$fake_bin" "$primary_model" > "$primary_env"
-  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS="-ngl 99"\n' "$fake_bin" "$primary_model" > "$primary_conflict_env"
-  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_FLASH_ATTENTION="false"\nLLAMA_MLOCK="true"\nLLAMA_EXTRA_ARGS=""\n' "$fake_bin" "$primary_model" > "$primary_empty_env"
+  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_FLASH_ATTENTION="true"\nLLAMA_JINJA="true"\nLLAMA_MLOCK="true"\nLLAMA_EXTRA_ARGS="--threads 8"\n' "$fake_bin" "$primary_model" > "$primary_env"
+  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_EXTRA_ARGS="--jinja -ngl 99"\n' "$fake_bin" "$primary_model" > "$primary_conflict_env"
+  printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\nLLAMA_FLASH_ATTENTION="false"\nLLAMA_JINJA="false"\nLLAMA_MLOCK="true"\nLLAMA_EXTRA_ARGS=""\n' "$fake_bin" "$primary_model" > "$primary_empty_env"
   printf 'LLAMA_BIN="%s"\nMODEL_PATH="%s"\nLLAMA_HOST="0.0.0.0"\nLLAMA_PORT="11434"\nLLAMA_CTX="16384"\n' "$fake_bin" "$primary_model" > "$primary_absent_env"
-  printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\nEMBEDDINGS_LLAMA_EXTRA_ARGS="--embedding -fa on"\n' "$fake_bin" "$embed_model" > "$embed_env"
+  printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\nEMBEDDINGS_LLAMA_EXTRA_ARGS="--embedding --jinja -fa on"\n' "$fake_bin" "$embed_model" > "$embed_env"
   printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\nEMBEDDINGS_LLAMA_EXTRA_ARGS=""\n' "$fake_bin" "$embed_model" > "$embed_empty_env"
   printf 'CLAWBOX_LLAMA_INSTANCE="embeddings"\nEMBEDDINGS_LLAMA_BIN="%s"\nEMBEDDINGS_MODEL_PATH="%s"\nEMBEDDINGS_LLAMA_HOST="0.0.0.0"\nEMBEDDINGS_LLAMA_PORT="11435"\nEMBEDDINGS_LLAMA_CTX="8192"\n' "$fake_bin" "$embed_model" > "$embed_absent_env"
   lsof() { return 1; }; export -f lsof
@@ -69,16 +69,19 @@ test_wrapper_arguments_are_profile_specific() {
   embed_output="$(CLAWBOX_ENV_FILE="$embed_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   embed_empty_output="$(CLAWBOX_ENV_FILE="$embed_empty_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
   embed_absent_output="$(CLAWBOX_ENV_FILE="$embed_absent_env" bash "$ROOT_DIR/host/scripts/llama-wrapper.sh")"
-  assert_contains 'primary wrapper renders flash attention true with explicit value before mlock' "$primary_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 --parallel 1 --flash-attn on --mlock --threads 8"
+  assert_contains 'primary wrapper renders flash attention and Jinja before mlock' "$primary_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 --parallel 1 --flash-attn on --jinja --mlock --threads 8"
   assert_equals 'primary wrapper rejects managed flags in LLAMA_EXTRA_ARGS' "$primary_conflict_status" '1'
-  assert_contains 'primary wrapper reports managed flag conflicts' "$primary_conflict_output" 'LLAMA_EXTRA_ARGS conflicts with ClawBox-managed llama-server settings: -ngl'
+  assert_contains 'primary wrapper reports managed flag conflicts' "$primary_conflict_output" 'LLAMA_EXTRA_ARGS conflicts with ClawBox-managed llama-server settings: --jinja -ngl'
   assert_not_contains 'primary wrapper excludes embeddings arg by default' "$primary_output" '--embedding'
   assert_contains 'primary wrapper renders flash attention false with explicit value before mlock' "$primary_empty_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 --parallel 1 --flash-attn off --mlock"
+  assert_not_contains 'primary wrapper omits Jinja when disabled' "$primary_empty_output" '--jinja'
   assert_not_contains 'primary wrapper empty LLAMA_EXTRA_ARGS appends nothing' "$primary_empty_output" '-ngl'
   assert_contains 'primary wrapper accepts absent LLAMA_EXTRA_ARGS under set -u' "$primary_absent_output" "-m $primary_model --host 0.0.0.0 --port 11434 --ctx-size 16384 --parallel 1 --flash-attn off"
+  assert_not_contains 'primary wrapper absent LLAMA_JINJA omits Jinja under set -u' "$primary_absent_output" '--jinja'
   assert_not_contains 'primary wrapper absent LLAMA_EXTRA_ARGS appends nothing' "$primary_absent_output" '-ngl'
-  assert_contains 'embeddings wrapper uses embeddings model and args' "$embed_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --parallel 1 --embedding -fa on"
+  assert_contains 'embeddings wrapper uses embeddings model and args' "$embed_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --parallel 1 --embedding --jinja -fa on"
   assert_not_contains 'embeddings wrapper does not inherit primary flash attention management' "$embed_output" '--flash-attn'
+  assert_contains 'embeddings wrapper keeps explicit embeddings Jinja passthrough' "$embed_output" '--jinja'
   assert_contains 'embeddings wrapper accepts empty EMBEDDINGS_LLAMA_EXTRA_ARGS' "$embed_empty_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --parallel 1"
   assert_not_contains 'embeddings wrapper empty extra args appends nothing' "$embed_empty_output" '--embedding'
   assert_contains 'embeddings wrapper accepts absent EMBEDDINGS_LLAMA_EXTRA_ARGS under set -u' "$embed_absent_output" "-m $embed_model --host 0.0.0.0 --port 11435 --ctx-size 8192 --parallel 1"
@@ -115,6 +118,7 @@ test_runtime_env_writes_empty_extra_args_for_fresh_users() {
     cat "$embeddings_env"
   } 2>&1)"
   assert_contains 'fresh primary runtime env includes empty LLAMA_EXTRA_ARGS' "$output" 'LLAMA_EXTRA_ARGS=""'
+  assert_contains 'fresh primary runtime env tolerates absent LLAMA_JINJA' "$output" 'LLAMA_JINJA=""'
   assert_contains 'fresh embeddings runtime env includes empty EMBEDDINGS_LLAMA_EXTRA_ARGS' "$output" 'EMBEDDINGS_LLAMA_EXTRA_ARGS=""'
 }
 

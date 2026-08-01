@@ -171,10 +171,12 @@ personalization.
 
 ## Verification
 
-For model/build-specific `llama-server` flags, set `LLAMA_EXTRA_ARGS` in
-`.env`, for example `LLAMA_EXTRA_ARGS="-ngl 99 --jinja -fa on"`. This supports
-simple whitespace-separated arguments only; quoted values or embedded spaces
-are not supported.
+For model/build-specific `llama-server` flags that ClawBox does not manage
+directly, set `LLAMA_EXTRA_ARGS` in `.env`, for example
+`LLAMA_EXTRA_ARGS="--threads 8"`. This supports simple whitespace-separated
+arguments only; quoted values or embedded spaces are not supported. Common
+primary runtime flags such as GPU layers, Flash Attention, Jinja chat-template
+processing, and mlock are first-class ClawBox settings.
 
 To switch only the host GGUF model after setup, run `./clawbox model`. It
 updates `MODEL_PATH`, restarts the managed host `llama-server`, and leaves VM
@@ -219,6 +221,8 @@ changes VM provisioning, replaces OpenClaw configuration, or alters onboarding.
 When enabled, ClawBox can sync only OpenClaw `memorySearch` keys to point at the
 embeddings endpoint. Its extra args default to `--embedding`; like primary
 `LLAMA_EXTRA_ARGS`, only simple whitespace-separated arguments are supported.
+Primary `LLAMA_JINJA` management is intentionally not applied to the separate
+embeddings runtime.
 
 Use `./clawbox model primary` to switch only the primary model, or
 `./clawbox model embeddings` (or `./clawbox model embedding`) to configure/switch only the
