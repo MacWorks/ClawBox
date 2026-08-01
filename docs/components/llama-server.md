@@ -43,6 +43,7 @@ Relevant values:
 - `LLAMA_PARALLEL`
 - `LLAMA_GPU_LAYERS`
 - `LLAMA_FLASH_ATTENTION`
+- `LLAMA_JINJA`
 - `LLAMA_MLOCK`
 - `LLAMA_EXTRA_ARGS` (optional simple whitespace-separated flags appended after
   ClawBox's required arguments; quoting, embedded spaces, and shell expansion
@@ -66,23 +67,32 @@ The configured embeddings base URL is authoritative. A server that responds on
 host loopback but not at `EMBEDDINGS_LLAMA_BASE_URL` is reported as unhealthy,
 because the VM and OpenClaw use the configured host-facing endpoint.
 
-New setups default `LLAMA_PORT` to `11434`, `LLAMA_CTX` to `32768`, and
-`LLAMA_PARALLEL` to `1`. `LLAMA_PARALLEL` controls llama.cpp slot parallelism;
-each slot receives an effective context slice, so raising it can reduce the
-per-request context available to OpenClaw. `LLAMA_GPU_LAYERS`,
-`LLAMA_FLASH_ATTENTION`, and `LLAMA_MLOCK` expose common llama.cpp runtime
-flags without requiring users to place managed flags in `LLAMA_EXTRA_ARGS`.
+New setups default `LLAMA_PORT` to `11434`, `LLAMA_CTX` to `32768`,
+`LLAMA_PARALLEL` to `1`, and `LLAMA_JINJA` to `true`. `LLAMA_PARALLEL`
+controls llama.cpp slot parallelism; each slot receives an effective context
+slice, so raising it can reduce the per-request context available to OpenClaw.
+`LLAMA_GPU_LAYERS`, `LLAMA_FLASH_ATTENTION`, `LLAMA_JINJA`, and `LLAMA_MLOCK`
+expose common primary llama.cpp runtime flags without requiring users to place
+managed flags in `LLAMA_EXTRA_ARGS`.
 Existing `.env` values are kept as-is. `OPENCLAW_MAX_TOKENS` is a separate
 OpenClaw output-token setting and must be lower than the effective context
 window. If llama-server reports that it capped the configured `LLAMA_CTX`, setup
 uses the reported effective value for OpenClaw `contextWindow` without rewriting
 the requested `.env` value.
 
+`LLAMA_JINJA=true` renders `--jinja` for the primary managed `llama-server`.
+This enables llama.cpp Jinja chat-template processing, which OpenClaw-compatible
+tool-calling flows generally need. It does not guarantee that every model will
+tool-call correctly; some models may still require a model-specific chat
+template or may not provide a compatible template.
+
 ClawBox owns the following llama-server arguments for the primary managed
-service: context size, parallel slots, GPU layers, flash attention, and mlock.
+service: context size, parallel slots, GPU layers, flash attention, Jinja, and
+mlock.
 If `LLAMA_EXTRA_ARGS` includes equivalent flags such as `--ctx-size`,
-`--parallel`, `--n-gpu-layers`, `--flash-attn`, or `--mlock`, setup fails
-clearly and asks the user to move those values into first-class `.env` keys.
+`--parallel`, `--n-gpu-layers`, `--flash-attn`, `--jinja`, or `--mlock`, setup
+fails clearly and asks the user to move those values into first-class `.env`
+keys.
 This prevents launchd from starting with contradictory managed and extra
 arguments. Optional embeddings runtime settings stay under `EMBEDDINGS_*` and
 are not inferred from primary model settings.

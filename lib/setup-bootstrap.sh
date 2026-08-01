@@ -21,6 +21,7 @@ maybe_migrate_llama_extra_args() {
     outf ' LLAMA_PARALLEL="%s"' "${LLAMA_MIGRATION_PARALLEL:-1}"
     outf ' LLAMA_GPU_LAYERS="%s"' "${LLAMA_MIGRATION_GPU_LAYERS:-}"
     outf ' LLAMA_FLASH_ATTENTION="%s"' "${LLAMA_MIGRATION_FLASH_ATTENTION:-false}"
+    outf ' LLAMA_JINJA="%s"' "${LLAMA_MIGRATION_JINJA:-false}"
     outf ' LLAMA_MLOCK="%s"' "${LLAMA_MIGRATION_MLOCK:-false}"
     outf ' LLAMA_EXTRA_ARGS="%s"' "$proposed_extra_args"
     return 1
@@ -34,6 +35,7 @@ maybe_migrate_llama_extra_args() {
   outf ' LLAMA_PARALLEL="%s"' "${LLAMA_MIGRATION_PARALLEL:-1}"
   outf ' LLAMA_GPU_LAYERS="%s"' "${LLAMA_MIGRATION_GPU_LAYERS:-}"
   outf ' LLAMA_FLASH_ATTENTION="%s"' "${LLAMA_MIGRATION_FLASH_ATTENTION:-false}"
+  outf ' LLAMA_JINJA="%s"' "${LLAMA_MIGRATION_JINJA:-false}"
   outf ' LLAMA_MLOCK="%s"' "${LLAMA_MIGRATION_MLOCK:-false}"
   outf ' LLAMA_EXTRA_ARGS="%s"' "$proposed_extra_args"
 
@@ -48,6 +50,7 @@ maybe_migrate_llama_extra_args() {
   LLAMA_PARALLEL="${LLAMA_MIGRATION_PARALLEL:-1}"
   LLAMA_GPU_LAYERS="${LLAMA_MIGRATION_GPU_LAYERS:-}"
   LLAMA_FLASH_ATTENTION="${LLAMA_MIGRATION_FLASH_ATTENTION:-false}"
+  LLAMA_JINJA="${LLAMA_MIGRATION_JINJA:-false}"
   LLAMA_MLOCK="${LLAMA_MIGRATION_MLOCK:-false}"
   LLAMA_EXTRA_ARGS="$proposed_extra_args"
 
@@ -95,6 +98,7 @@ ensure_env_bootstrap() {
   local llama_parallel_value
   local llama_gpu_layers_value
   local llama_flash_attention_value
+  local llama_jinja_value
   local llama_mlock_value
   local native_context_value=''
 
@@ -109,6 +113,7 @@ ensure_env_bootstrap() {
   LLAMA_PARALLEL="${LLAMA_PARALLEL:-1}"
   LLAMA_GPU_LAYERS="${LLAMA_GPU_LAYERS:-}"
   LLAMA_FLASH_ATTENTION="${LLAMA_FLASH_ATTENTION:-false}"
+  LLAMA_JINJA="${LLAMA_JINJA:-true}"
   LLAMA_MLOCK="${LLAMA_MLOCK:-false}"
 
   if [ "$VM_REPAIR_MODE" = true ]; then
@@ -340,11 +345,14 @@ ensure_env_bootstrap() {
   llama_gpu_layers_value="$REPLY"
   configured_or_default 'LLAMA_FLASH_ATTENTION' "${LLAMA_FLASH_ATTENTION:-}" 'false'
   llama_flash_attention_value="$REPLY"
+  configured_or_default 'LLAMA_JINJA' "${LLAMA_JINJA:-}" 'true'
+  llama_jinja_value="$REPLY"
   configured_or_default 'LLAMA_MLOCK' "${LLAMA_MLOCK:-}" 'false'
   llama_mlock_value="$REPLY"
   LLAMA_PARALLEL="$llama_parallel_value"
   LLAMA_GPU_LAYERS="$llama_gpu_layers_value"
   LLAMA_FLASH_ATTENTION="$llama_flash_attention_value"
+  LLAMA_JINJA="$llama_jinja_value"
   LLAMA_MLOCK="$llama_mlock_value"
   LLAMA_BASE_URL="$llama_base_url_value"
   OPENCLAW_MAX_TOKENS="$openclaw_max_tokens_value"
@@ -381,6 +389,7 @@ ensure_env_bootstrap() {
   LLAMA_PARALLEL="$llama_parallel_value"
   LLAMA_GPU_LAYERS="$llama_gpu_layers_value"
   LLAMA_FLASH_ATTENTION="$llama_flash_attention_value"
+  LLAMA_JINJA="$llama_jinja_value"
   LLAMA_MLOCK="$llama_mlock_value"
   LLAMA_BASE_URL="$llama_base_url_value"
   OPENCLAW_MAX_TOKENS="${OPENCLAW_MAX_TOKENS:-8192}"
@@ -409,6 +418,7 @@ ensure_env_bootstrap() {
   print_summary_value "LLAMA_PARALLEL" "${LLAMA_PARALLEL:-}"
   print_summary_value "LLAMA_GPU_LAYERS" "${LLAMA_GPU_LAYERS:-}"
   print_summary_value "LLAMA_FLASH_ATTENTION" "${LLAMA_FLASH_ATTENTION:-}"
+  print_summary_value "LLAMA_JINJA" "${LLAMA_JINJA:-}"
   print_summary_value "LLAMA_MLOCK" "${LLAMA_MLOCK:-}"
   print_summary_value "LLAMA_BASE_URL" "${LLAMA_BASE_URL:-}"
   print_summary_value "OPENCLAW_MAX_TOKENS" "${OPENCLAW_MAX_TOKENS:-}"

@@ -31,7 +31,7 @@ llama_managed_runtime_arg_conflicts() {
 
   for word in $extra_args; do
     case "$word" in
-      --ctx-size|--ctx-size=*|-c|-c[0-9]*|--parallel|--parallel=*|-np|-np[0-9]*|--n-gpu-layers|--n-gpu-layers=*|-ngl|-ngl[0-9]*|--flash-attn|--flash-attn=*|-fa|--mlock)
+      --ctx-size|--ctx-size=*|-c|-c[0-9]*|--parallel|--parallel=*|-np|-np[0-9]*|--n-gpu-layers|--n-gpu-layers=*|-ngl|-ngl[0-9]*|--flash-attn|--flash-attn=*|-fa|--jinja|--mlock)
         conflicts="${conflicts}${conflicts:+ }$word"
         ;;
     esac
@@ -52,6 +52,7 @@ llama_migrate_managed_runtime_extra_args() {
   LLAMA_MIGRATION_PARALLEL="${LLAMA_PARALLEL:-1}"
   LLAMA_MIGRATION_GPU_LAYERS="${LLAMA_GPU_LAYERS:-}"
   LLAMA_MIGRATION_FLASH_ATTENTION="${LLAMA_FLASH_ATTENTION:-false}"
+  LLAMA_MIGRATION_JINJA="${LLAMA_JINJA:-false}"
   LLAMA_MIGRATION_MLOCK="${LLAMA_MLOCK:-false}"
   LLAMA_MIGRATION_EXTRA_ARGS="$extra_args"
   LLAMA_MIGRATION_CHANGED=false
@@ -167,13 +168,17 @@ llama_migrate_managed_runtime_extra_args() {
         LLAMA_MIGRATION_MLOCK=true
         LLAMA_MIGRATION_CHANGED=true
         ;;
+      --jinja)
+        LLAMA_MIGRATION_JINJA=true
+        LLAMA_MIGRATION_CHANGED=true
+        ;;
       *)
         remaining_args+=("$word")
         ;;
     esac
   done
 
-  LLAMA_MIGRATION_EXTRA_ARGS="${remaining_args[*]}"
+  LLAMA_MIGRATION_EXTRA_ARGS="${remaining_args[*]-}"
   [ "$LLAMA_MIGRATION_CHANGED" = true ]
 }
 
@@ -223,6 +228,10 @@ llama_append_managed_runtime_args() {
     eval "$args_name+=(--flash-attn on)"
   else
     eval "$args_name+=(--flash-attn off)"
+  fi
+
+  if clawbox_bool_enabled "${LLAMA_JINJA:-false}"; then
+    eval "$args_name+=(--jinja)"
   fi
 
   if clawbox_bool_enabled "${LLAMA_MLOCK:-false}"; then

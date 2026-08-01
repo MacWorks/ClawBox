@@ -950,9 +950,9 @@ PY
     pass "GGUF native context parser rejects malformed files"
   fi
 
-  if llama_managed_runtime_arg_conflicts '--threads 8 --ctx-size 65536 --parallel 2'; then
+  if llama_managed_runtime_arg_conflicts '--threads 8 --ctx-size 65536 --parallel 2 --jinja'; then
     conflicts="$REPLY"
-    if [[ "$conflicts" == *'--ctx-size'* ]] && [[ "$conflicts" == *'--parallel'* ]]; then
+    if [[ "$conflicts" == *'--ctx-size'* ]] && [[ "$conflicts" == *'--parallel'* ]] && [[ "$conflicts" == *'--jinja'* ]]; then
       pass "managed runtime arg conflict detection catches managed flags in LLAMA_EXTRA_ARGS"
     else
       fail "managed runtime arg conflict detection should report conflicting flags"
@@ -965,24 +965,54 @@ PY
   LLAMA_PARALLEL=1
   LLAMA_GPU_LAYERS=''
   LLAMA_FLASH_ATTENTION=false
+  LLAMA_JINJA=false
   LLAMA_MLOCK=false
   LLAMA_EXTRA_ARGS='-ngl 99 --jinja -fa on --mlock --parallel 1'
   if llama_migrate_managed_runtime_extra_args "$LLAMA_EXTRA_ARGS" \
     && [ "$LLAMA_MIGRATION_GPU_LAYERS" = '99' ] \
     && [ "$LLAMA_MIGRATION_FLASH_ATTENTION" = 'true' ] \
+    && [ "$LLAMA_MIGRATION_JINJA" = 'true' ] \
     && [ "$LLAMA_MIGRATION_MLOCK" = 'true' ] \
     && [ "$LLAMA_MIGRATION_PARALLEL" = '1' ] \
-    && [ "$LLAMA_MIGRATION_EXTRA_ARGS" = '--jinja' ]; then
-    pass "managed runtime arg migration preserves Jimmy passthrough flags"
+    && [ "$LLAMA_MIGRATION_EXTRA_ARGS" = '' ]; then
+    pass "managed runtime arg migration moves Jinja into first-class settings"
   else
-    fail "managed runtime arg migration should move managed flags and preserve --jinja"
+    fail "managed runtime arg migration should move managed flags including --jinja"
   fi
-  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_MLOCK LLAMA_EXTRA_ARGS
+
+  LLAMA_JINJA=true
+  LLAMA_EXTRA_ARGS='--jinja --rope-scaling yarn --threads 8'
+  if llama_migrate_managed_runtime_extra_args "$LLAMA_EXTRA_ARGS" \
+    && [ "$LLAMA_MIGRATION_JINJA" = 'true' ] \
+    && [ "$LLAMA_MIGRATION_EXTRA_ARGS" = '--rope-scaling yarn --threads 8' ]; then
+    pass "managed runtime arg migration removes only Jinja while preserving passthrough order"
+  else
+    fail "managed runtime arg migration should remove only --jinja and preserve passthrough args"
+  fi
+
+  LLAMA_JINJA=false
+  LLAMA_EXTRA_ARGS='--jinja --threads 8'
+  if llama_migrate_managed_runtime_extra_args "$LLAMA_EXTRA_ARGS" \
+    && [ "$LLAMA_MIGRATION_JINJA" = 'true' ]; then
+    pass "managed runtime arg migration treats explicit --jinja as enabled evidence"
+  else
+    fail "managed runtime arg migration should prefer actual --jinja flag evidence"
+  fi
+
+  LLAMA_EXTRA_ARGS='  '
+  if llama_migrate_managed_runtime_extra_args "$LLAMA_EXTRA_ARGS"; then
+    fail "managed runtime arg migration should ignore whitespace-only LLAMA_EXTRA_ARGS"
+  else
+    pass "managed runtime arg migration ignores whitespace-only LLAMA_EXTRA_ARGS"
+  fi
+
+  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_JINJA LLAMA_MLOCK LLAMA_EXTRA_ARGS
 
   LLAMA_CTX=65536
   LLAMA_PARALLEL=2
   LLAMA_GPU_LAYERS=99
   LLAMA_FLASH_ATTENTION=true
+  LLAMA_JINJA=true
   LLAMA_MLOCK=true
   unset LLAMA_EXTRA_ARGS
   llama_validate_managed_runtime_settings
@@ -991,6 +1021,7 @@ PY
     && [[ " ${runtime_args[*]} " == *' --parallel 2 '* ]] \
     && [[ " ${runtime_args[*]} " == *' --n-gpu-layers 99 '* ]] \
     && [[ " ${runtime_args[*]} " == *' --flash-attn on '* ]] \
+    && [[ " ${runtime_args[*]} " == *' --jinja '* ]] \
     && [[ " ${runtime_args[*]} " == *' --mlock '* ]]; then
     pass "managed runtime args render first-class llama-server settings"
   else
@@ -998,6 +1029,7 @@ PY
   fi
 
   LLAMA_FLASH_ATTENTION=false
+  LLAMA_JINJA=false
   LLAMA_MLOCK=true
   runtime_args=()
   llama_append_managed_runtime_args runtime_args
@@ -1006,7 +1038,12 @@ PY
   else
     fail "managed runtime args should render --flash-attn off before --mlock"
   fi
-  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_MLOCK
+  if [[ " ${runtime_args[*]} " != *' --jinja '* ]]; then
+    pass "managed runtime args omit Jinja when disabled"
+  else
+    fail "managed runtime args should omit --jinja when LLAMA_JINJA is false"
+  fi
+  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_JINJA LLAMA_MLOCK
 
   reserve="$(openclaw_context_reserve_for_context 32768)"
   assert_equals "OpenClaw reserve policy derives 8192 from 32768 context" "$reserve" '8192'

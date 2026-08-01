@@ -1013,6 +1013,7 @@ STATUS_RESERVE_TOKENS_FLOOR="$(vm_openclaw_config_get 'agents.defaults.compactio
 
 out "Model native context: ${STATUS_NATIVE_CONTEXT:-unknown}"
 out "Configured LLAMA_CTX: ${STATUS_CONFIGURED_CONTEXT:-unknown}"
+out "Configured LLAMA_JINJA: ${LLAMA_JINJA:-unknown}"
 out "Runtime context: ${STATUS_RUNTIME_CONTEXT:-unknown}"
 out "Parallel slots: ${STATUS_TOTAL_SLOTS:-${LLAMA_PARALLEL:-unknown}}"
 out "Per-slot context: ${STATUS_SLOT_CONTEXT:-unknown}"

@@ -44,7 +44,7 @@ write_llama_runtime_env() {
 
   : > "$output_path"
 
-  for key in LLAMA_BIN MODEL_PATH LLAMA_HOST LLAMA_PORT LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_MLOCK LLAMA_EXTRA_ARGS; do
+  for key in LLAMA_BIN MODEL_PATH LLAMA_HOST LLAMA_PORT LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_JINJA LLAMA_MLOCK LLAMA_EXTRA_ARGS; do
     value="${!key:-}"
     printf '%s="%s"\n' "$key" "$(llama_escape_env_value "$value")" >> "$output_path"
   done

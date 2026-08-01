@@ -37,6 +37,7 @@ The optional VM auto-start LaunchAgent writes its diagnostics to `logs/vm/clawbo
 - `LLAMA_HOST`
 - `LLAMA_PORT`
 - `LLAMA_CTX`
+- `LLAMA_JINJA`
 - `VM_MACHINE_NAME`
 
 ## Related docs

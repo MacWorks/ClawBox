@@ -38,7 +38,7 @@ managed_arg_conflicts() {
   local conflicts='' word=''
   for word in ${LLAMA_EXTRA_ARGS:-}; do
     case "$word" in
-      --ctx-size|--ctx-size=*|-c|-c[0-9]*|--parallel|--parallel=*|-np|-np[0-9]*|--n-gpu-layers|--n-gpu-layers=*|-ngl|-ngl[0-9]*|--flash-attn|--flash-attn=*|-fa|--mlock)
+      --ctx-size|--ctx-size=*|-c|-c[0-9]*|--parallel|--parallel=*|-np|-np[0-9]*|--n-gpu-layers|--n-gpu-layers=*|-ngl|-ngl[0-9]*|--flash-attn|--flash-attn=*|-fa|--jinja|--mlock)
         conflicts="${conflicts}${conflicts:+ }$word"
         ;;
     esac
@@ -91,6 +91,10 @@ if [ "${CLAWBOX_LLAMA_INSTANCE:-primary}" != embeddings ]; then
     LLAMA_ARGS+=(--flash-attn on)
   else
     LLAMA_ARGS+=(--flash-attn off)
+  fi
+
+  if clawbox_bool_enabled "${LLAMA_JINJA:-false}"; then
+    LLAMA_ARGS+=(--jinja)
   fi
 fi
 

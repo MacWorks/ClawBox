@@ -375,6 +375,7 @@ test_llama_extra_args_migration_preserves_runtime_behavior() {
       /^LLAMA_PARALLEL=/ { print "LLAMA_PARALLEL=\"1\""; next }
       /^LLAMA_GPU_LAYERS=/ { print "LLAMA_GPU_LAYERS=\"\""; next }
       /^LLAMA_FLASH_ATTENTION=/ { print "LLAMA_FLASH_ATTENTION=\"false\""; next }
+      /^LLAMA_JINJA=/ { print "LLAMA_JINJA=\"false\""; next }
       /^LLAMA_MLOCK=/ { print "LLAMA_MLOCK=\"false\""; next }
       /^LLAMA_EXTRA_ARGS=/ { print "LLAMA_EXTRA_ARGS=\"-ngl 99 --jinja -fa on --mlock --parallel 1\""; next }
       { print }
@@ -390,10 +391,12 @@ test_llama_extra_args_migration_preserves_runtime_behavior() {
     printf 'PARALLEL:%s\n' "$LLAMA_PARALLEL"
     printf 'GPU:%s\n' "$LLAMA_GPU_LAYERS"
     printf 'FLASH:%s\n' "$LLAMA_FLASH_ATTENTION"
+    printf 'JINJA:%s\n' "$LLAMA_JINJA"
     printf 'MLOCK:%s\n' "$LLAMA_MLOCK"
     printf 'EXTRA:%s\n' "$LLAMA_EXTRA_ARGS"
     printf 'ENV_GPU:%s\n' "$(grep '^LLAMA_GPU_LAYERS=' "$ENV_FILE")"
     printf 'ENV_FLASH:%s\n' "$(grep '^LLAMA_FLASH_ATTENTION=' "$ENV_FILE")"
+    printf 'ENV_JINJA:%s\n' "$(grep '^LLAMA_JINJA=' "$ENV_FILE")"
     printf 'ENV_MLOCK:%s\n' "$(grep '^LLAMA_MLOCK=' "$ENV_FILE")"
     printf 'ENV_EXTRA:%s\n' "$(grep '^LLAMA_EXTRA_ARGS=' "$ENV_FILE")"
   } 2>&1)"
@@ -403,12 +406,52 @@ test_llama_extra_args_migration_preserves_runtime_behavior() {
   assert_contains 'llama extra args migration preserves parallel value' "$output" 'PARALLEL:1'
   assert_contains 'llama extra args migration moves gpu layers' "$output" 'GPU:99'
   assert_contains 'llama extra args migration enables flash attention' "$output" 'FLASH:true'
+  assert_contains 'llama extra args migration enables Jinja' "$output" 'JINJA:true'
   assert_contains 'llama extra args migration enables mlock' "$output" 'MLOCK:true'
-  assert_contains 'llama extra args migration preserves unmanaged jinja passthrough' "$output" 'EXTRA:--jinja'
+  assert_contains 'llama extra args migration removes managed Jinja from passthrough' "$output" 'EXTRA:'
   assert_contains 'llama extra args migration persists gpu layers' "$output" 'ENV_GPU:LLAMA_GPU_LAYERS="99"'
   assert_contains 'llama extra args migration persists flash attention' "$output" 'ENV_FLASH:LLAMA_FLASH_ATTENTION="true"'
+  assert_contains 'llama extra args migration persists Jinja' "$output" 'ENV_JINJA:LLAMA_JINJA="true"'
   assert_contains 'llama extra args migration persists mlock' "$output" 'ENV_MLOCK:LLAMA_MLOCK="true"'
-  assert_contains 'llama extra args migration persists only passthrough args' "$output" 'ENV_EXTRA:LLAMA_EXTRA_ARGS="--jinja"'
+  assert_contains 'llama extra args migration persists empty passthrough args' "$output" 'ENV_EXTRA:LLAMA_EXTRA_ARGS=""'
+}
+
+test_llama_extra_args_migration_decline_blocks_managed_jinja_conflict() {
+  local output
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers 'n'
+
+    BASE_DIR="$TEMP_DIR"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_FILE="$TEMP_DIR/.env"
+    cp "$ENV_EXAMPLE_FILE" "$ENV_FILE"
+
+    awk '
+      /^LLAMA_JINJA=/ { print "LLAMA_JINJA=\"false\""; next }
+      /^LLAMA_EXTRA_ARGS=/ { print "LLAMA_EXTRA_ARGS=\"--jinja --threads 8\""; next }
+      { print }
+    ' "$ENV_FILE" > "$TEMP_DIR/env-declined"
+    mv "$TEMP_DIR/env-declined" "$ENV_FILE"
+
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    source_env_file
+    if maybe_migrate_llama_extra_args < <(printf 'n\n'); then
+      printf 'STATUS:0\n'
+    else
+      printf 'STATUS:%s\n' "$?"
+    fi
+    printf 'ENV_JINJA:%s\n' "$(grep '^LLAMA_JINJA=' "$ENV_FILE")"
+    printf 'ENV_EXTRA:%s\n' "$(grep '^LLAMA_EXTRA_ARGS=' "$ENV_FILE")"
+  } 2>&1)"
+
+  assert_contains 'declined Jinja migration fails setup clearly' "$output" 'STATUS:1'
+  assert_contains 'declined Jinja migration reports managed args' "$output" 'LLAMA_EXTRA_ARGS migration was declined.'
+  assert_contains 'declined Jinja migration leaves explicit setting unchanged' "$output" 'ENV_JINJA:LLAMA_JINJA="false"'
+  assert_contains 'declined Jinja migration leaves extra args unchanged' "$output" 'ENV_EXTRA:LLAMA_EXTRA_ARGS="--jinja --threads 8"'
 }
 
 test_prompt_openclaw_autostart_respects_existing_default_and_reprompts_on_invalid_input() {
@@ -669,6 +712,7 @@ run_test test_write_env_from_template_is_safe_without_setup_backup_globals
 run_test test_normalize_openclaw_autostart_maps_inputs
 run_test test_source_env_file_rejects_invalid_env_syntax
 run_test test_llama_extra_args_migration_preserves_runtime_behavior
+run_test test_llama_extra_args_migration_decline_blocks_managed_jinja_conflict
 run_test test_prompt_openclaw_autostart_respects_existing_default_and_reprompts_on_invalid_input
 run_test test_host_ip_and_firewall_subnet_derivation_use_vm_ip_defaults
 run_test test_resolve_configured_llama_bin_uses_real_wrapper_logic

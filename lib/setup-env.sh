@@ -76,6 +76,7 @@ write_env_from_template() {
   replace_template_value "$temp_file" "LLAMA_PARALLEL" "${LLAMA_PARALLEL:-}"
   replace_template_value "$temp_file" "LLAMA_GPU_LAYERS" "${LLAMA_GPU_LAYERS:-}"
   replace_template_value "$temp_file" "LLAMA_FLASH_ATTENTION" "${LLAMA_FLASH_ATTENTION:-}"
+  replace_template_value "$temp_file" "LLAMA_JINJA" "${LLAMA_JINJA:-}"
   replace_template_value "$temp_file" "LLAMA_MLOCK" "${LLAMA_MLOCK:-}"
   replace_template_value "$temp_file" "LLAMA_EXTRA_ARGS" "${LLAMA_EXTRA_ARGS:-}"
   replace_template_value "$temp_file" "LLAMA_BASE_URL" "${LLAMA_BASE_URL:-}"
