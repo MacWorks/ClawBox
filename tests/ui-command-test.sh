@@ -587,6 +587,55 @@ test_ui_prompts_after_reusing_no_open_tunnel_when_browser_opens() {
   assert_contains 'ui declined persistence preserves on-demand tunnel' "$status_output" 'OpenClaw Web UI tunnel: ready'
 }
 
+test_ui_reused_tunnel_prompt_survives_inherited_suppression_and_reports_debug() {
+  local no_open_output='' browser_output=''
+  local ssh_log="$TEMP_DIR/ui-reuse-debug-ssh.log" open_log="$TEMP_DIR/ui-reuse-debug-open.log"
+  local tunnel_marker="$TEMP_DIR/ui-reuse-debug-started"
+  local home="$TEMP_DIR/ui-reuse-debug-home"
+
+  write_ui_env
+  no_open_output="$({
+    load_ui_command
+    HOME="$home"
+    BASE_DIR="$TEMP_DIR"
+    ENV_FILE="$TEMP_DIR/.env"
+    CLAWBOX_UI_DEBUG=true
+    install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
+    openclaw_webui_can_prompt() { return 0; }
+    prompt_yes_no() {
+      printf 'PROMPT:%s %s\n' "$1" "$2"
+      REPLY='false'
+    }
+    is_yes() { [ "$1" = true ]; }
+    main --no-open
+  } 2>&1)"
+
+  assert_not_contains 'ui no-open debug path still does not prompt' "$no_open_output" 'Keep the OpenClaw UI tunnel available automatically at login?'
+  assert_contains 'ui no-open debug reports prompt ineligible' "$no_open_output" 'command_mode=no-open tunnel_verified=true browser_open_completed=false final_eligible=false'
+
+  browser_output="$({
+    load_ui_command
+    HOME="$home"
+    BASE_DIR="$TEMP_DIR"
+    ENV_FILE="$TEMP_DIR/.env"
+    CLAWBOX_UI_DEBUG=true
+    export OPENCLAW_WEBUI_SUPPRESS_PERSIST_PROMPT=true
+    install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
+    openclaw_webui_can_prompt() { return 0; }
+    prompt_yes_no() {
+      printf 'PROMPT:%s %s\n' "$1" "$2"
+      REPLY='false'
+    }
+    is_yes() { [ "$1" = true ]; }
+    main
+  } 2>&1)"
+
+  assert_contains 'ui debug path reuses existing tunnel' "$browser_output" 'Tunnel: reused'
+  assert_contains 'ui inherited suppression does not skip browser prompt' "$browser_output" 'PROMPT:Keep the OpenClaw UI tunnel available automatically at login? n'
+  assert_contains 'ui debug reports browser path completed' "$browser_output" 'open path completed: tunnel_verified=true browser_open_completed=true service_installed=false'
+  assert_contains 'ui debug reports final prompt eligibility' "$browser_output" 'final_eligible=true'
+}
+
 test_ui_accepting_reused_tunnel_persistence_installs_service_without_second_browser_open() {
   local no_open_output='' browser_output=''
   local ssh_log="$TEMP_DIR/ui-reuse-install-ssh.log" open_log="$TEMP_DIR/ui-reuse-install-open.log"
@@ -668,6 +717,7 @@ run_test test_ui_status_reports_launchagent_and_tunnel
 run_test test_ui_stop_unloads_service_before_stopping_tunnel
 run_test test_ui_remove_service_removes_managed_artifacts
 run_test test_ui_prompts_after_reusing_no_open_tunnel_when_browser_opens
+run_test test_ui_reused_tunnel_prompt_survives_inherited_suppression_and_reports_debug
 run_test test_ui_accepting_reused_tunnel_persistence_installs_service_without_second_browser_open
 
 if [ "$FAILURES" -ne 0 ]; then

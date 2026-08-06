@@ -117,6 +117,7 @@ open_ui() {
   local remove_service=false
   local host_port=''
   local url=''
+  local service_installed=false
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -161,31 +162,40 @@ open_ui() {
   fi
 
   if [ "$install_service" = true ]; then
-    OPENCLAW_WEBUI_SUPPRESS_PERSIST_PROMPT=true openclaw_webui_install_service "$requested_port"
+    OPENCLAW_WEBUI_COMMAND_MODE='install-service' openclaw_webui_install_service "$requested_port"
     return $?
   fi
 
+  OPENCLAW_WEBUI_COMMAND_MODE='open'
   if ! openclaw_webui_ensure_tunnel "$requested_port"; then
+    OPENCLAW_WEBUI_TUNNEL_VERIFIED=false
+    openclaw_webui_debug 'prompt decision: command_mode=open tunnel_verified=false browser_open_completed=false final_eligible=false'
     return 1
   fi
   host_port="$REPLY"
   OPENCLAW_WEBUI_LAST_HOST_PORT="$host_port"
+  OPENCLAW_WEBUI_TUNNEL_VERIFIED=true
   url="$(openclaw_webui_url_for_port "$host_port")"
 
   print_ui_ready_summary "$host_port"
 
   if [ "$no_open" = true ]; then
+    openclaw_webui_debug 'prompt decision: command_mode=no-open tunnel_verified=true browser_open_completed=false final_eligible=false'
     out 'Browser: not opened (--no-open)'
     return 0
   fi
 
   if openclaw_webui_open_browser "$url"; then
+    OPENCLAW_WEBUI_BROWSER_OPEN_COMPLETED=true
     success 'OpenClaw Web UI opened in your browser.'
   else
+    OPENCLAW_WEBUI_BROWSER_OPEN_COMPLETED=false
     warn 'OpenClaw Web UI tunnel is ready, but the browser did not open automatically.'
     outf 'Open this local URL in your browser: %s' "$url"
   fi
 
+  openclaw_webui_service_installed && service_installed=true || service_installed=false
+  openclaw_webui_debug "open path completed: tunnel_verified=${OPENCLAW_WEBUI_TUNNEL_VERIFIED:-false} browser_open_completed=${OPENCLAW_WEBUI_BROWSER_OPEN_COMPLETED:-false} service_installed=$service_installed"
   openclaw_webui_offer_persistence_prompt || true
 }
 

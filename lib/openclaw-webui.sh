@@ -678,20 +678,81 @@ openclaw_webui_open_browser() {
   open "$url" >/dev/null 2>&1
 }
 
+openclaw_webui_debug_enabled() {
+  case "${CLAWBOX_UI_DEBUG:-false}" in
+    true|TRUE|yes|YES|1)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+openclaw_webui_debug() {
+  openclaw_webui_debug_enabled || return 0
+  printf 'DEBUG ui: %s\n' "$*" >&2
+}
+
+openclaw_webui_prompt_input_source() {
+  if [ -t 0 ]; then
+    printf 'stdin\n'
+    return 0
+  fi
+
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    printf '/dev/tty\n'
+    return 0
+  fi
+
+  printf 'none\n'
+  return 1
+}
+
 openclaw_webui_can_prompt() {
-  [ -t 0 ]
+  openclaw_webui_prompt_input_source >/dev/null
+}
+
+openclaw_webui_prompt_yes_no() {
+  local label="$1"
+  local default="$2"
+  local input_source=''
+
+  input_source="$(openclaw_webui_prompt_input_source)" || return 1
+  if [ "$input_source" = '/dev/tty' ]; then
+    prompt_yes_no "$label" "$default" </dev/tty
+    return $?
+  fi
+
+  prompt_yes_no "$label" "$default"
 }
 
 openclaw_webui_offer_persistence_prompt() {
-  local choice=''
+  local choice='' input_source='none'
+  local can_prompt=false service_installed=false helpers_available=true
 
-  [ "${OPENCLAW_WEBUI_SUPPRESS_PERSIST_PROMPT:-false}" = true ] && return 0
-  openclaw_webui_can_prompt || return 0
-  openclaw_webui_service_installed && return 0
-  command -v prompt_yes_no >/dev/null 2>&1 || return 0
-  command -v is_yes >/dev/null 2>&1 || return 0
+  input_source="$(openclaw_webui_prompt_input_source 2>/dev/null)" || input_source='none'
+  if openclaw_webui_can_prompt; then
+    can_prompt=true
+    if [ "$input_source" = 'none' ]; then
+      input_source='custom'
+    fi
+  else
+    can_prompt=false
+  fi
+  openclaw_webui_service_installed && service_installed=true || service_installed=false
+  command -v prompt_yes_no >/dev/null 2>&1 || helpers_available=false
+  command -v is_yes >/dev/null 2>&1 || helpers_available=false
 
-  prompt_yes_no 'Keep the OpenClaw UI tunnel available automatically at login?' 'n'
+  openclaw_webui_debug "prompt decision: command_mode=${OPENCLAW_WEBUI_COMMAND_MODE:-unknown} tunnel_verified=${OPENCLAW_WEBUI_TUNNEL_VERIFIED:-unknown} browser_open_completed=${OPENCLAW_WEBUI_BROWSER_OPEN_COMPLETED:-unknown} input_source=$input_source can_prompt=$can_prompt service_installed=$service_installed helpers_available=$helpers_available final_eligible=$([ "$can_prompt" = true ] && [ "$service_installed" = false ] && [ "$helpers_available" = true ] && printf true || printf false)"
+
+  [ "$can_prompt" = true ] || return 0
+  [ "$service_installed" = false ] || return 0
+  [ "$helpers_available" = true ] || return 0
+
+  if [ "$input_source" = 'custom' ]; then
+    prompt_yes_no 'Keep the OpenClaw UI tunnel available automatically at login?' 'n'
+  else
+    openclaw_webui_prompt_yes_no 'Keep the OpenClaw UI tunnel available automatically at login?' 'n'
+  fi
   choice="$REPLY"
   is_yes "$choice" || return 0
 
