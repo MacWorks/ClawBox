@@ -176,7 +176,6 @@ open_ui() {
 
   if [ "$no_open" = true ]; then
     out 'Browser: not opened (--no-open)'
-    openclaw_webui_offer_persistence_prompt || true
     return 0
   fi
 

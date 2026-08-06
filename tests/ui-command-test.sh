@@ -532,16 +532,17 @@ test_ui_remove_service_removes_managed_artifacts() {
   fi
 }
 
-test_ui_prompts_once_for_persistent_service_after_success() {
-  local output='' ssh_log="$TEMP_DIR/ui-prompt-ssh.log" open_log="$TEMP_DIR/ui-prompt-open.log"
-  local tunnel_marker="$TEMP_DIR/ui-prompt-started"
-  local home="$TEMP_DIR/ui-prompt-home"
+test_ui_prompts_after_reusing_no_open_tunnel_when_browser_opens() {
+  local no_open_output='' browser_output='' status_output=''
+  local ssh_log="$TEMP_DIR/ui-reuse-prompt-ssh.log" open_log="$TEMP_DIR/ui-reuse-prompt-open.log"
+  local tunnel_marker="$TEMP_DIR/ui-reuse-prompt-started"
+  local home="$TEMP_DIR/ui-reuse-prompt-home"
 
   write_ui_env
-  output="$({
+  no_open_output="$({
     load_ui_command
     HOME="$home"
-    BASE_DIR="$ROOT_DIR"
+    BASE_DIR="$TEMP_DIR"
     ENV_FILE="$TEMP_DIR/.env"
     install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
     openclaw_webui_can_prompt() { return 0; }
@@ -553,17 +554,12 @@ test_ui_prompts_once_for_persistent_service_after_success() {
     main --no-open
   } 2>&1)"
 
-  assert_contains 'ui prompts after successful on-demand tunnel' "$output" 'PROMPT:Keep the OpenClaw UI tunnel available automatically at login? n'
-  mkdir -p "$home/Library/Application Support/ClawBox/bin" "$home/Library/LaunchAgents"
-  : > "$home/Library/Application Support/ClawBox/bin/openclaw-ui-tunnel.sh"
-  chmod +x "$home/Library/Application Support/ClawBox/bin/openclaw-ui-tunnel.sh"
-  : > "$home/Library/Application Support/ClawBox/openclaw-ui-tunnel.env"
-  : > "$home/Library/LaunchAgents/com.clawbox.openclaw-ui-tunnel.plist"
+  assert_not_contains 'ui no-open does not offer persistence prompt' "$no_open_output" 'Keep the OpenClaw UI tunnel available automatically at login?'
 
-  output="$({
+  browser_output="$({
     load_ui_command
     HOME="$home"
-    BASE_DIR="$ROOT_DIR"
+    BASE_DIR="$TEMP_DIR"
     ENV_FILE="$TEMP_DIR/.env"
     install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
     openclaw_webui_can_prompt() { return 0; }
@@ -572,9 +568,85 @@ test_ui_prompts_once_for_persistent_service_after_success() {
       REPLY='false'
     }
     is_yes() { [ "$1" = true ]; }
+    main
+  } 2>&1)"
+
+  assert_contains 'ui browser invocation reuses existing tunnel' "$browser_output" 'Tunnel: reused'
+  assert_contains 'ui browser invocation prompts to persist reused tunnel' "$browser_output" 'PROMPT:Keep the OpenClaw UI tunnel available automatically at login? n'
+  assert_contains 'ui browser invocation opens browser once' "$(cat "$open_log")" 'http://127.0.0.1:18790/'
+
+  status_output="$({
+    load_ui_command
+    HOME="$home"
+    BASE_DIR="$TEMP_DIR"
+    ENV_FILE="$TEMP_DIR/.env"
+    install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
+    launchctl() { return 1; }
+    main --status
+  } 2>&1)"
+  assert_contains 'ui declined persistence preserves on-demand tunnel' "$status_output" 'OpenClaw Web UI tunnel: ready'
+}
+
+test_ui_accepting_reused_tunnel_persistence_installs_service_without_second_browser_open() {
+  local no_open_output='' browser_output=''
+  local ssh_log="$TEMP_DIR/ui-reuse-install-ssh.log" open_log="$TEMP_DIR/ui-reuse-install-open.log"
+  local tunnel_marker="$TEMP_DIR/ui-reuse-install-started"
+  local launchctl_log="$TEMP_DIR/ui-reuse-install-launchctl.log"
+  local home="$TEMP_DIR/ui-reuse-install-home"
+
+  write_ui_env
+  no_open_output="$({
+    load_ui_command
+    HOME="$home"
+    BASE_DIR="$TEMP_DIR"
+    ENV_FILE="$TEMP_DIR/.env"
+    install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
+    openclaw_webui_can_prompt() { return 0; }
+    prompt_yes_no() {
+      printf 'PROMPT:%s %s\n' "$1" "$2"
+      REPLY='true'
+    }
+    is_yes() { [ "$1" = true ]; }
     main --no-open
   } 2>&1)"
-  assert_not_contains 'ui does not repeat persistence prompt when service installed' "$output" 'Keep the OpenClaw UI tunnel available automatically at login?'
+
+  assert_not_contains 'ui no-open yes fixture still does not prompt' "$no_open_output" 'Keep the OpenClaw UI tunnel available automatically at login?'
+
+  browser_output="$({
+    load_ui_command
+    HOME="$home"
+    BASE_DIR="$TEMP_DIR"
+    ENV_FILE="$TEMP_DIR/.env"
+    CLAWBOX_OPENCLAW_WEBUI_WRAPPER_SRC="$ROOT_DIR/host/scripts/openclaw-ui-tunnel.sh"
+    install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
+    openclaw_webui_can_prompt() { return 0; }
+    prompt_yes_no() {
+      printf 'PROMPT:%s %s\n' "$1" "$2"
+      REPLY='true'
+    }
+    is_yes() { [ "$1" = true ]; }
+    launchctl() {
+      printf '%s\n' "$*" >> "$launchctl_log"
+      if [ "${1:-}" = 'print' ]; then
+        return 1
+      fi
+      if [ "${1:-}" = 'load' ] || [ "${1:-}" = 'unload' ]; then
+        return 0
+      fi
+      return 1
+    }
+    main
+  } 2>&1)"
+
+  assert_contains 'ui reused tunnel yes path prompts' "$browser_output" 'PROMPT:Keep the OpenClaw UI tunnel available automatically at login? n'
+  assert_contains 'ui reused tunnel yes path installs service' "$browser_output" 'OpenClaw Web UI tunnel service installed and verified.'
+  assert_contains 'ui reused tunnel yes path persists service port' "$(cat "$home/Library/Application Support/ClawBox/openclaw-ui-tunnel.env")" 'OPENCLAW_WEBUI_TUNNEL_PORT=18790'
+  assert_contains 'ui reused tunnel yes path loads service' "$(cat "$launchctl_log")" "load $home/Library/LaunchAgents/com.clawbox.openclaw-ui-tunnel.plist"
+  if [ "$(grep -Fc 'http://127.0.0.1:18790/' "$open_log")" = '1' ]; then
+    pass 'ui reused tunnel yes path does not open browser a second time'
+  else
+    fail 'ui reused tunnel yes path should open browser exactly once'
+  fi
 }
 
 run_test test_clawbox_help_lists_ui_command
@@ -595,7 +667,8 @@ run_test test_ui_service_rejects_unrelated_configured_port_owner
 run_test test_ui_status_reports_launchagent_and_tunnel
 run_test test_ui_stop_unloads_service_before_stopping_tunnel
 run_test test_ui_remove_service_removes_managed_artifacts
-run_test test_ui_prompts_once_for_persistent_service_after_success
+run_test test_ui_prompts_after_reusing_no_open_tunnel_when_browser_opens
+run_test test_ui_accepting_reused_tunnel_persistence_installs_service_without_second_browser_open
 
 if [ "$FAILURES" -ne 0 ]; then
   printf 'FAIL: ui command test suite failed with %s issues\n' "$FAILURES"
