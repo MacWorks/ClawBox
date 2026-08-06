@@ -15,7 +15,7 @@ clawbox_logs_root_dir() {
 
 clawbox_log_category_dir() {
   case "$1" in
-    tests|runtime|setup|dev|ssh|vm|archive)
+    tests|runtime|setup|dev|ssh|vm|ui|archive)
       printf '%s/%s\n' "$(clawbox_logs_root_dir)" "$1"
       ;;
     *)
@@ -31,7 +31,7 @@ clawbox_ensure_log_dir() {
 clawbox_ensure_standard_log_dirs() {
   local category=''
 
-  for category in tests runtime setup dev ssh vm archive; do
+  for category in tests runtime setup dev ssh vm ui archive; do
     clawbox_ensure_log_dir "$(clawbox_log_category_dir "$category")"
   done
 }
@@ -82,6 +82,14 @@ clawbox_startutmvm_stdout_log_default() {
 
 clawbox_startutmvm_stderr_log_default() {
   clawbox_named_log_path vm 'clawbox-startutmvm.err.log'
+}
+
+clawbox_openclaw_ui_tunnel_stdout_log_default() {
+  clawbox_named_log_path ui 'openclaw-ui-tunnel.out.log'
+}
+
+clawbox_openclaw_ui_tunnel_stderr_log_default() {
+  clawbox_named_log_path ui 'openclaw-ui-tunnel.err.log'
 }
 
 clawbox_vm_logs_root_dir() {

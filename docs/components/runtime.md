@@ -165,12 +165,51 @@ When targeted settings are unchanged:
 When `OPENCLAW_AUTOSTART=true`, setup installs or refreshes a per-user launchd plist for OpenClaw in the VM, checks whether the `gui/$uid` launchd service is already loaded, safely boots out stale loaded state when needed, bootstraps the service once, and waits for both `launchctl print` and a live `openclaw gateway` PID before reporting success.
 
 After a managed gateway is verified, interactive setup can optionally open the
-OpenClaw Web UI from the host. ClawBox creates an SSH local-forward bound only
-to host loopback, from `127.0.0.1:<host-port>` to VM
-`127.0.0.1:18789`. The default host tunnel port is `18790`; if it is occupied,
-setup chooses the next available loopback port. Tunnel state is stored under
-`.clawbox/openclaw-webui-tunnel.env` so ClawBox can reuse or replace only its
-own tunnel process. To close the tunnel manually, stop the recorded PID.
+OpenClaw Web UI from the host. The same path is available later with
+`./clawbox ui`.
+
+ClawBox creates an SSH local-forward bound only to host loopback, from
+`127.0.0.1:<host-port>` to VM `127.0.0.1:18789`. The default host tunnel port
+is `18790`; if it is occupied by an unrelated process, `./clawbox ui` chooses
+the next available loopback port unless a specific `--port` was requested. A
+requested occupied port fails with a clear diagnostic instead of killing or
+reusing an unrelated process. Tunnel state is stored under
+`.clawbox/openclaw-webui-tunnel.env` so ClawBox can reuse, report, or stop only
+its own tunnel process.
+
+Examples:
+
+```bash
+./clawbox ui
+./clawbox ui --no-open
+./clawbox ui --port 18791
+./clawbox ui --install-service
+./clawbox ui --install-service --port 18791
+./clawbox ui --status
+./clawbox ui --stop
+./clawbox ui --remove-service
+```
+
+The gateway remains bound to VM loopback, and browser launch uses the local
+tunnel URL without embedding the gateway auth token in command arguments.
+
+For users who want the UI tunnel available after host login, ClawBox can install
+a per-user LaunchAgent with `./clawbox ui --install-service`. The service uses
+the same tunnel state and SSH-forward validation as the on-demand command, logs
+under `logs/ui/`, binds only to host loopback, and exits nonzero while the VM,
+SSH, or gateway is temporarily unavailable so launchd can retry. It never opens
+a browser and does not weaken OpenClaw authentication.
+
+Persistent service ports are intentionally stricter than on-demand ports. The
+default service port is `18790`. Reinstalling preserves the existing service
+port unless `--install-service --port <port>` is supplied. If that configured
+port is occupied by an unrelated process, ClawBox reports the conflict and asks
+for an explicit alternate instead of silently falling back.
+
+`./clawbox ui --status` reports both the current tunnel and the LaunchAgent
+state. `./clawbox ui --stop` unloads the LaunchAgent first when needed so the
+tunnel is not immediately respawned. `./clawbox ui --remove-service` unloads and
+removes only the managed UI tunnel LaunchAgent artifacts and state.
 
 That plist is generated on the host and uploaded to the VM before `launchctl` runs. Runtime management does not rely on nested heredocs or multiline shell generation embedded directly inside quoted SSH commands.
 

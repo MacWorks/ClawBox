@@ -15,6 +15,7 @@ Commands:
   status      Show system status
   model       Switch a host model (primary or embeddings)
   qualify     Run VM-side model qualification scenarios
+  ui          Open the VM OpenClaw Web UI through an SSH tunnel
   openclaw    OpenClaw maintenance commands
   help        Show this help message
 
@@ -36,6 +37,8 @@ Examples:
   ./clawbox qualify compare
   ./clawbox qualify report --latest
   ./clawbox qualify badge --latest
+  ./clawbox ui
+  ./clawbox ui --no-open
   ./clawbox openclaw reset
 EOF
 }
@@ -57,6 +60,9 @@ case "$cmd" in
     ;;
   qualify)
     exec "$BASE_DIR/scripts/qualify.sh" "$@"
+    ;;
+  ui|open-ui)
+    exec "$BASE_DIR/scripts/ui.sh" "$@"
     ;;
   openclaw)
     exec "$BASE_DIR/scripts/openclaw.sh" "$@"

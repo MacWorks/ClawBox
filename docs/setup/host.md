@@ -162,6 +162,21 @@ SSH tunnel from host loopback to the VM gateway. The gateway is not exposed on a
 non-loopback host interface. Declining the prompt leaves setup successful and
 creates no tunnel.
 
+After a successful Web UI tunnel, setup may ask whether to keep the tunnel
+available automatically at login. This is optional and defaults to No. Accepting
+installs a per-user host LaunchAgent for the UI tunnel only; it does not expose
+the VM gateway, does not open a browser from launchd, and does not print or pass
+the gateway token.
+
+After setup, `./clawbox ui` creates or reuses that same tunnel on demand. Use
+`./clawbox ui --no-open` to verify and print the local URL without launching a
+browser, or `./clawbox ui --port <port>` to choose a specific host-loopback
+port. Use `./clawbox ui --install-service` to install or update the login
+LaunchAgent, `./clawbox ui --status` to inspect both tunnel and LaunchAgent
+state, `./clawbox ui --stop` to stop the current managed tunnel without killing
+unrelated SSH processes, and `./clawbox ui --remove-service` to remove the
+managed UI tunnel service.
+
 If OpenClaw is not yet installed, setup guides the user through manual
 provisioning inside the VM. After confirmation, setup refreshes runtime state and
 continues without requiring a second setup run.

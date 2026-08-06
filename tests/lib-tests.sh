@@ -159,6 +159,7 @@ test_log_paths_module() {
     && [ -d "$repo_root/logs/dev" ] \
     && [ -d "$repo_root/logs/ssh" ] \
     && [ -d "$repo_root/logs/vm" ] \
+    && [ -d "$repo_root/logs/ui" ] \
     && [ -d "$repo_root/logs/archive" ]; then
     pass "log path helper creates the standard centralized log directories"
   else
@@ -166,7 +167,8 @@ test_log_paths_module() {
   fi
 
   if [ "$(clawbox_llama_system_stderr_log_default)" = "$repo_root/logs/runtime/clawbox-llama-system.err.log" ] \
-    && [ "$(clawbox_startutmvm_stdout_log_default)" = "$repo_root/logs/vm/clawbox-startutmvm.out.log" ]; then
+    && [ "$(clawbox_startutmvm_stdout_log_default)" = "$repo_root/logs/vm/clawbox-startutmvm.out.log" ] \
+    && [ "$(clawbox_openclaw_ui_tunnel_stdout_log_default)" = "$repo_root/logs/ui/openclaw-ui-tunnel.out.log" ]; then
     pass "log path helper resolves runtime and VM logs into the centralized log tree"
   else
     fail "log path helper should resolve runtime and VM logs into the centralized log tree"
@@ -2278,6 +2280,7 @@ test_openclaw_webui_module() {
   local open_log="$TEMP_DIR/openclaw-webui-open.log"
   local kill_log="$TEMP_DIR/openclaw-webui-kill.log"
   local state_root="$TEMP_DIR/openclaw-webui-state"
+  local tunnel_started="$TEMP_DIR/openclaw-webui-tunnel-started"
   local port_mode='free'
   local prompt_answer='true'
   local token_value='secret-token-for-test'
@@ -2319,10 +2322,19 @@ test_openclaw_webui_module() {
 
   ssh() {
     printf '%s\n' "$*" >> "$ssh_log"
+    case "$*" in
+      *'echo ok'*)
+        printf 'ok\n'
+        ;;
+      *'-f -N'*)
+        : > "$tunnel_started"
+        ;;
+    esac
     return 0
   }
 
   pgrep() {
+    [ -f "$tunnel_started" ] || return 1
     printf '%s\n' '4242'
   }
 
@@ -2336,6 +2348,10 @@ test_openclaw_webui_module() {
       return 0
     fi
     return 1
+  }
+
+  curl() {
+    printf '200'
   }
 
   open() {
@@ -2377,6 +2393,7 @@ test_openclaw_webui_module() {
   : > "$ssh_log"
   port_mode='occupied-default'
   rm -f "$(openclaw_webui_state_file)"
+  rm -f "$tunnel_started"
   pgrep() { printf '%s\n' '4243'; }
   ps() {
     printf '%s\n' 'ssh -f -N -L 127.0.0.1:18791:127.0.0.1:18789 tester@192.168.64.8'
@@ -2390,7 +2407,7 @@ test_openclaw_webui_module() {
 
   : > "$ssh_log"
   openclaw_webui_ensure_tunnel
-  if [ "$REPLY" = '18791' ] && [ ! -s "$ssh_log" ]; then
+  if [ "$REPLY" = '18791' ] && ! grep -Fq -- '-f -N' "$ssh_log"; then
     pass "OpenClaw Web UI reuses a healthy ClawBox-owned tunnel"
   else
     fail "OpenClaw Web UI should reuse a healthy ClawBox-owned tunnel"
