@@ -69,6 +69,15 @@ prompt_yes_no() {
   done
 }
 
+is_yes() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    y|yes|true|1)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 prompt_with_default() {
   local label="$1"
   local default_value="$2"

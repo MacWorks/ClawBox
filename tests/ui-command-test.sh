@@ -636,6 +636,62 @@ test_ui_reused_tunnel_prompt_survives_inherited_suppression_and_reports_debug() 
   assert_contains 'ui debug reports final prompt eligibility' "$browser_output" 'final_eligible=true'
 }
 
+test_ui_entrypoint_loads_shared_persistence_prompt_helpers() {
+  local no_output='' yes_output=''
+  local ssh_log="$TEMP_DIR/ui-entrypoint-helpers-ssh.log" open_log="$TEMP_DIR/ui-entrypoint-helpers-open.log"
+  local tunnel_marker="$TEMP_DIR/ui-entrypoint-helpers-started"
+  local launchctl_log="$TEMP_DIR/ui-entrypoint-helpers-launchctl.log"
+  local home="$TEMP_DIR/ui-entrypoint-helpers-home"
+
+  write_ui_env
+  no_output="$({
+    load_ui_command
+    HOME="$home"
+    BASE_DIR="$TEMP_DIR"
+    ENV_FILE="$TEMP_DIR/.env"
+    CLAWBOX_UI_DEBUG=true
+    install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
+    openclaw_webui_can_prompt() { return 0; }
+    command -v prompt_yes_no >/dev/null 2>&1 && printf 'HELPER:prompt_yes_no\n'
+    command -v is_yes >/dev/null 2>&1 && printf 'HELPER:is_yes\n'
+    main
+  } 2>&1 <<< 'n')"
+
+  assert_contains 'ui entrypoint path loads prompt_yes_no helper' "$no_output" 'HELPER:prompt_yes_no'
+  assert_contains 'ui entrypoint path loads is_yes helper' "$no_output" 'HELPER:is_yes'
+  assert_contains 'ui entrypoint path reports helpers available' "$no_output" 'helpers_available=true'
+  assert_contains 'ui entrypoint path reports prompt eligible' "$no_output" 'final_eligible=true'
+  assert_contains 'ui entrypoint path displays persistence prompt' "$no_output" 'Keep the OpenClaw UI tunnel available automatically at login? [y/N]:'
+  assert_contains 'ui entrypoint no path reuses tunnel' "$no_output" 'Tunnel: reused'
+
+  yes_output="$({
+    load_ui_command
+    HOME="$home"
+    BASE_DIR="$TEMP_DIR"
+    ENV_FILE="$TEMP_DIR/.env"
+    CLAWBOX_UI_DEBUG=true
+    CLAWBOX_OPENCLAW_WEBUI_WRAPPER_SRC="$ROOT_DIR/host/scripts/openclaw-ui-tunnel.sh"
+    install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
+    openclaw_webui_can_prompt() { return 0; }
+    launchctl() {
+      printf '%s\n' "$*" >> "$launchctl_log"
+      if [ "${1:-}" = 'print' ]; then
+        return 1
+      fi
+      if [ "${1:-}" = 'load' ] || [ "${1:-}" = 'unload' ]; then
+        return 0
+      fi
+      return 1
+    }
+    main
+  } 2>&1 <<< 'y')"
+
+  assert_contains 'ui entrypoint yes path reports helpers available' "$yes_output" 'helpers_available=true'
+  assert_contains 'ui entrypoint yes path displays persistence prompt' "$yes_output" 'Keep the OpenClaw UI tunnel available automatically at login? [y/N]:'
+  assert_contains 'ui entrypoint yes path installs service' "$yes_output" 'OpenClaw Web UI tunnel service installed and verified.'
+  assert_contains 'ui entrypoint yes path loads service' "$(cat "$launchctl_log")" "load $home/Library/LaunchAgents/com.clawbox.openclaw-ui-tunnel.plist"
+}
+
 test_ui_accepting_reused_tunnel_persistence_installs_service_without_second_browser_open() {
   local no_open_output='' browser_output=''
   local ssh_log="$TEMP_DIR/ui-reuse-install-ssh.log" open_log="$TEMP_DIR/ui-reuse-install-open.log"
@@ -718,6 +774,7 @@ run_test test_ui_stop_unloads_service_before_stopping_tunnel
 run_test test_ui_remove_service_removes_managed_artifacts
 run_test test_ui_prompts_after_reusing_no_open_tunnel_when_browser_opens
 run_test test_ui_reused_tunnel_prompt_survives_inherited_suppression_and_reports_debug
+run_test test_ui_entrypoint_loads_shared_persistence_prompt_helpers
 run_test test_ui_accepting_reused_tunnel_persistence_installs_service_without_second_browser_open
 
 if [ "$FAILURES" -ne 0 ]; then
