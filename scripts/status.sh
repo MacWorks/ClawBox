@@ -267,8 +267,20 @@ model_display_name() {
 
 vm_openclaw_config_get() {
   local key="$1"
+  local provider=''
 
   case "$key" in
+    models.providers.*.timeoutSeconds)
+      provider="${key#models.providers.}"
+      provider="${provider%.timeoutSeconds}"
+      vm_ssh_exec "jq -er --arg provider \"$provider\" '.models.providers[\$provider].timeoutSeconds // empty' ~/.openclaw/openclaw.json"
+      ;;
+    diagnostics.stuckSessionWarnMs)
+      vm_ssh_exec "jq -er '.diagnostics.stuckSessionWarnMs // empty' ~/.openclaw/openclaw.json"
+      ;;
+    diagnostics.stuckSessionAbortMs)
+      vm_ssh_exec "jq -er '.diagnostics.stuckSessionAbortMs // empty' ~/.openclaw/openclaw.json"
+      ;;
     agents.defaults.memorySearch.model)
       vm_ssh_exec "jq -er '.agents.defaults.memorySearch.model // empty' ~/.openclaw/openclaw.json"
       ;;
@@ -965,6 +977,61 @@ EOF
 else
   warn_status "OpenClaw provider model array is unavailable"
 fi
+
+section "OpenClaw Runtime Tuning"
+STATUS_OPENCLAW_TUNING_VALID=true
+STATUS_PROVIDER_TIMEOUT_CONFIGURED=''
+STATUS_STUCK_WARN_CONFIGURED=''
+STATUS_STUCK_ABORT_CONFIGURED=''
+STATUS_PROVIDER_TIMEOUT_EFFECTIVE=''
+STATUS_STUCK_WARN_EFFECTIVE=''
+STATUS_STUCK_ABORT_EFFECTIVE=''
+
+if openclaw_resolve_runtime_tuning_values 2>/dev/null; then
+  STATUS_PROVIDER_TIMEOUT_CONFIGURED="$OPENCLAW_PROVIDER_TIMEOUT_SECONDS_VALUE"
+  STATUS_STUCK_WARN_CONFIGURED="$OPENCLAW_STUCK_SESSION_WARN_MS_VALUE"
+  STATUS_STUCK_ABORT_CONFIGURED="$OPENCLAW_STUCK_SESSION_ABORT_MS_VALUE"
+else
+  STATUS_OPENCLAW_TUNING_VALID=false
+  fail "OpenClaw runtime tuning .env values are invalid"
+fi
+
+STATUS_PROVIDER_TIMEOUT_EFFECTIVE="$(vm_openclaw_config_get "models.providers.$OPENCLAW_PROVIDER_NAME.timeoutSeconds" 2>/dev/null || true)"
+STATUS_STUCK_WARN_EFFECTIVE="$(vm_openclaw_config_get 'diagnostics.stuckSessionWarnMs' 2>/dev/null || true)"
+STATUS_STUCK_ABORT_EFFECTIVE="$(vm_openclaw_config_get 'diagnostics.stuckSessionAbortMs' 2>/dev/null || true)"
+
+out "Configured provider timeoutSeconds: ${STATUS_PROVIDER_TIMEOUT_CONFIGURED:-unknown}"
+out "Effective provider timeoutSeconds: ${STATUS_PROVIDER_TIMEOUT_EFFECTIVE:-unknown}"
+out "Configured stuckSessionWarnMs: ${STATUS_STUCK_WARN_CONFIGURED:-unknown}"
+out "Effective stuckSessionWarnMs: ${STATUS_STUCK_WARN_EFFECTIVE:-unknown}"
+out "Configured stuckSessionAbortMs: ${STATUS_STUCK_ABORT_CONFIGURED:-unknown}"
+out "Effective stuckSessionAbortMs: ${STATUS_STUCK_ABORT_EFFECTIVE:-unknown}"
+
+status_compare_tuning_value() {
+  local label="$1" configured="$2" effective="$3"
+
+  [ "$STATUS_OPENCLAW_TUNING_VALID" = true ] || return 0
+
+  if [ -z "$effective" ]; then
+    warn_status "OpenClaw $label is missing or unreadable"
+    return 0
+  fi
+
+  if ! clawbox_positive_integer "$effective"; then
+    warn_status "OpenClaw $label is unreadable: $effective"
+    return 0
+  fi
+
+  if [ "$configured" = "$effective" ]; then
+    pass "OpenClaw $label matches configured value"
+  else
+    warn_status "OpenClaw $label differs from configured value"
+  fi
+}
+
+status_compare_tuning_value 'provider timeoutSeconds' "$STATUS_PROVIDER_TIMEOUT_CONFIGURED" "$STATUS_PROVIDER_TIMEOUT_EFFECTIVE"
+status_compare_tuning_value 'stuckSessionWarnMs' "$STATUS_STUCK_WARN_CONFIGURED" "$STATUS_STUCK_WARN_EFFECTIVE"
+status_compare_tuning_value 'stuckSessionAbortMs' "$STATUS_STUCK_ABORT_CONFIGURED" "$STATUS_STUCK_ABORT_EFFECTIVE"
 
 section "Context and Token Budget"
 STATUS_CONFIGURED_CONTEXT="${LLAMA_CTX:-}"

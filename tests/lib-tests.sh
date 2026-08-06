@@ -1180,8 +1180,12 @@ test_deploy_module() {
   local desired_entries=''
 
   OPENCLAW_DEFAULT_MODEL=local
+  OPENCLAW_PROVIDER_NAME=clawbox
   LLAMA_CTX=32768
   unset OPENCLAW_MAX_TOKENS
+  unset OPENCLAW_PROVIDER_TIMEOUT_SECONDS
+  unset OPENCLAW_STUCK_SESSION_WARN_MS
+  unset OPENCLAW_STUCK_SESSION_ABORT_MS
   desired_models="$(openclaw_config_model_array)"
 
   desired_entries="$(openclaw_config_desired_entries_for_scope primary)"
@@ -1191,6 +1195,40 @@ test_deploy_module() {
   else
     fail "OpenClaw primary targeted sync should include derived compaction reserves"
   fi
+
+  if [[ "$desired_entries" == *$'models.providers.clawbox.timeoutSeconds\t1800'* ]] \
+    && [[ "$desired_entries" == *$'diagnostics.stuckSessionWarnMs\t600000'* ]] \
+    && [[ "$desired_entries" == *$'diagnostics.stuckSessionAbortMs\t1800000'* ]]; then
+    pass "OpenClaw primary targeted sync includes default runtime tuning values"
+  else
+    fail "OpenClaw primary targeted sync should include default runtime tuning values"
+  fi
+
+  OPENCLAW_PROVIDER_NAME=slowbox
+  OPENCLAW_PROVIDER_TIMEOUT_SECONDS=2400
+  OPENCLAW_STUCK_SESSION_WARN_MS=700000
+  OPENCLAW_STUCK_SESSION_ABORT_MS=2100000
+  desired_entries="$(openclaw_config_desired_entries_for_scope primary)"
+  if [[ "$desired_entries" == *$'models.providers.slowbox.timeoutSeconds\t2400'* ]] \
+    && [[ "$desired_entries" == *$'diagnostics.stuckSessionWarnMs\t700000'* ]] \
+    && [[ "$desired_entries" == *$'diagnostics.stuckSessionAbortMs\t2100000'* ]] \
+    && [[ "$desired_entries" != *'models.providers.clawbox.timeoutSeconds'* ]]; then
+    pass "OpenClaw runtime tuning targets the configured provider and custom values"
+  else
+    fail "OpenClaw runtime tuning should target the configured provider and custom values"
+  fi
+  OPENCLAW_PROVIDER_NAME=clawbox
+  unset OPENCLAW_PROVIDER_TIMEOUT_SECONDS
+  unset OPENCLAW_STUCK_SESSION_WARN_MS
+  unset OPENCLAW_STUCK_SESSION_ABORT_MS
+
+  OPENCLAW_PROVIDER_TIMEOUT_SECONDS=0
+  if openclaw_config_desired_entries_for_scope primary >/dev/null 2>&1; then
+    fail "OpenClaw runtime tuning should reject invalid provider timeout"
+  else
+    pass "OpenClaw runtime tuning rejects invalid provider timeout"
+  fi
+  unset OPENCLAW_PROVIDER_TIMEOUT_SECONDS
 
   LLAMA_CTX=65536
   OPENCLAW_EFFECTIVE_CONTEXT_WINDOW=32768
@@ -1913,6 +1951,9 @@ test_setup_deployment_flow_updates_active_openclaw_config() {
   local set_log="$TEMP_DIR/setup-active-set.log"
   local ssh_log="$TEMP_DIR/setup-active-ssh.log"
   local desired_models=''
+  local provider_timeout='1800'
+  local stuck_warn='600000'
+  local stuck_abort='1800000'
   local status=0
 
   setup_host_inference_service_phase() { return 0; }
@@ -1987,9 +2028,24 @@ test_setup_deployment_flow_updates_active_openclaw_config() {
         printf '%s\n' 'openai-completions'
         return 0
         ;;
+      *get*"models.providers.clawbox.timeoutSeconds"*)
+        printf 'timeout:active:%s\n' "$command_text" >> "$get_log"
+        printf '%s\n' "$provider_timeout"
+        return 0
+        ;;
       *get*"agents.defaults.model.primary"*)
         printf 'primary:active:%s\n' "$command_text" >> "$get_log"
         printf '%s\n' 'clawbox/local'
+        return 0
+        ;;
+      *get*"diagnostics.stuckSessionWarnMs"*)
+        printf 'stuckWarn:active:%s\n' "$command_text" >> "$get_log"
+        printf '%s\n' "$stuck_warn"
+        return 0
+        ;;
+      *get*"diagnostics.stuckSessionAbortMs"*)
+        printf 'stuckAbort:active:%s\n' "$command_text" >> "$get_log"
+        printf '%s\n' "$stuck_abort"
         return 0
         ;;
       *get*"agents.defaults.compaction.reserveTokensFloor"*)
@@ -2020,6 +2076,21 @@ test_setup_deployment_flow_updates_active_openclaw_config() {
         ;;
       *set*"agents.defaults.compaction.reserveTokensFloor"*)
         printf 'reserveFloor:active:%s\n' "$command_text" >> "$set_log"
+        return 0
+        ;;
+      *set*"models.providers.clawbox.timeoutSeconds"*)
+        printf 'timeout:active:%s\n' "$command_text" >> "$set_log"
+        provider_timeout='1800'
+        return 0
+        ;;
+      *set*"diagnostics.stuckSessionWarnMs"*)
+        printf 'stuckWarn:active:%s\n' "$command_text" >> "$set_log"
+        stuck_warn='600000'
+        return 0
+        ;;
+      *set*"diagnostics.stuckSessionAbortMs"*)
+        printf 'stuckAbort:active:%s\n' "$command_text" >> "$set_log"
+        stuck_abort='1800000'
         return 0
         ;;
       *set*"agents.defaults.compaction.reserveTokens"*)

@@ -75,6 +75,9 @@ ensure_env_bootstrap() {
   local openclaw_provider_name_value
   local openclaw_default_model_value
   local openclaw_autostart_value
+  local openclaw_provider_timeout_seconds_value
+  local openclaw_stuck_session_warn_ms_value
+  local openclaw_stuck_session_abort_ms_value
   local vm_ip_value
   local vm_user_value
   local vm_user_path_value
@@ -110,6 +113,10 @@ ensure_env_bootstrap() {
   maybe_migrate_llama_extra_args || return $?
 
   validate_openclaw_token_context_values "${LLAMA_CTX:-32768}" "${OPENCLAW_MAX_TOKENS:-8192}" '.env' || return $?
+  openclaw_resolve_runtime_tuning_values || return $?
+  OPENCLAW_PROVIDER_TIMEOUT_SECONDS="${OPENCLAW_PROVIDER_TIMEOUT_SECONDS_VALUE:-$(openclaw_default_provider_timeout_seconds)}"
+  OPENCLAW_STUCK_SESSION_WARN_MS="${OPENCLAW_STUCK_SESSION_WARN_MS_VALUE:-$(openclaw_default_stuck_session_warn_ms)}"
+  OPENCLAW_STUCK_SESSION_ABORT_MS="${OPENCLAW_STUCK_SESSION_ABORT_MS_VALUE:-$(openclaw_default_stuck_session_abort_ms "$OPENCLAW_STUCK_SESSION_WARN_MS")}"
   LLAMA_PARALLEL="${LLAMA_PARALLEL:-1}"
   LLAMA_GPU_LAYERS="${LLAMA_GPU_LAYERS:-}"
   LLAMA_FLASH_ATTENTION="${LLAMA_FLASH_ATTENTION:-false}"
@@ -372,12 +379,22 @@ ensure_env_bootstrap() {
   openclaw_provider_name_value="$REPLY"
   configured_or_default 'OPENCLAW_DEFAULT_MODEL' "${OPENCLAW_DEFAULT_MODEL:-}" 'local'
   openclaw_default_model_value="$REPLY"
+  configured_or_default 'OPENCLAW_PROVIDER_TIMEOUT_SECONDS' "${OPENCLAW_PROVIDER_TIMEOUT_SECONDS:-}" "$(openclaw_default_provider_timeout_seconds)"
+  openclaw_provider_timeout_seconds_value="$REPLY"
+  configured_or_default 'OPENCLAW_STUCK_SESSION_WARN_MS' "${OPENCLAW_STUCK_SESSION_WARN_MS:-}" "$(openclaw_default_stuck_session_warn_ms)"
+  openclaw_stuck_session_warn_ms_value="$REPLY"
+  configured_or_default 'OPENCLAW_STUCK_SESSION_ABORT_MS' "${OPENCLAW_STUCK_SESSION_ABORT_MS:-}" "$(openclaw_default_stuck_session_abort_ms "$openclaw_stuck_session_warn_ms_value")"
+  openclaw_stuck_session_abort_ms_value="$REPLY"
   prompt_openclaw_autostart "${OPENCLAW_AUTOSTART:-}"
   openclaw_autostart_value="$REPLY"
 
   OPENCLAW_PROVIDER_NAME="$openclaw_provider_name_value"
   OPENCLAW_DEFAULT_MODEL="$openclaw_default_model_value"
   OPENCLAW_AUTOSTART="$openclaw_autostart_value"
+  OPENCLAW_PROVIDER_TIMEOUT_SECONDS="$openclaw_provider_timeout_seconds_value"
+  OPENCLAW_STUCK_SESSION_WARN_MS="$openclaw_stuck_session_warn_ms_value"
+  OPENCLAW_STUCK_SESSION_ABORT_MS="$openclaw_stuck_session_abort_ms_value"
+  openclaw_resolve_runtime_tuning_values || return $?
   write_env_from_template
   source_env_file || return $?
 
@@ -397,6 +414,9 @@ ensure_env_bootstrap() {
   OPENCLAW_PROVIDER_NAME="$openclaw_provider_name_value"
   OPENCLAW_DEFAULT_MODEL="$openclaw_default_model_value"
   OPENCLAW_AUTOSTART="$openclaw_autostart_value"
+  OPENCLAW_PROVIDER_TIMEOUT_SECONDS="$openclaw_provider_timeout_seconds_value"
+  OPENCLAW_STUCK_SESSION_WARN_MS="$openclaw_stuck_session_warn_ms_value"
+  OPENCLAW_STUCK_SESSION_ABORT_MS="$openclaw_stuck_session_abort_ms_value"
 
   write_env_from_template
 
@@ -426,6 +446,9 @@ ensure_env_bootstrap() {
   print_summary_value "OPENCLAW_PROVIDER_NAME" "${OPENCLAW_PROVIDER_NAME:-}"
   print_summary_value "OPENCLAW_DEFAULT_MODEL" "${OPENCLAW_DEFAULT_MODEL:-}"
   print_summary_value "OPENCLAW_AUTOSTART" "${OPENCLAW_AUTOSTART:-}"
+  print_summary_value "OPENCLAW_PROVIDER_TIMEOUT_SECONDS" "${OPENCLAW_PROVIDER_TIMEOUT_SECONDS:-}"
+  print_summary_value "OPENCLAW_STUCK_SESSION_WARN_MS" "${OPENCLAW_STUCK_SESSION_WARN_MS:-}"
+  print_summary_value "OPENCLAW_STUCK_SESSION_ABORT_MS" "${OPENCLAW_STUCK_SESSION_ABORT_MS:-}"
   blank_line
 
   ENV_BOOTSTRAPPED=true

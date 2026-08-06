@@ -477,12 +477,16 @@ openclaw_config_desired_entries_for_scope() {
   local provider="${OPENCLAW_PROVIDER_NAME:-clawbox}" models=''
 
   if [ "$scope" = all ] || [ "$scope" = primary ]; then
+    openclaw_resolve_runtime_tuning_values || return 1
     models="$(openclaw_config_model_array)" || return 1
     printf '%s\t%s\n' 'agents.defaults.model.primary' "$provider/${OPENCLAW_DEFAULT_MODEL:-local}"
     printf '%s\t%s\n' 'tools.deny' '["cron"]'
     printf '%s\t%s\n' "models.providers.$provider.baseUrl" "${LLAMA_BASE_URL:-}"
     printf '%s\t%s\n' "models.providers.$provider.api" 'openai-completions'
+    printf '%s\t%s\n' "models.providers.$provider.timeoutSeconds" "$OPENCLAW_PROVIDER_TIMEOUT_SECONDS_VALUE"
     printf '%s\t%s\n' "models.providers.$provider.models" "$models"
+    printf '%s\t%s\n' 'diagnostics.stuckSessionWarnMs' "$OPENCLAW_STUCK_SESSION_WARN_MS_VALUE"
+    printf '%s\t%s\n' 'diagnostics.stuckSessionAbortMs' "$OPENCLAW_STUCK_SESSION_ABORT_MS_VALUE"
     openclaw_managed_token_budget_entries "${OPENCLAW_EFFECTIVE_CONTEXT_WINDOW:-${LLAMA_CTX:-32768}}" "${OPENCLAW_MAX_TOKENS:-8192}" || return 1
   fi
 

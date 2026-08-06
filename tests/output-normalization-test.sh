@@ -675,10 +675,16 @@ test_first_run_bootstrap_honors_explicit_custom_llama_port() {
     printf 'LLAMA_PORT:%s\n' "$LLAMA_PORT"
     printf 'LLAMA_CTX:%s\n' "$LLAMA_CTX"
     printf 'LLAMA_JINJA:%s\n' "$LLAMA_JINJA"
+    printf 'OPENCLAW_PROVIDER_TIMEOUT_SECONDS:%s\n' "$OPENCLAW_PROVIDER_TIMEOUT_SECONDS"
+    printf 'OPENCLAW_STUCK_SESSION_WARN_MS:%s\n' "$OPENCLAW_STUCK_SESSION_WARN_MS"
+    printf 'OPENCLAW_STUCK_SESSION_ABORT_MS:%s\n' "$OPENCLAW_STUCK_SESSION_ABORT_MS"
     printf 'LLAMA_BASE_URL:%s\n' "$LLAMA_BASE_URL"
     printf 'ENV_FILE_PORT:%s\n' "$(grep '^LLAMA_PORT=' "$ENV_FILE")"
     printf 'ENV_FILE_CTX:%s\n' "$(grep '^LLAMA_CTX=' "$ENV_FILE")"
     printf 'ENV_FILE_JINJA:%s\n' "$(grep '^LLAMA_JINJA=' "$ENV_FILE")"
+    printf 'ENV_FILE_PROVIDER_TIMEOUT:%s\n' "$(grep '^OPENCLAW_PROVIDER_TIMEOUT_SECONDS=' "$ENV_FILE")"
+    printf 'ENV_FILE_STUCK_WARN:%s\n' "$(grep '^OPENCLAW_STUCK_SESSION_WARN_MS=' "$ENV_FILE")"
+    printf 'ENV_FILE_STUCK_ABORT:%s\n' "$(grep '^OPENCLAW_STUCK_SESSION_ABORT_MS=' "$ENV_FILE")"
     printf 'ENV_FILE_BASE_URL:%s\n' "$(grep '^LLAMA_BASE_URL=' "$ENV_FILE")"
   } 2>&1)"
 
@@ -687,10 +693,16 @@ test_first_run_bootstrap_honors_explicit_custom_llama_port() {
   assert_contains 'first-run explicit custom port remains in memory' "$output" 'LLAMA_PORT:11801'
   assert_contains 'first-run default context is raised to 32768' "$output" 'LLAMA_CTX:32768'
   assert_contains 'first-run default Jinja is enabled' "$output" 'LLAMA_JINJA:true'
+  assert_contains 'first-run default provider timeout is managed' "$output" 'OPENCLAW_PROVIDER_TIMEOUT_SECONDS:1800'
+  assert_contains 'first-run default stuck-session warning threshold is managed' "$output" 'OPENCLAW_STUCK_SESSION_WARN_MS:600000'
+  assert_contains 'first-run default stuck-session abort threshold is managed' "$output" 'OPENCLAW_STUCK_SESSION_ABORT_MS:1800000'
   assert_contains 'first-run explicit custom port sets the base URL' "$output" 'LLAMA_BASE_URL:http://192.168.64.1:11801/v1'
   assert_contains 'first-run explicit custom port persists to .env' "$output" 'ENV_FILE_PORT:LLAMA_PORT="11801"'
   assert_contains 'first-run default context persists to .env' "$output" 'ENV_FILE_CTX:LLAMA_CTX="32768"'
   assert_contains 'first-run default Jinja persists to .env' "$output" 'ENV_FILE_JINJA:LLAMA_JINJA="true"'
+  assert_contains 'first-run default provider timeout persists to .env' "$output" 'ENV_FILE_PROVIDER_TIMEOUT:OPENCLAW_PROVIDER_TIMEOUT_SECONDS="1800"'
+  assert_contains 'first-run default stuck-session warning persists to .env' "$output" 'ENV_FILE_STUCK_WARN:OPENCLAW_STUCK_SESSION_WARN_MS="600000"'
+  assert_contains 'first-run default stuck-session abort persists to .env' "$output" 'ENV_FILE_STUCK_ABORT:OPENCLAW_STUCK_SESSION_ABORT_MS="1800000"'
   assert_contains 'first-run custom port base URL persists to .env' "$output" 'ENV_FILE_BASE_URL:LLAMA_BASE_URL="http://192.168.64.1:11801/v1"'
   assert_not_contains 'first-run explicit custom port does not discover default service' "$output" 'UNEXPECTED_DISCOVERY'
   assert_not_contains 'first-run explicit custom port does not probe the default llama port' "$output" 'API_PROBE:11434'

@@ -51,10 +51,25 @@ The managed primary keys are:
 - `tools.deny`
 - `models.providers.<provider>.baseUrl`
 - `models.providers.<provider>.api`
+- `models.providers.<provider>.timeoutSeconds`
 - `models.providers.<provider>.models`
 - `agents.defaults.compaction.reserveTokens`
 - `agents.defaults.compaction.reserveTokensFloor`
+- `diagnostics.stuckSessionWarnMs`
+- `diagnostics.stuckSessionAbortMs`
 - `gateway.auth.token` when no persistent gateway token exists
+
+ClawBox manages a small set of OpenClaw runtime tuning values for slower local
+inference. `OPENCLAW_PROVIDER_TIMEOUT_SECONDS` defaults to `1800` seconds and
+maps to `models.providers.<provider>.timeoutSeconds`, where `<provider>` comes
+from `OPENCLAW_PROVIDER_NAME`. `OPENCLAW_STUCK_SESSION_WARN_MS` defaults to
+`600000` milliseconds and maps to `diagnostics.stuckSessionWarnMs`.
+`OPENCLAW_STUCK_SESSION_ABORT_MS` defaults to `1800000` milliseconds and maps
+to `diagnostics.stuckSessionAbortMs`. The warning threshold controls when
+OpenClaw reports an apparently stuck session; the abort threshold controls when
+OpenClaw may abort-drain a stalled embedded-agent run. These settings are
+written as numeric JSON values. When existing VM values differ, setup reports
+the exact targeted paths and asks before applying the update.
 
 The generated `clawbox/local` model entry sets `maxTokens` from
 `OPENCLAW_MAX_TOKENS`, which defaults to `8192`. This is the output-token

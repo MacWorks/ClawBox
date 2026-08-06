@@ -109,6 +109,9 @@ Important values:
 - `LLAMA_EXTERNAL` remains `false` when setup reuses an existing current-user ClawBox-managed instance on the configured port
 - `FIREWALL_SHARED_SUBNET`: shared-network hint used by VM SSH recovery and VM IP discovery; the legacy variable name remains for compatibility
 - `OPENCLAW_PROVIDER_NAME`, `OPENCLAW_DEFAULT_MODEL`, `OPENCLAW_AUTOSTART`: OpenClaw integration settings
+- `OPENCLAW_PROVIDER_TIMEOUT_SECONDS`: provider request timeout for the configured OpenClaw provider; defaults to `1800` seconds for slower local inference
+- `OPENCLAW_STUCK_SESSION_WARN_MS`: OpenClaw stuck-session warning threshold; defaults to `600000` milliseconds
+- `OPENCLAW_STUCK_SESSION_ABORT_MS`: OpenClaw stalled embedded-run abort threshold; defaults to `1800000` milliseconds
 - `EMBEDDINGS_ENABLED`: optional second host-only llama-server; when enabled,
   `EMBEDDINGS_MODEL_PATH`, host/port/context, and extra-args settings configure
   a separate embeddings service (default port `11435`)
