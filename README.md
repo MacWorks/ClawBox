@@ -133,6 +133,11 @@ What to expect:
   bounded retry/check-again menu instead of forcing you to restart setup
 - managed setup persists OpenClaw gateway authentication without printing the
   token, and can optionally open the Web UI through a host-loopback SSH tunnel
+- `./clawbox ui` can reopen the VM OpenClaw Web UI later through the same
+  host-loopback SSH tunnel without exposing the VM gateway on the network
+- `./clawbox ui --install-service` can keep that host-loopback tunnel available
+  after GUI login through a per-user LaunchAgent; setup asks before enabling it
+  and defaults to leaving persistence off
 - after an actual managed `llama-server` restart/update, setup may offer a
   default-no VM OpenClaw gateway restart only when the running, ClawBox-managed
   gateway cannot complete a VM-to-host inference probe; this does not rewrite
@@ -211,6 +216,46 @@ for history display, comparisons, Markdown reports, badges, and model-menu
 qualification summaries. That directory is runtime data and is ignored by Git.
 The command does not switch models, replace OpenClaw config, rerun onboarding,
 or install inference software in the VM. See `docs/qualification.md`.
+
+### Open the OpenClaw Web UI
+
+After setup has installed and verified the VM OpenClaw gateway, open the Web UI
+from the host with:
+
+```bash
+./clawbox ui
+```
+
+ClawBox creates or reuses an SSH tunnel bound to host loopback:
+
+```text
+127.0.0.1:18790 → VM 127.0.0.1:18789
+```
+
+The gateway remains bound to VM loopback. The tunnel is only reachable from the
+host Mac, and ClawBox does not print or pass the gateway token in the browser
+URL.
+
+Useful variants:
+
+```bash
+./clawbox ui --no-open
+./clawbox ui --port 18791
+./clawbox ui --install-service
+./clawbox ui --install-service --port 18791
+./clawbox ui --status
+./clawbox ui --stop
+./clawbox ui --remove-service
+```
+
+Use `--no-open` to establish and verify the tunnel without launching a browser.
+Use `--port` when the default host tunnel port is already occupied.
+Use `--install-service` to install or update a per-user LaunchAgent that keeps
+the tunnel available after login. The LaunchAgent never opens a browser; it only
+creates and verifies the loopback tunnel. Persistent service ports are explicit:
+the default is `18790`, `--install-service --port <port>` stores an alternate
+port, and an unrelated process on the configured port is reported instead of
+silently selecting a fallback.
 
 ### Optional embeddings server
 
