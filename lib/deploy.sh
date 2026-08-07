@@ -506,6 +506,23 @@ openclaw_config_desired_entries() {
   openclaw_config_desired_entries_for_scope all
 }
 
+openclaw_config_preparation_status_active() {
+  [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] || return 1
+  [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Preparing OpenClaw configuration...' ]
+}
+
+openclaw_config_preparation_status_success() {
+  if openclaw_config_preparation_status_active; then
+    status_end "Preparing OpenClaw configuration... ✓" 'progress'
+  fi
+}
+
+openclaw_config_preparation_status_failure() {
+  if openclaw_config_preparation_status_active; then
+    status_end "Preparing OpenClaw configuration failed." 'error'
+  fi
+}
+
 apply_targeted_openclaw_config_updates() {
   local scope="${1:-all}"
   local key='' desired='' current='' drift=''
@@ -525,10 +542,12 @@ EOF
 
   if [ -z "$drift" ]; then
     CONFIG_TARGETED_NO_CHANGE=true
+    openclaw_config_preparation_status_success
     out 'OpenClaw config already matched; no OpenClaw changes were made.'
     return 0
   fi
 
+  openclaw_config_preparation_status_success
   out 'OpenClaw config differs only in ClawBox-managed settings:'
   printf '%b' "$drift" | while IFS= read -r key; do [ -z "$key" ] || outf '  - %s' "$key"; done
   prompt_yes_no 'Apply targeted OpenClaw config updates?' 'y'
@@ -572,6 +591,7 @@ sync_openclaw_config() {
   ssh_run_quiet "mkdir -p $REMOTE_CONFIG_DIR"
 
   if ! ssh_exec "test -f $REMOTE_CONFIG_PATH"; then
+    openclaw_config_preparation_status_success
     out 'Installing initial minimal OpenClaw config...'
     generate_openclaw_config || return $?
     scp -O -q "$CONFIG_PATH" "$VM_HOST:$REMOTE_CONFIG_PATH" </dev/null

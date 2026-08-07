@@ -90,7 +90,7 @@ run_provisioning_and_deployment() {
   status_begin_compact "Preparing OpenClaw configuration..."
 
   if detect_openclaw_runtime_state; then
-    status_end "Preparing OpenClaw configuration... ✓" 'progress'
+    :
   else
     status_end "Preparing OpenClaw configuration failed." 'error'
     return 1
@@ -98,7 +98,11 @@ run_provisioning_and_deployment() {
 
   # Existing VM config is user/OpenClaw-owned. Normal setup makes only
   # targeted OpenClaw CLI updates; the generator is used only for bootstrap.
-  sync_openclaw_config || return $?
+  if ! sync_openclaw_config; then
+    openclaw_config_preparation_status_failure
+    return 1
+  fi
+  openclaw_config_preparation_status_success
 
   offer_targeted_openclaw_config_restart || return $?
 

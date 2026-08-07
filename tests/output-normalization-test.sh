@@ -2815,6 +2815,74 @@ PY
   fi
 }
 
+test_openclaw_preparation_status_covers_remote_drift_detection() {
+  local output marker="$TEMP_DIR/openclaw-prep-status-active.marker"
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    detect_openclaw_runtime_state() { return 0; }
+    ensure_vm_provision_script() { return 0; }
+    ensure_openclaw_provisioned() { return 0; }
+    setup_launchagent() { return 0; }
+    handle_openclaw_runtime_state() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { return 0; }
+    ensure_openclaw_gateway_auth_config() { return 0; }
+
+    ssh_run_quiet() { return 0; }
+    ssh_exec() {
+      local command_text="${1-}"
+      [[ "$command_text" == *"test -f"* ]] && return 0
+      return 0
+    }
+    openclaw_config_desired_entries_for_scope() {
+      printf '%s\t%s\n' 'agents.defaults.model.primary' 'clawbox/local'
+    }
+    openclaw_config_remote_get() {
+      local key="${1-}"
+      if [ "$key" = 'agents.defaults.model.primary' ] \
+        && [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] \
+        && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Preparing OpenClaw configuration...' ]; then
+        : > "$marker"
+      fi
+      printf '%s\n' 'clawbox/local'
+    }
+
+    VM_HOST='tester@192.168.64.2'
+    VM_RUNTIME_PATH='/Users/tester/ClawBox'
+    REMOTE_CONFIG_DIR='~/.openclaw'
+    REMOTE_CONFIG_PATH='~/.openclaw/openclaw.json'
+
+    run_provisioning_and_deployment
+  } 2>&1)"
+
+  if [ -f "$marker" ]; then
+    pass "OpenClaw preparation status stays active during remote drift reads"
+  else
+    fail "OpenClaw preparation status should cover remote drift reads"
+  fi
+
+  if python3 - "$output" <<'PY'
+import sys
+text = sys.argv[1]
+done = text.find("Preparing OpenClaw configuration... ✓")
+matched = text.find("OpenClaw config already matched; no OpenClaw changes were made.")
+raise SystemExit(0 if -1 not in (done, matched) and done < matched else 1)
+PY
+  then
+    pass "OpenClaw preparation status completes immediately before sync result"
+  else
+    fail "OpenClaw preparation status should complete immediately before sync result"
+  fi
+}
+
 test_targeted_openclaw_restart_prompt_skips_decline_and_noop_sync() {
   local declined_output noop_output
 
@@ -3513,6 +3581,7 @@ run_test test_vm_ip_discovery_recovery_flow
 run_test test_detect_vm_state
 run_test test_provisioning_and_deployment_flow
 run_test test_targeted_openclaw_restart_prompt_follows_config_update_before_deployment
+run_test test_openclaw_preparation_status_covers_remote_drift_detection
 run_test test_targeted_openclaw_restart_prompt_skips_decline_and_noop_sync
 run_test test_provisioning_and_deployment_continues_after_vm_local_provisioning
 run_test test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete
