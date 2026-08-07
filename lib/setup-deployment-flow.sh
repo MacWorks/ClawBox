@@ -87,13 +87,20 @@ run_provisioning_and_deployment() {
   fi
 
   section "OpenClaw Configuration"
-  step "Preparing OpenClaw configuration..."
+  status_begin_compact "Preparing OpenClaw configuration..."
 
-  detect_openclaw_runtime_state
+  if detect_openclaw_runtime_state; then
+    status_end "Preparing OpenClaw configuration... ✓" 'progress'
+  else
+    status_end "Preparing OpenClaw configuration failed." 'error'
+    return 1
+  fi
 
   # Existing VM config is user/OpenClaw-owned. Normal setup makes only
   # targeted OpenClaw CLI updates; the generator is used only for bootstrap.
   sync_openclaw_config || return $?
+
+  offer_targeted_openclaw_config_restart || return $?
 
   section "Deployment"
   step "Deploying to VM..."
@@ -108,8 +115,6 @@ run_provisioning_and_deployment() {
   setup_launchagent || return $?
 
   handle_openclaw_runtime_state || return $?
-
-  offer_targeted_openclaw_config_restart || return $?
 
   offer_openclaw_restart_after_llama_update || return $?
 

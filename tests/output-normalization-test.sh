@@ -2750,11 +2750,127 @@ test_provisioning_and_deployment_flow() {
   assert_contains 'provisioning flow shows host inference section' "$output" ' > Host Inference Service'
   assert_contains 'provisioning flow shows vm onboarding section' "$output" ' > VM Onboarding'
   assert_contains 'provisioning flow shows openclaw section' "$output" ' > OpenClaw Configuration'
+  assert_contains 'provisioning flow starts compact OpenClaw preparation status' "$output" 'Preparing OpenClaw configuration...'
+  assert_contains 'provisioning flow completes compact OpenClaw preparation status' "$output" 'Preparing OpenClaw configuration... ✓'
   assert_contains 'provisioning flow shows deployment section' "$output" ' > Deployment'
   assert_contains 'provisioning flow shows runtime section' "$output" ' > Runtime'
   assert_contains 'provisioning flow reports targeted config sync state' "$output" 'OpenClaw config already matched; no OpenClaw changes were made.'
   assert_contains 'provisioning flow shows runtime callout' "$output" 'OpenClaw is installed but not running.'
   assert_no_excessive_blank_lines 'provisioning flow avoids excessive blank lines' "$output"
+}
+
+test_targeted_openclaw_restart_prompt_follows_config_update_before_deployment() {
+  local output
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers 'n'
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    detect_openclaw_runtime_state() {
+      NEEDS_PROVISIONING=false
+      IS_RUNNING=true
+      OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by VM launchd'
+      return 0
+    }
+    sync_openclaw_config() {
+      CONFIG_TARGETED_UPDATED=true
+      success 'Targeted ClawBox OpenClaw settings updated.'
+      out 'OpenClaw may reload these settings automatically; no gateway was restarted.'
+    }
+    ensure_vm_provision_script() { out 'Deployment reached.'; }
+    ensure_openclaw_provisioned() { return 0; }
+    setup_launchagent() { return 0; }
+    handle_openclaw_runtime_state() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { return 0; }
+
+    VM_HOST='tester@192.168.64.2'
+    VM_RUNTIME_PATH='/Users/tester/ClawBox'
+
+    run_provisioning_and_deployment
+  } 2>&1)"
+
+  assert_contains 'targeted update completion is reported before restart prompt' "$output" 'Targeted ClawBox OpenClaw settings updated.'
+  assert_contains 'targeted update restart prompt is offered with default no' "$output" 'Restart the VM OpenClaw gateway now to apply targeted config changes? [y/N]:'
+  assert_contains 'declined targeted restart preserves default-no behavior' "$output" 'OpenClaw was not restarted.'
+
+  if python3 - "$output" <<'PY'
+import sys
+text = sys.argv[1]
+updated = text.find("Targeted ClawBox OpenClaw settings updated.")
+prompt = text.find("Restart the VM OpenClaw gateway now to apply targeted config changes?")
+deployment = text.find(" > Deployment")
+raise SystemExit(0 if -1 not in (updated, prompt, deployment) and updated < prompt < deployment else 1)
+PY
+  then
+    pass "targeted OpenClaw restart prompt appears before Deployment"
+  else
+    fail "targeted OpenClaw restart prompt should appear before Deployment"
+  fi
+}
+
+test_targeted_openclaw_restart_prompt_skips_decline_and_noop_sync() {
+  local declined_output noop_output
+
+  declined_output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    detect_openclaw_runtime_state() { return 0; }
+    sync_openclaw_config() {
+      CONFIG_TARGETED_UPDATED=false
+      out 'OpenClaw config was not changed.'
+    }
+    ensure_vm_provision_script() { return 0; }
+    ensure_openclaw_provisioned() { return 0; }
+    setup_launchagent() { return 0; }
+    handle_openclaw_runtime_state() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { return 0; }
+
+    run_provisioning_and_deployment
+  } 2>&1)"
+
+  noop_output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    detect_openclaw_runtime_state() { return 0; }
+    sync_openclaw_config() {
+      CONFIG_TARGETED_UPDATED=false
+      CONFIG_TARGETED_NO_CHANGE=true
+      out 'OpenClaw config already matched; no OpenClaw changes were made.'
+    }
+    ensure_vm_provision_script() { return 0; }
+    ensure_openclaw_provisioned() { return 0; }
+    setup_launchagent() { return 0; }
+    handle_openclaw_runtime_state() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { return 0; }
+
+    run_provisioning_and_deployment
+  } 2>&1)"
+
+  assert_contains 'declined targeted sync remains visible' "$declined_output" 'OpenClaw config was not changed.'
+  assert_not_contains 'declined targeted sync does not offer restart' "$declined_output" 'Restart the VM OpenClaw gateway now to apply targeted config changes?'
+  assert_contains 'no-op targeted sync remains visible' "$noop_output" 'OpenClaw config already matched; no OpenClaw changes were made.'
+  assert_not_contains 'no-op targeted sync does not offer restart' "$noop_output" 'Restart the VM OpenClaw gateway now to apply targeted config changes?'
 }
 
 test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
@@ -3396,6 +3512,8 @@ run_test test_vm_startup_network_recovery_flow
 run_test test_vm_ip_discovery_recovery_flow
 run_test test_detect_vm_state
 run_test test_provisioning_and_deployment_flow
+run_test test_targeted_openclaw_restart_prompt_follows_config_update_before_deployment
+run_test test_targeted_openclaw_restart_prompt_skips_decline_and_noop_sync
 run_test test_provisioning_and_deployment_continues_after_vm_local_provisioning
 run_test test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete
 run_test test_runtime_service_existing_menu_wording
