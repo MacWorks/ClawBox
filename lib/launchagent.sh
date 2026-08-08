@@ -63,6 +63,68 @@ launchagent_runtime_operational() {
   launchagent_service_loaded || return 1
 }
 
+launchagent_detect_existing_runtime_state() {
+  local existing_runtime=false
+  local runtime_state=''
+
+  if [ -f "$LAUNCHAGENT_PATH" ]; then
+    existing_runtime=true
+  elif [ -e "$LAUNCHAGENT_WRAPPER_DEST" ]; then
+    existing_runtime=true
+  elif launchagent_service_loaded; then
+    existing_runtime=true
+  fi
+
+  if [ "$existing_runtime" = true ]; then
+    if [ -f "$LAUNCHAGENT_PATH" ] && launchagent_plist_matches && launchagent_service_loaded; then
+      runtime_state='loaded and matches the expected configuration'
+    elif [ -f "$LAUNCHAGENT_PATH" ] && launchagent_plist_matches; then
+      runtime_state='present on disk and matches the expected configuration'
+    elif launchagent_service_loaded; then
+      runtime_state='loaded but does not match the expected configuration'
+    else
+      runtime_state='present on disk but not loaded'
+    fi
+  fi
+
+  printf '%s\n' "$existing_runtime"
+  printf '%s\n' "$runtime_state"
+  return 0
+}
+
+launchagent_detect_existing_runtime_state_with_status() {
+  local state_file=''
+  local pid=''
+  local status=0
+
+  state_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-launchagent-state.XXXXXX")" || return 1
+
+  status_begin_compact 'Checking host VM auto-start service...'
+  launchagent_detect_existing_runtime_state >"$state_file" &
+  pid="$!"
+
+  if status_wait_for_pid_active "$pid" 'Checking host VM auto-start service...'; then
+    status_end 'Checking host VM auto-start service... ✓' 'progress'
+    status=0
+  else
+    status="$?"
+    status_end 'Checking host VM auto-start service failed.' 'error'
+  fi
+
+  if [ -f "$state_file" ]; then
+    {
+      IFS= read -r REPLY || REPLY=false
+      IFS= read -r LAUNCHAGENT_DETECTED_RUNTIME_STATE || LAUNCHAGENT_DETECTED_RUNTIME_STATE=''
+    } <"$state_file"
+  else
+    REPLY=false
+    LAUNCHAGENT_DETECTED_RUNTIME_STATE=''
+  fi
+
+  rm -f "$state_file"
+  return "$status"
+}
+
 setup_launchagent() {
   LAUNCHAGENT_PATH="$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist"
   LAUNCHAGENT_WRAPPER_SRC="$BASE_DIR/host/scripts/start-utm-vm.sh"
@@ -77,23 +139,13 @@ setup_launchagent() {
 
   clawbox_ensure_standard_log_dirs
 
-  if [ -f "$LAUNCHAGENT_PATH" ] || [ -e "$LAUNCHAGENT_WRAPPER_DEST" ] || launchagent_service_loaded; then
-    existing_runtime=true
-  fi
+  launchagent_detect_existing_runtime_state_with_status || return $?
+  existing_runtime="$REPLY"
+  runtime_state="$LAUNCHAGENT_DETECTED_RUNTIME_STATE"
 
   if [ "$existing_runtime" = true ]; then
     blank_line
     out 'Existing host VM auto-start service detected.'
-
-    if [ -f "$LAUNCHAGENT_PATH" ] && launchagent_plist_matches && launchagent_service_loaded; then
-      runtime_state='loaded and matches the expected configuration'
-    elif [ -f "$LAUNCHAGENT_PATH" ] && launchagent_plist_matches; then
-      runtime_state='present on disk and matches the expected configuration'
-    elif launchagent_service_loaded; then
-      runtime_state='loaded but does not match the expected configuration'
-    else
-      runtime_state='present on disk but not loaded'
-    fi
 
     out "  State: $runtime_state"
     out "  Plist: $(if [ -f "$LAUNCHAGENT_PATH" ]; then printf 'present'; else printf 'missing'; fi)"

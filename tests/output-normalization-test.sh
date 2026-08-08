@@ -2157,6 +2157,29 @@ test_status_helper_renders_trailing_spinner_frames() {
   assert_not_contains 'status helper strips the ellipsis while spinning' "$output" 'Waiting for VM network... /'
 }
 
+test_status_helper_repaints_while_waiting_for_background_work() {
+  local output
+
+  output="$({
+    load_setup_functions
+
+    _status_can_spin() {
+      return 0
+    }
+
+    CLAWBOX_STATUS_INTERVAL_SECONDS=0.001
+
+    status_begin_compact 'Checking OpenClaw configuration...'
+    ( sleep 0.02 ) &
+    status_wait_for_pid_active "$!" 'Checking OpenClaw configuration...'
+    status_end 'Checking OpenClaw configuration... ✓' 'progress'
+  } 2>&1)"
+
+  assert_contains 'status helper repaints slash frame while background work runs' "$output" 'Checking OpenClaw configuration /'
+  assert_contains 'status helper repaints dash frame while background work runs' "$output" 'Checking OpenClaw configuration -'
+  assert_contains 'status helper completes after background work finishes' "$output" 'Checking OpenClaw configuration... ✓'
+}
+
 test_status_helper_uses_fast_spinner_cadence() {
   local interval=''
 
@@ -2822,6 +2845,12 @@ test_openclaw_preparation_status_covers_remote_drift_detection() {
     load_setup_functions
     install_prompt_stubs
 
+    _status_can_spin() {
+      return 0
+    }
+
+    CLAWBOX_STATUS_INTERVAL_SECONDS=0.001
+
     setup_host_inference_service_phase() { return 0; }
     setup_embeddings_service_phase() { return 0; }
     llama_refresh_openclaw_effective_context_window() { return 0; }
@@ -2851,6 +2880,7 @@ test_openclaw_preparation_status_covers_remote_drift_detection() {
         && [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] \
         && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Preparing OpenClaw configuration...' ]; then
         : > "$marker"
+        sleep 0.02
       fi
       printf '%s\n' 'clawbox/local'
     }
@@ -2881,6 +2911,8 @@ PY
   else
     fail "OpenClaw preparation status should complete immediately before sync result"
   fi
+
+  assert_contains 'OpenClaw preparation status visibly repaints during remote drift reads' "$output" 'Preparing OpenClaw configuration /'
 }
 
 test_openclaw_gateway_auth_status_covers_post_comparison_remote_work() {
@@ -2890,6 +2922,12 @@ test_openclaw_gateway_auth_status_covers_post_comparison_remote_work() {
   output="$({
     load_setup_functions
     install_prompt_stubs
+
+    _status_can_spin() {
+      return 0
+    }
+
+    CLAWBOX_STATUS_INTERVAL_SECONDS=0.001
 
     setup_host_inference_service_phase() { return 0; }
     setup_embeddings_service_phase() { return 0; }
@@ -2924,6 +2962,7 @@ test_openclaw_gateway_auth_status_covers_post_comparison_remote_work() {
         && [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] \
         && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Checking OpenClaw gateway authentication...' ]; then
         : > "$auth_get_marker"
+        sleep 0.02
         printf '%s\n' '__OPENCLAW_REDACTED__'
         return 0
       fi
@@ -2963,6 +3002,8 @@ PY
   else
     fail "OpenClaw gateway auth status should complete before Deployment"
   fi
+
+  assert_contains 'OpenClaw gateway auth status visibly repaints during remote token reads' "$output" 'Checking OpenClaw gateway authentication /'
 }
 
 test_targeted_openclaw_restart_prompt_skips_decline_and_noop_sync() {
@@ -3024,7 +3065,7 @@ test_targeted_openclaw_restart_prompt_skips_decline_and_noop_sync() {
 }
 
 test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
-  local output
+  local output detect_counter="$TEMP_DIR/provisioning-handoff-detect-count"
 
   output="$({
     load_setup_functions
@@ -3033,8 +3074,8 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
     # interactive onboarding action. This fixture must never contact a VM.
     queue_prompt_answers 'y' 'n'
 
-    detect_calls=0
     vm_control_calls=0
+    printf '0\n' > "$detect_counter"
 
     ssh() {
       vm_control_calls=$((vm_control_calls + 1))
@@ -3093,8 +3134,11 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
     }
 
     detect_openclaw_runtime_state() {
-      detect_calls=$((detect_calls + 1))
-      if [ "$detect_calls" -eq 1 ]; then
+      local calls=0
+      IFS= read -r calls < "$detect_counter" || calls=0
+      calls=$((calls + 1))
+      printf '%s\n' "$calls" > "$detect_counter"
+      if [ "$calls" -eq 1 ]; then
         NEEDS_PROVISIONING=true
         IS_RUNNING=false
       else
@@ -3149,7 +3193,7 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
       status=$?
     fi
     printf 'STATUS:%s\n' "$status"
-    printf 'DETECT_CALLS:%s\n' "$detect_calls"
+    printf 'DETECT_CALLS:%s\n' "$(cat "$detect_counter")"
     printf 'VM_CONTROL_CALLS:%s\n' "$vm_control_calls"
   } 2>&1)"
 
@@ -3274,12 +3318,28 @@ test_runtime_service_existing_menu_wording() {
     setup_launchagent
   } 2>&1)"
 
+  assert_contains 'runtime service menu reports discovery progress' "$output" 'Checking host VM auto-start service...'
+  assert_contains 'runtime service menu completes discovery progress before details' "$output" 'Checking host VM auto-start service... ✓'
   assert_contains 'runtime service menu identifies the host vm autostart service' "$output" 'Existing host VM auto-start service detected.'
   assert_contains 'runtime service menu warns that stale keep skips updates' "$output" 'the latest reliability fixes will not be applied'
   assert_contains 'runtime service menu shows option one as keeping the existing host vm autostart service' "$output" '1) Keep the existing host VM auto-start service'
   assert_contains 'runtime service menu recommends reinstalling stale service' "$output" '2) Reinstall/update host VM auto-start service (recommended)'
   assert_contains 'runtime service menu shows option three as removing service' "$output" '3) Disable/remove runtime service'
   assert_contains 'runtime service menu shows option four as skipping management' "$output" '4) Skip runtime service management during setup'
+
+  if python3 - "$output" <<'PY'
+import sys
+text = sys.argv[1]
+done = text.find("Checking host VM auto-start service... ✓")
+details = text.find("Existing host VM auto-start service detected.")
+prompt = text.find("Choose runtime service action")
+raise SystemExit(0 if -1 not in (done, details, prompt) and done < details < prompt else 1)
+PY
+  then
+    pass "runtime service discovery spinner stops before details and prompt"
+  else
+    fail "runtime service discovery spinner should stop before details and prompt"
+  fi
 }
 
 test_host_llama_restart_uses_install_mode_without_hidden_health_wait() {
@@ -3649,6 +3709,7 @@ run_test test_status_helper_compact_mode_suppresses_interline_blank_spacing
 run_test test_status_progress_helper_is_opt_in_and_line_oriented_without_tty
 run_test test_status_progress_finalizes_tty_line_cleanly
 run_test test_status_helper_renders_trailing_spinner_frames
+run_test test_status_helper_repaints_while_waiting_for_background_work
 run_test test_status_helper_uses_fast_spinner_cadence
 run_test test_status_helper_applies_semantic_result_styling
 run_test test_status_helper_restores_cursor_after_completion

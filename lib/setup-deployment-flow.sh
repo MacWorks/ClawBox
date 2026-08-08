@@ -66,6 +66,43 @@ print_setup_completion_summary() {
   esac
 }
 
+detect_openclaw_runtime_state_with_status() {
+  local state_file=''
+  local pid=''
+  local status=0
+
+  state_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-openclaw-runtime-state.XXXXXX")" || return 1
+
+  (
+    detect_openclaw_runtime_state
+    status="$?"
+    {
+      printf '%s\n' "${NEEDS_PROVISIONING:-false}"
+      printf '%s\n' "${IS_RUNNING:-false}"
+      printf '%s\n' "${OPENCLAW_RUNTIME_MANAGEMENT_STATE:-unknown}"
+    } >"$state_file"
+    exit "$status"
+  ) &
+  pid="$!"
+
+  if status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Preparing OpenClaw configuration...}"; then
+    status=0
+  else
+    status="$?"
+  fi
+
+  if [ -f "$state_file" ]; then
+    {
+      IFS= read -r NEEDS_PROVISIONING || NEEDS_PROVISIONING=false
+      IFS= read -r IS_RUNNING || IS_RUNNING=false
+      IFS= read -r OPENCLAW_RUNTIME_MANAGEMENT_STATE || OPENCLAW_RUNTIME_MANAGEMENT_STATE='unknown'
+    } <"$state_file"
+  fi
+
+  rm -f "$state_file"
+  return "$status"
+}
+
 run_provisioning_and_deployment() {
   local connectivity_status
 
@@ -89,7 +126,7 @@ run_provisioning_and_deployment() {
   section "OpenClaw Configuration"
   status_begin_compact "Preparing OpenClaw configuration..."
 
-  if detect_openclaw_runtime_state; then
+  if detect_openclaw_runtime_state_with_status; then
     :
   else
     status_end "Preparing OpenClaw configuration failed." 'error'
