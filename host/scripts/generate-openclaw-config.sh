@@ -6,6 +6,9 @@ ENV_FILE="$BASE_DIR/.env"
 RUNTIME_DIR="$BASE_DIR/vm/runtime"
 CONFIG_PATH="$RUNTIME_DIR/openclaw.json"
 
+# shellcheck source=/dev/null
+source "$BASE_DIR/lib/context-runtime.sh"
+
 require_file() {
   local path="$1"
   if [ ! -f "$path" ]; then
@@ -59,6 +62,9 @@ OPENCLAW_EFFECTIVE_CONTEXT_WINDOW_VALUE="${OPENCLAW_EFFECTIVE_CONTEXT_WINDOW:-}"
 OPENCLAW_MAX_TOKENS_VALUE="${OPENCLAW_MAX_TOKENS:-8192}"
 OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE="${OPENCLAW_GATEWAY_AUTH_TOKEN:-}"
 OPENCLAW_COMPACTION_RESERVE_VALUE=''
+OPENCLAW_PROVIDER_TIMEOUT_SECONDS_VALUE=''
+OPENCLAW_STUCK_SESSION_WARN_MS_VALUE=''
+OPENCLAW_STUCK_SESSION_ABORT_MS_VALUE=''
 
 case "$OPENCLAW_GATEWAY_MODE_VALUE" in
   local|remote)
@@ -130,6 +136,8 @@ else
   fi
 fi
 
+openclaw_resolve_runtime_tuning_values || exit 1
+
 OPENCLAW_COMPACTION_RESERVE_VALUE="$(python3 - "$LLAMA_CONTEXT_WINDOW_VALUE" <<'PY'
 import sys
 ctx = int(sys.argv[1])
@@ -150,7 +158,7 @@ PY
 )"
 fi
 
-export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE OPENCLAW_MAX_TOKENS_VALUE OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE OPENCLAW_COMPACTION_RESERVE_VALUE
+export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE OPENCLAW_MAX_TOKENS_VALUE OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE OPENCLAW_COMPACTION_RESERVE_VALUE OPENCLAW_PROVIDER_TIMEOUT_SECONDS_VALUE OPENCLAW_STUCK_SESSION_WARN_MS_VALUE OPENCLAW_STUCK_SESSION_ABORT_MS_VALUE
 
 python3 - "$CONFIG_PATH" <<'PY'
 import json
@@ -172,9 +180,14 @@ config = {
         },
     }},
     "tools": {"deny": ["cron"]},
+    "diagnostics": {
+        "stuckSessionWarnMs": int(os.environ["OPENCLAW_STUCK_SESSION_WARN_MS_VALUE"]),
+        "stuckSessionAbortMs": int(os.environ["OPENCLAW_STUCK_SESSION_ABORT_MS_VALUE"]),
+    },
     "models": {"providers": {provider: {
         "baseUrl": os.environ["LLAMA_BASE_URL"],
         "api": "openai-completions",
+        "timeoutSeconds": int(os.environ["OPENCLAW_PROVIDER_TIMEOUT_SECONDS_VALUE"]),
         "models": [{
             "id": model,
             "name": model,

@@ -662,9 +662,56 @@ status_wait_for_pid() {
 
   status_begin "$message"
 
-  while kill -0 "$pid" >/dev/null 2>&1; do
+  while command kill -0 "$pid" >/dev/null 2>&1; do
     status_sleep "$wait_interval" "$message"
   done
+}
+
+status_wait_for_pid_active() {
+  local pid="$1"
+  local message="${2:-${CLAWBOX_STATUS_MESSAGE:-}}"
+  local wait_interval=''
+
+  wait_interval="$(status_tick_interval)"
+
+  while command kill -0 "$pid" >/dev/null 2>&1; do
+    status_sleep "$wait_interval" "$message"
+  done
+
+  wait "$pid"
+}
+
+status_run_compact() {
+  local message="$1"
+  local success_message="$2"
+  local failure_message="$3"
+  local output_file=''
+  local pid=''
+  local status=0
+
+  shift 3
+
+  output_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-status-run.XXXXXX")" || return 1
+
+  status_begin_compact "$message"
+  ( "$@" ) >"$output_file" 2>&1 &
+  pid="$!"
+
+  if status_wait_for_pid_active "$pid" "$message"; then
+    status_end "$success_message" 'progress'
+    status=0
+  else
+    status="$?"
+    status_end "$failure_message" 'error'
+  fi
+
+  if [ -s "$output_file" ]; then
+    cat "$output_file" >&2
+    _set_output_state "normal"
+  fi
+
+  rm -f "$output_file"
+  return "$status"
 }
 
 status_progress_bar() {

@@ -66,6 +66,43 @@ print_setup_completion_summary() {
   esac
 }
 
+detect_openclaw_runtime_state_with_status() {
+  local state_file=''
+  local pid=''
+  local status=0
+
+  state_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-openclaw-runtime-state.XXXXXX")" || return 1
+
+  (
+    detect_openclaw_runtime_state
+    status="$?"
+    {
+      printf '%s\n' "${NEEDS_PROVISIONING:-false}"
+      printf '%s\n' "${IS_RUNNING:-false}"
+      printf '%s\n' "${OPENCLAW_RUNTIME_MANAGEMENT_STATE:-unknown}"
+    } >"$state_file"
+    exit "$status"
+  ) &
+  pid="$!"
+
+  if status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Preparing OpenClaw configuration...}"; then
+    status=0
+  else
+    status="$?"
+  fi
+
+  if [ -f "$state_file" ]; then
+    {
+      IFS= read -r NEEDS_PROVISIONING || NEEDS_PROVISIONING=false
+      IFS= read -r IS_RUNNING || IS_RUNNING=false
+      IFS= read -r OPENCLAW_RUNTIME_MANAGEMENT_STATE || OPENCLAW_RUNTIME_MANAGEMENT_STATE='unknown'
+    } <"$state_file"
+  fi
+
+  rm -f "$state_file"
+  return "$status"
+}
+
 run_provisioning_and_deployment() {
   local connectivity_status
 
@@ -87,13 +124,24 @@ run_provisioning_and_deployment() {
   fi
 
   section "OpenClaw Configuration"
-  step "Preparing OpenClaw configuration..."
+  status_begin_compact "Preparing OpenClaw configuration..."
 
-  detect_openclaw_runtime_state
+  if detect_openclaw_runtime_state_with_status; then
+    :
+  else
+    status_end "Preparing OpenClaw configuration failed." 'error'
+    return 1
+  fi
 
   # Existing VM config is user/OpenClaw-owned. Normal setup makes only
   # targeted OpenClaw CLI updates; the generator is used only for bootstrap.
-  sync_openclaw_config || return $?
+  if ! sync_openclaw_config; then
+    openclaw_config_preparation_status_failure
+    return 1
+  fi
+  openclaw_config_preparation_status_success
+
+  offer_targeted_openclaw_config_restart || return $?
 
   section "Deployment"
   step "Deploying to VM..."
@@ -108,8 +156,6 @@ run_provisioning_and_deployment() {
   setup_launchagent || return $?
 
   handle_openclaw_runtime_state || return $?
-
-  offer_targeted_openclaw_config_restart || return $?
 
   offer_openclaw_restart_after_llama_update || return $?
 

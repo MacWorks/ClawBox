@@ -477,12 +477,16 @@ openclaw_config_desired_entries_for_scope() {
   local provider="${OPENCLAW_PROVIDER_NAME:-clawbox}" models=''
 
   if [ "$scope" = all ] || [ "$scope" = primary ]; then
+    openclaw_resolve_runtime_tuning_values || return 1
     models="$(openclaw_config_model_array)" || return 1
     printf '%s\t%s\n' 'agents.defaults.model.primary' "$provider/${OPENCLAW_DEFAULT_MODEL:-local}"
     printf '%s\t%s\n' 'tools.deny' '["cron"]'
     printf '%s\t%s\n' "models.providers.$provider.baseUrl" "${LLAMA_BASE_URL:-}"
     printf '%s\t%s\n' "models.providers.$provider.api" 'openai-completions'
+    printf '%s\t%s\n' "models.providers.$provider.timeoutSeconds" "$OPENCLAW_PROVIDER_TIMEOUT_SECONDS_VALUE"
     printf '%s\t%s\n' "models.providers.$provider.models" "$models"
+    printf '%s\t%s\n' 'diagnostics.stuckSessionWarnMs' "$OPENCLAW_STUCK_SESSION_WARN_MS_VALUE"
+    printf '%s\t%s\n' 'diagnostics.stuckSessionAbortMs' "$OPENCLAW_STUCK_SESSION_ABORT_MS_VALUE"
     openclaw_managed_token_budget_entries "${OPENCLAW_EFFECTIVE_CONTEXT_WINDOW:-${LLAMA_CTX:-32768}}" "${OPENCLAW_MAX_TOKENS:-8192}" || return 1
   fi
 
@@ -502,31 +506,73 @@ openclaw_config_desired_entries() {
   openclaw_config_desired_entries_for_scope all
 }
 
-apply_targeted_openclaw_config_updates() {
+openclaw_config_preparation_status_active() {
+  [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] || return 1
+  [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Preparing OpenClaw configuration...' ]
+}
+
+openclaw_config_preparation_status_success() {
+  if openclaw_config_preparation_status_active; then
+    status_end "Preparing OpenClaw configuration... ✓" 'progress'
+  fi
+}
+
+openclaw_config_preparation_status_failure() {
+  if openclaw_config_preparation_status_active; then
+    status_end "Preparing OpenClaw configuration failed." 'error'
+  fi
+}
+
+openclaw_config_collect_drift_for_scope() {
   local scope="${1:-all}"
-  local key='' desired='' current='' drift=''
-  CONFIG_OVERWRITTEN=false
-  CONFIG_TARGETED_UPDATED=false
-  CONFIG_TARGETED_NO_CHANGE=false
+  local key='' desired='' current=''
 
   while IFS=$'\t' read -r key desired; do
     [ -n "$key" ] || continue
     current="$(openclaw_config_remote_get "$key" 2>/dev/null || true)"
     if ! openclaw_config_value_matches_for_key "$key" "$current" "$desired"; then
-      drift="${drift}${key}\n"
+      printf '%s\n' "$key"
     fi
   done <<EOF
 $(openclaw_config_desired_entries_for_scope "$scope")
 EOF
+}
+
+openclaw_config_collect_drift_with_status() {
+  local scope="${1:-all}"
+  local drift_file="$2"
+  local pid=''
+
+  openclaw_config_collect_drift_for_scope "$scope" >"$drift_file" &
+  pid="$!"
+  status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Preparing OpenClaw configuration...}"
+}
+
+apply_targeted_openclaw_config_updates() {
+  local scope="${1:-all}"
+  local key='' desired='' current='' drift='' drift_file=''
+  CONFIG_OVERWRITTEN=false
+  CONFIG_TARGETED_UPDATED=false
+  CONFIG_TARGETED_NO_CHANGE=false
+
+  drift_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-openclaw-drift.XXXXXX")" || return 1
+  if ! openclaw_config_collect_drift_with_status "$scope" "$drift_file"; then
+    rm -f "$drift_file"
+    return 1
+  fi
+  drift="$(cat "$drift_file")"
+  rm -f "$drift_file"
 
   if [ -z "$drift" ]; then
     CONFIG_TARGETED_NO_CHANGE=true
+    openclaw_config_preparation_status_success
     out 'OpenClaw config already matched; no OpenClaw changes were made.'
     return 0
   fi
 
+  openclaw_config_preparation_status_success
   out 'OpenClaw config differs only in ClawBox-managed settings:'
-  printf '%b' "$drift" | while IFS= read -r key; do [ -z "$key" ] || outf '  - %s' "$key"; done
+  printf '%s\n' "$drift" | while IFS= read -r key; do [ -z "$key" ] || outf '  - %s' "$key"; done
   prompt_yes_no 'Apply targeted OpenClaw config updates?' 'y'
   if ! is_yes "$REPLY"; then
     out 'OpenClaw config was not changed.'
@@ -568,6 +614,7 @@ sync_openclaw_config() {
   ssh_run_quiet "mkdir -p $REMOTE_CONFIG_DIR"
 
   if ! ssh_exec "test -f $REMOTE_CONFIG_PATH"; then
+    openclaw_config_preparation_status_success
     out 'Installing initial minimal OpenClaw config...'
     generate_openclaw_config || return $?
     scp -O -q "$CONFIG_PATH" "$VM_HOST:$REMOTE_CONFIG_PATH" </dev/null
@@ -577,7 +624,14 @@ sync_openclaw_config() {
   fi
 
   apply_targeted_openclaw_config_updates all || return $?
-  ensure_openclaw_gateway_auth_config || return $?
+  if ! status_run_compact \
+    "Checking OpenClaw gateway authentication..." \
+    "Checking OpenClaw gateway authentication... ✓" \
+    "Checking OpenClaw gateway authentication failed." \
+    ensure_openclaw_gateway_auth_config
+  then
+    return 1
+  fi
 }
 
 sync_openclaw_config_targeted_only() {

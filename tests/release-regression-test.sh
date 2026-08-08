@@ -244,7 +244,15 @@ shift || true
         /bin/bash -c "$translated_command"
         exit $?
       fi
+      if printf "%s\n" "$translated_command" | grep -Fq ".models.providers[\$provider].timeoutSeconds"; then
+        /bin/bash -c "$translated_command"
+        exit $?
+      fi
       if printf "%s\n" "$translated_command" | grep -Fq ".agents.defaults.compaction.reserveTokens"; then
+        /bin/bash -c "$translated_command"
+        exit $?
+      fi
+      if printf "%s\n" "$translated_command" | grep -Fq ".diagnostics.stuckSession"; then
         /bin/bash -c "$translated_command"
         exit $?
       fi
@@ -558,6 +566,9 @@ LLAMA_BASE_URL="http://192.168.64.1:18080/v1"
 MODEL_PATH="/Users/vm-user/models/model.gguf"
 OPENCLAW_PROVIDER_NAME="clawbox"
 OPENCLAW_DEFAULT_MODEL="local"
+OPENCLAW_PROVIDER_TIMEOUT_SECONDS="1800"
+OPENCLAW_STUCK_SESSION_WARN_MS="600000"
+OPENCLAW_STUCK_SESSION_ABORT_MS="1800000"
 LLAMA_EXTERNAL="false"
 EOF
   cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
@@ -1714,10 +1725,15 @@ EOF
       }
     }
   },
+  "diagnostics": {
+    "stuckSessionWarnMs": 600000,
+    "stuckSessionAbortMs": 1800000
+  },
   "models": {
     "providers": {
       "clawbox": {
         "baseUrl": "http://127.0.0.1:18080/v1",
+        "timeoutSeconds": 1800,
         "models": [
           {
             "id": "Status-Legacy-14B-Q5_K_M.gguf",
@@ -1807,6 +1823,9 @@ LLAMA_JINJA="true"
 MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 OPENCLAW_PROVIDER_NAME="clawbox"
 OPENCLAW_DEFAULT_MODEL="local"
+OPENCLAW_PROVIDER_TIMEOUT_SECONDS="1800"
+OPENCLAW_STUCK_SESSION_WARN_MS="600000"
+OPENCLAW_STUCK_SESSION_ABORT_MS="1800000"
 LLAMA_EXTERNAL="false"
 EOF
   cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
@@ -1822,10 +1841,15 @@ EOF
       }
     }
   },
+  "diagnostics": {
+    "stuckSessionWarnMs": 600000,
+    "stuckSessionAbortMs": 1800000
+  },
   "models": {
     "providers": {
       "clawbox": {
         "baseUrl": "http://127.0.0.1:18080/v1",
+        "timeoutSeconds": 1800,
         "models": [
           {
             "id": "local",
@@ -1876,6 +1900,10 @@ EOF
   assert_contains 'status normalized OpenClaw provider model reports OpenClaw maxTokens' "$output" 'OpenClaw maxTokens: 8192'
   assert_contains 'status normalized OpenClaw provider model reports compaction reserve' "$output" 'Compaction reserveTokens: 8192'
   assert_contains 'status normalized OpenClaw provider model reports prompt budget' "$output" 'Prompt budget before reserve: 57344'
+  assert_contains 'status normalized OpenClaw provider model reports tuning section' "$output" 'OpenClaw Runtime Tuning'
+  assert_contains 'status normalized OpenClaw provider model reports provider timeout match' "$output" 'PASS: OpenClaw provider timeoutSeconds matches configured value'
+  assert_contains 'status normalized OpenClaw provider model reports stuck warning match' "$output" 'PASS: OpenClaw stuckSessionWarnMs matches configured value'
+  assert_contains 'status normalized OpenClaw provider model reports stuck abort match' "$output" 'PASS: OpenClaw stuckSessionAbortMs matches configured value'
   assert_contains 'status normalized OpenClaw provider model confirms context match' "$output" 'PASS: OpenClaw contextWindow matches effective llama-server runtime context'
   assert_contains 'status normalized OpenClaw provider model validates runtime evidence' "$output" 'PASS: llama-server runtime context evidence is internally consistent'
   assert_contains 'status normalized OpenClaw provider model reports healthy summary' "$output" 'RESULT: HEALTHY'
@@ -1891,6 +1919,12 @@ run_status_context_contract_fixture() {
   local slots_json="$5"
   local openclaw_context="$6"
   local active_config="$TEMP_DIR/status-context-contract-openclaw.json"
+  local configured_provider_timeout="${STATUS_FIXTURE_CONFIGURED_PROVIDER_TIMEOUT:-1800}"
+  local configured_stuck_warn="${STATUS_FIXTURE_CONFIGURED_STUCK_WARN:-600000}"
+  local configured_stuck_abort="${STATUS_FIXTURE_CONFIGURED_STUCK_ABORT:-1800000}"
+  local effective_provider_timeout="${STATUS_FIXTURE_EFFECTIVE_PROVIDER_TIMEOUT:-$configured_provider_timeout}"
+  local effective_stuck_warn="${STATUS_FIXTURE_EFFECTIVE_STUCK_WARN:-$configured_stuck_warn}"
+  local effective_stuck_abort="${STATUS_FIXTURE_EFFECTIVE_STUCK_ABORT:-$configured_stuck_abort}"
 
   prepare_status_test_home
   setup_status_test_mocks
@@ -1903,6 +1937,9 @@ LLAMA_BASE_URL="http://127.0.0.1:18080/v1"
 MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 OPENCLAW_PROVIDER_NAME="clawbox"
 OPENCLAW_DEFAULT_MODEL="local"
+OPENCLAW_PROVIDER_TIMEOUT_SECONDS="$configured_provider_timeout"
+OPENCLAW_STUCK_SESSION_WARN_MS="$configured_stuck_warn"
+OPENCLAW_STUCK_SESSION_ABORT_MS="$configured_stuck_abort"
 LLAMA_EXTERNAL="false"
 LLAMA_CTX="$configured_context"
 LLAMA_PARALLEL="$configured_parallel"
@@ -1920,10 +1957,15 @@ EOF
       }
     }
   },
+  "diagnostics": {
+    "stuckSessionWarnMs": $effective_stuck_warn,
+    "stuckSessionAbortMs": $effective_stuck_abort
+  },
   "models": {
     "providers": {
       "clawbox": {
         "baseUrl": "http://127.0.0.1:18080/v1",
+        "timeoutSeconds": $effective_provider_timeout,
         "models": [
           {
             "id": "local",
@@ -2021,6 +2063,37 @@ test_status_fails_on_openclaw_runtime_context_mismatch() {
 
   assert_equals 'status OpenClaw runtime context mismatch exits unhealthy' "$STATUS_CONTEXT_STATUS" '1'
   assert_contains 'status OpenClaw runtime context mismatch reports failure' "$STATUS_CONTEXT_OUTPUT" 'FAIL: OpenClaw contextWindow differs from effective llama-server runtime context'
+}
+
+test_status_reports_openclaw_runtime_tuning_drift() {
+  STATUS_FIXTURE_EFFECTIVE_PROVIDER_TIMEOUT=120
+  STATUS_FIXTURE_EFFECTIVE_STUCK_WARN=120000
+  STATUS_FIXTURE_EFFECTIVE_STUCK_ABORT=300000
+  run_status_context_contract_fixture 65536 1 65536 1 '[{"id":0,"n_ctx":65536}]' 65536
+  unset STATUS_FIXTURE_EFFECTIVE_PROVIDER_TIMEOUT
+  unset STATUS_FIXTURE_EFFECTIVE_STUCK_WARN
+  unset STATUS_FIXTURE_EFFECTIVE_STUCK_ABORT
+
+  assert_equals 'status OpenClaw tuning drift remains warning-level' "$STATUS_CONTEXT_STATUS" '0'
+  assert_contains 'status OpenClaw tuning drift reports provider timeout drift' "$STATUS_CONTEXT_OUTPUT" 'WARN: OpenClaw provider timeoutSeconds differs from configured value'
+  assert_contains 'status OpenClaw tuning drift reports stuck warning drift' "$STATUS_CONTEXT_OUTPUT" 'WARN: OpenClaw stuckSessionWarnMs differs from configured value'
+  assert_contains 'status OpenClaw tuning drift reports stuck abort drift' "$STATUS_CONTEXT_OUTPUT" 'WARN: OpenClaw stuckSessionAbortMs differs from configured value'
+  assert_contains 'status OpenClaw tuning drift reports warnings summary' "$STATUS_CONTEXT_OUTPUT" 'RESULT: HEALTHY WITH WARNINGS'
+}
+
+test_status_reports_openclaw_runtime_tuning_missing() {
+  STATUS_FIXTURE_EFFECTIVE_PROVIDER_TIMEOUT=null
+  STATUS_FIXTURE_EFFECTIVE_STUCK_WARN=null
+  STATUS_FIXTURE_EFFECTIVE_STUCK_ABORT=null
+  run_status_context_contract_fixture 65536 1 65536 1 '[{"id":0,"n_ctx":65536}]' 65536
+  unset STATUS_FIXTURE_EFFECTIVE_PROVIDER_TIMEOUT
+  unset STATUS_FIXTURE_EFFECTIVE_STUCK_WARN
+  unset STATUS_FIXTURE_EFFECTIVE_STUCK_ABORT
+
+  assert_equals 'status missing OpenClaw tuning remains warning-level' "$STATUS_CONTEXT_STATUS" '0'
+  assert_contains 'status missing OpenClaw tuning reports provider timeout missing' "$STATUS_CONTEXT_OUTPUT" 'WARN: OpenClaw provider timeoutSeconds is missing or unreadable'
+  assert_contains 'status missing OpenClaw tuning reports stuck warning missing' "$STATUS_CONTEXT_OUTPUT" 'WARN: OpenClaw stuckSessionWarnMs is missing or unreadable'
+  assert_contains 'status missing OpenClaw tuning reports stuck abort missing' "$STATUS_CONTEXT_OUTPUT" 'WARN: OpenClaw stuckSessionAbortMs is missing or unreadable'
 }
 
 test_status_detects_primary_model_mismatch() {
@@ -2750,9 +2823,9 @@ test_status_uses_bounded_noninteractive_ssh_for_all_vm_checks() {
   set -e
 
   assert_equals 'status bounded ssh path stays healthy when all probes succeed' "$status" '0'
-  assert_equals 'status bounded ssh path issues ten SSH calls' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '10'
-  assert_equals 'status bounded ssh path applies BatchMode to every SSH call' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '10'
-  assert_equals 'status bounded ssh path applies ConnectTimeout to every SSH call' "$(/usr/bin/grep -Fc -- '-o ConnectTimeout=3' "$ssh_log")" '10'
+  assert_equals 'status bounded ssh path issues thirteen SSH calls' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '13'
+  assert_equals 'status bounded ssh path applies BatchMode to every SSH call' "$(/usr/bin/grep -Fc -- '-o BatchMode=yes' "$ssh_log")" '13'
+  assert_equals 'status bounded ssh path applies ConnectTimeout to every SSH call' "$(/usr/bin/grep -Fc -- '-o ConnectTimeout=3' "$ssh_log")" '13'
   assert_contains 'status bounded ssh path reports a healthy summary' "$output" 'RESULT: HEALTHY'
 }
 
@@ -2795,6 +2868,8 @@ run_test test_status_fails_on_inconsistent_llama_slot_contexts
 run_test test_status_fails_on_slot_count_mismatch
 run_test test_status_fails_on_parallel_total_slots_mismatch
 run_test test_status_fails_on_openclaw_runtime_context_mismatch
+run_test test_status_reports_openclaw_runtime_tuning_drift
+run_test test_status_reports_openclaw_runtime_tuning_missing
 run_test test_status_detects_primary_model_mismatch
 run_test test_status_displays_embeddings_model_summary_when_enabled
 run_test test_status_reports_embeddings_loopback_only_with_missing_vm_interface_as_warning

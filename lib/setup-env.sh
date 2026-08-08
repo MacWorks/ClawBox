@@ -93,6 +93,9 @@ write_env_from_template() {
   replace_template_value "$temp_file" "OPENCLAW_PROVIDER_NAME" "${OPENCLAW_PROVIDER_NAME:-}"
   replace_template_value "$temp_file" "OPENCLAW_DEFAULT_MODEL" "${OPENCLAW_DEFAULT_MODEL:-}"
   replace_template_value "$temp_file" "OPENCLAW_AUTOSTART" "${OPENCLAW_AUTOSTART:-}"
+  replace_template_value "$temp_file" "OPENCLAW_PROVIDER_TIMEOUT_SECONDS" "${OPENCLAW_PROVIDER_TIMEOUT_SECONDS:-}"
+  replace_template_value "$temp_file" "OPENCLAW_STUCK_SESSION_WARN_MS" "${OPENCLAW_STUCK_SESSION_WARN_MS:-}"
+  replace_template_value "$temp_file" "OPENCLAW_STUCK_SESSION_ABORT_MS" "${OPENCLAW_STUCK_SESSION_ABORT_MS:-}"
 
   mv "$temp_file" "$ENV_FILE"
 }

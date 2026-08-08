@@ -18,6 +18,64 @@ clawbox_bool_enabled() {
   esac
 }
 
+openclaw_default_provider_timeout_seconds() {
+  printf '1800\n'
+}
+
+openclaw_default_stuck_session_warn_ms() {
+  printf '600000\n'
+}
+
+openclaw_default_stuck_session_abort_ms() {
+  local warn_ms="${1:-$(openclaw_default_stuck_session_warn_ms)}"
+  local derived
+
+  if ! clawbox_positive_integer "$warn_ms"; then
+    warn_ms="$(openclaw_default_stuck_session_warn_ms)"
+  fi
+
+  derived=$((warn_ms * 3))
+  if [ "$derived" -lt 300000 ]; then
+    derived=300000
+  fi
+
+  printf '%s\n' "$derived"
+}
+
+openclaw_resolve_runtime_tuning_values() {
+  local provider_timeout="${OPENCLAW_PROVIDER_TIMEOUT_SECONDS:-$(openclaw_default_provider_timeout_seconds)}"
+  local stuck_warn="${OPENCLAW_STUCK_SESSION_WARN_MS:-$(openclaw_default_stuck_session_warn_ms)}"
+  local stuck_abort="${OPENCLAW_STUCK_SESSION_ABORT_MS:-}"
+
+  if ! clawbox_positive_integer "$provider_timeout"; then
+    printf 'Invalid OPENCLAW_PROVIDER_TIMEOUT_SECONDS value: %s\n' "$provider_timeout" >&2
+    return 1
+  fi
+
+  if ! clawbox_positive_integer "$stuck_warn"; then
+    printf 'Invalid OPENCLAW_STUCK_SESSION_WARN_MS value: %s\n' "$stuck_warn" >&2
+    return 1
+  fi
+
+  if [ -z "$stuck_abort" ]; then
+    stuck_abort="$(openclaw_default_stuck_session_abort_ms "$stuck_warn")"
+  fi
+
+  if ! clawbox_positive_integer "$stuck_abort"; then
+    printf 'Invalid OPENCLAW_STUCK_SESSION_ABORT_MS value: %s\n' "$stuck_abort" >&2
+    return 1
+  fi
+
+  if [ "$stuck_abort" -lt "$stuck_warn" ]; then
+    printf 'Invalid OpenClaw diagnostics tuning: OPENCLAW_STUCK_SESSION_ABORT_MS=%s must be greater than or equal to OPENCLAW_STUCK_SESSION_WARN_MS=%s\n' "$stuck_abort" "$stuck_warn" >&2
+    return 1
+  fi
+
+  OPENCLAW_PROVIDER_TIMEOUT_SECONDS_VALUE="$provider_timeout"
+  OPENCLAW_STUCK_SESSION_WARN_MS_VALUE="$stuck_warn"
+  OPENCLAW_STUCK_SESSION_ABORT_MS_VALUE="$stuck_abort"
+}
+
 llama_default_parallel() {
   printf '%s\n' "${LLAMA_PARALLEL:-1}"
 }

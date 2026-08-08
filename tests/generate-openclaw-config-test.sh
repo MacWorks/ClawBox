@@ -16,9 +16,10 @@ setup_generator_fixture() {
   local fixture_root="$TEMP_DIR/generator-fixture"
 
   rm -rf "$fixture_root"
-  mkdir -p "$fixture_root/host/scripts" "$fixture_root/vm/runtime"
+  mkdir -p "$fixture_root/host/scripts" "$fixture_root/lib" "$fixture_root/vm/runtime"
 
   cp "$ROOT_DIR/host/scripts/generate-openclaw-config.sh" "$fixture_root/host/scripts/generate-openclaw-config.sh"
+  cp "$ROOT_DIR/lib/context-runtime.sh" "$fixture_root/lib/context-runtime.sh"
   chmod +x "$fixture_root/host/scripts/generate-openclaw-config.sh"
 
   REPLY="$fixture_root"
@@ -35,6 +36,9 @@ write_fixture_env() {
   local embeddings_model_path="${8:-}"
   local embeddings_base_url="${9:-}"
   local openclaw_max_tokens="${10:-8192}"
+  local provider_timeout="${11:-1800}"
+  local stuck_warn="${12:-600000}"
+  local stuck_abort="${13:-1800000}"
 
   cat > "$fixture_root/.env" <<EOF
 LLAMA_BASE_URL="$llama_base_url"
@@ -43,6 +47,9 @@ OPENCLAW_PROVIDER_NAME="$provider_name"
 OPENCLAW_DEFAULT_MODEL="$default_model"
 OPENCLAW_GATEWAY_MODE="$gateway_mode"
 OPENCLAW_MAX_TOKENS="$openclaw_max_tokens"
+OPENCLAW_PROVIDER_TIMEOUT_SECONDS="$provider_timeout"
+OPENCLAW_STUCK_SESSION_WARN_MS="$stuck_warn"
+OPENCLAW_STUCK_SESSION_ABORT_MS="$stuck_abort"
 EMBEDDINGS_ENABLED="$embeddings_enabled"
 EMBEDDINGS_MODEL_PATH="$embeddings_model_path"
 EMBEDDINGS_LLAMA_BASE_URL="$embeddings_base_url"
@@ -126,6 +133,15 @@ test_generate_openclaw_config_writes_expected_config() {
   json_query "$fixture_root" 'models.providers.clawbox.api'
   assert_equals 'generator uses the OpenAI completions provider API' "$REPLY" 'openai-completions'
 
+  json_query "$fixture_root" 'models.providers.clawbox.timeoutSeconds'
+  assert_equals 'generator writes the default provider timeout as a number' "$REPLY" '1800'
+
+  json_query "$fixture_root" 'diagnostics.stuckSessionWarnMs'
+  assert_equals 'generator writes the default stuck-session warning threshold as a number' "$REPLY" '600000'
+
+  json_query "$fixture_root" 'diagnostics.stuckSessionAbortMs'
+  assert_equals 'generator writes the default stuck-session abort threshold as a number' "$REPLY" '1800000'
+
   json_query "$fixture_root" 'models.providers.clawbox.models.0.api'
   assert_equals 'generator includes completions API compatibility on the local model' "$REPLY" 'openai-completions'
 
@@ -159,6 +175,25 @@ test_generate_openclaw_config_supports_custom_max_tokens() {
   assert_equals 'generator succeeds with a custom OPENCLAW_MAX_TOKENS value' "$GENERATOR_LAST_STATUS" '0'
   json_query "$fixture_root" 'models.providers.clawbox.models.0.maxTokens'
   assert_equals 'generator writes configured OpenClaw maxTokens numerically' "$REPLY" '12288'
+}
+
+test_generate_openclaw_config_supports_custom_runtime_tuning() {
+  local fixture_root
+
+  setup_generator_fixture
+  fixture_root="$REPLY"
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '32768' 'custom-provider' 'sample-model' 'local' \
+    'false' '' '' '8192' '2400' '700000' '2100000'
+
+  run_generator "$fixture_root"
+
+  assert_equals 'generator succeeds with custom OpenClaw runtime tuning values' "$GENERATOR_LAST_STATUS" '0'
+  json_query "$fixture_root" 'models.providers.custom-provider.timeoutSeconds'
+  assert_equals 'generator writes provider timeout under configured provider key' "$REPLY" '2400'
+  json_query "$fixture_root" 'diagnostics.stuckSessionWarnMs'
+  assert_equals 'generator writes configured stuck-session warning threshold numerically' "$REPLY" '700000'
+  json_query "$fixture_root" 'diagnostics.stuckSessionAbortMs'
+  assert_equals 'generator writes configured stuck-session abort threshold numerically' "$REPLY" '2100000'
 }
 
 test_generate_openclaw_config_uses_effective_context_window_when_known() {
@@ -212,6 +247,53 @@ PY
   assert_equals 'generator remains backward compatible when OPENCLAW_MAX_TOKENS is missing' "$GENERATOR_LAST_STATUS" '0'
   json_query "$fixture_root" 'models.providers.clawbox.models.0.maxTokens'
   assert_equals 'generator defaults missing OpenClaw maxTokens to 8192' "$REPLY" '8192'
+}
+
+test_generate_openclaw_config_defaults_missing_runtime_tuning_values() {
+  local fixture_root
+
+  setup_generator_fixture
+  fixture_root="$REPLY"
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '32768' 'clawbox' 'sample-model' 'local'
+  python3 - "$fixture_root/.env" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    lines = [
+        line for line in handle
+        if not line.startswith(("OPENCLAW_PROVIDER_TIMEOUT_SECONDS=", "OPENCLAW_STUCK_SESSION_WARN_MS=", "OPENCLAW_STUCK_SESSION_ABORT_MS="))
+    ]
+with open(path, "w", encoding="utf-8") as handle:
+    handle.writelines(lines)
+PY
+
+  run_generator "$fixture_root"
+
+  assert_equals 'generator remains backward compatible when runtime tuning values are missing' "$GENERATOR_LAST_STATUS" '0'
+  json_query "$fixture_root" 'models.providers.clawbox.timeoutSeconds'
+  assert_equals 'generator defaults missing provider timeout to 1800' "$REPLY" '1800'
+  json_query "$fixture_root" 'diagnostics.stuckSessionWarnMs'
+  assert_equals 'generator defaults missing stuck-session warning threshold to 600000' "$REPLY" '600000'
+  json_query "$fixture_root" 'diagnostics.stuckSessionAbortMs'
+  assert_equals 'generator derives missing stuck-session abort threshold from the warning threshold' "$REPLY" '1800000'
+}
+
+test_generate_openclaw_config_rejects_invalid_runtime_tuning_values() {
+  local fixture_root
+
+  setup_generator_fixture
+  fixture_root="$REPLY"
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '32768' 'clawbox' 'sample-model' 'local' \
+    'false' '' '' '8192' 'slow' '600000' '1800000'
+  run_generator "$fixture_root"
+  assert_equals 'generator rejects non-numeric provider timeout' "$GENERATOR_LAST_STATUS" '1'
+  assert_contains 'generator reports invalid provider timeout' "$GENERATOR_LAST_OUTPUT" 'Invalid OPENCLAW_PROVIDER_TIMEOUT_SECONDS value: slow'
+
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '32768' 'clawbox' 'sample-model' 'local' \
+    'false' '' '' '8192' '1800' '600000' '100000'
+  run_generator "$fixture_root"
+  assert_equals 'generator rejects abort threshold lower than warning threshold' "$GENERATOR_LAST_STATUS" '1'
+  assert_contains 'generator reports abort/warning threshold relationship' "$GENERATOR_LAST_OUTPUT" 'OPENCLAW_STUCK_SESSION_ABORT_MS=100000 must be greater than or equal to OPENCLAW_STUCK_SESSION_WARN_MS=600000'
 }
 
 test_generate_openclaw_config_rejects_invalid_max_tokens() {
@@ -375,9 +457,12 @@ printf 'Running generate-openclaw-config tests\n'
 
 run_test test_generate_openclaw_config_writes_expected_config
 run_test test_generate_openclaw_config_supports_custom_max_tokens
+run_test test_generate_openclaw_config_supports_custom_runtime_tuning
 run_test test_generate_openclaw_config_uses_effective_context_window_when_known
 run_test test_generate_openclaw_config_rejects_max_tokens_at_effective_context_window
 run_test test_generate_openclaw_config_defaults_missing_max_tokens
+run_test test_generate_openclaw_config_defaults_missing_runtime_tuning_values
+run_test test_generate_openclaw_config_rejects_invalid_runtime_tuning_values
 run_test test_generate_openclaw_config_rejects_invalid_max_tokens
 run_test test_generate_openclaw_config_defaults_invalid_gateway_mode_to_local
 run_test test_generate_openclaw_config_enforces_minimum_context_window

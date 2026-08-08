@@ -675,10 +675,16 @@ test_first_run_bootstrap_honors_explicit_custom_llama_port() {
     printf 'LLAMA_PORT:%s\n' "$LLAMA_PORT"
     printf 'LLAMA_CTX:%s\n' "$LLAMA_CTX"
     printf 'LLAMA_JINJA:%s\n' "$LLAMA_JINJA"
+    printf 'OPENCLAW_PROVIDER_TIMEOUT_SECONDS:%s\n' "$OPENCLAW_PROVIDER_TIMEOUT_SECONDS"
+    printf 'OPENCLAW_STUCK_SESSION_WARN_MS:%s\n' "$OPENCLAW_STUCK_SESSION_WARN_MS"
+    printf 'OPENCLAW_STUCK_SESSION_ABORT_MS:%s\n' "$OPENCLAW_STUCK_SESSION_ABORT_MS"
     printf 'LLAMA_BASE_URL:%s\n' "$LLAMA_BASE_URL"
     printf 'ENV_FILE_PORT:%s\n' "$(grep '^LLAMA_PORT=' "$ENV_FILE")"
     printf 'ENV_FILE_CTX:%s\n' "$(grep '^LLAMA_CTX=' "$ENV_FILE")"
     printf 'ENV_FILE_JINJA:%s\n' "$(grep '^LLAMA_JINJA=' "$ENV_FILE")"
+    printf 'ENV_FILE_PROVIDER_TIMEOUT:%s\n' "$(grep '^OPENCLAW_PROVIDER_TIMEOUT_SECONDS=' "$ENV_FILE")"
+    printf 'ENV_FILE_STUCK_WARN:%s\n' "$(grep '^OPENCLAW_STUCK_SESSION_WARN_MS=' "$ENV_FILE")"
+    printf 'ENV_FILE_STUCK_ABORT:%s\n' "$(grep '^OPENCLAW_STUCK_SESSION_ABORT_MS=' "$ENV_FILE")"
     printf 'ENV_FILE_BASE_URL:%s\n' "$(grep '^LLAMA_BASE_URL=' "$ENV_FILE")"
   } 2>&1)"
 
@@ -687,10 +693,16 @@ test_first_run_bootstrap_honors_explicit_custom_llama_port() {
   assert_contains 'first-run explicit custom port remains in memory' "$output" 'LLAMA_PORT:11801'
   assert_contains 'first-run default context is raised to 32768' "$output" 'LLAMA_CTX:32768'
   assert_contains 'first-run default Jinja is enabled' "$output" 'LLAMA_JINJA:true'
+  assert_contains 'first-run default provider timeout is managed' "$output" 'OPENCLAW_PROVIDER_TIMEOUT_SECONDS:1800'
+  assert_contains 'first-run default stuck-session warning threshold is managed' "$output" 'OPENCLAW_STUCK_SESSION_WARN_MS:600000'
+  assert_contains 'first-run default stuck-session abort threshold is managed' "$output" 'OPENCLAW_STUCK_SESSION_ABORT_MS:1800000'
   assert_contains 'first-run explicit custom port sets the base URL' "$output" 'LLAMA_BASE_URL:http://192.168.64.1:11801/v1'
   assert_contains 'first-run explicit custom port persists to .env' "$output" 'ENV_FILE_PORT:LLAMA_PORT="11801"'
   assert_contains 'first-run default context persists to .env' "$output" 'ENV_FILE_CTX:LLAMA_CTX="32768"'
   assert_contains 'first-run default Jinja persists to .env' "$output" 'ENV_FILE_JINJA:LLAMA_JINJA="true"'
+  assert_contains 'first-run default provider timeout persists to .env' "$output" 'ENV_FILE_PROVIDER_TIMEOUT:OPENCLAW_PROVIDER_TIMEOUT_SECONDS="1800"'
+  assert_contains 'first-run default stuck-session warning persists to .env' "$output" 'ENV_FILE_STUCK_WARN:OPENCLAW_STUCK_SESSION_WARN_MS="600000"'
+  assert_contains 'first-run default stuck-session abort persists to .env' "$output" 'ENV_FILE_STUCK_ABORT:OPENCLAW_STUCK_SESSION_ABORT_MS="1800000"'
   assert_contains 'first-run custom port base URL persists to .env' "$output" 'ENV_FILE_BASE_URL:LLAMA_BASE_URL="http://192.168.64.1:11801/v1"'
   assert_not_contains 'first-run explicit custom port does not discover default service' "$output" 'UNEXPECTED_DISCOVERY'
   assert_not_contains 'first-run explicit custom port does not probe the default llama port' "$output" 'API_PROBE:11434'
@@ -2145,6 +2157,29 @@ test_status_helper_renders_trailing_spinner_frames() {
   assert_not_contains 'status helper strips the ellipsis while spinning' "$output" 'Waiting for VM network... /'
 }
 
+test_status_helper_repaints_while_waiting_for_background_work() {
+  local output
+
+  output="$({
+    load_setup_functions
+
+    _status_can_spin() {
+      return 0
+    }
+
+    CLAWBOX_STATUS_INTERVAL_SECONDS=0.001
+
+    status_begin_compact 'Checking OpenClaw configuration...'
+    ( sleep 0.02 ) &
+    status_wait_for_pid_active "$!" 'Checking OpenClaw configuration...'
+    status_end 'Checking OpenClaw configuration... ✓' 'progress'
+  } 2>&1)"
+
+  assert_contains 'status helper repaints slash frame while background work runs' "$output" 'Checking OpenClaw configuration /'
+  assert_contains 'status helper repaints dash frame while background work runs' "$output" 'Checking OpenClaw configuration -'
+  assert_contains 'status helper completes after background work finishes' "$output" 'Checking OpenClaw configuration... ✓'
+}
+
 test_status_helper_uses_fast_spinner_cadence() {
   local interval=''
 
@@ -2738,6 +2773,8 @@ test_provisioning_and_deployment_flow() {
   assert_contains 'provisioning flow shows host inference section' "$output" ' > Host Inference Service'
   assert_contains 'provisioning flow shows vm onboarding section' "$output" ' > VM Onboarding'
   assert_contains 'provisioning flow shows openclaw section' "$output" ' > OpenClaw Configuration'
+  assert_contains 'provisioning flow starts compact OpenClaw preparation status' "$output" 'Preparing OpenClaw configuration...'
+  assert_contains 'provisioning flow completes compact OpenClaw preparation status' "$output" 'Preparing OpenClaw configuration... ✓'
   assert_contains 'provisioning flow shows deployment section' "$output" ' > Deployment'
   assert_contains 'provisioning flow shows runtime section' "$output" ' > Runtime'
   assert_contains 'provisioning flow reports targeted config sync state' "$output" 'OpenClaw config already matched; no OpenClaw changes were made.'
@@ -2745,8 +2782,290 @@ test_provisioning_and_deployment_flow() {
   assert_no_excessive_blank_lines 'provisioning flow avoids excessive blank lines' "$output"
 }
 
-test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
+test_targeted_openclaw_restart_prompt_follows_config_update_before_deployment() {
   local output
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers 'n'
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    detect_openclaw_runtime_state() {
+      NEEDS_PROVISIONING=false
+      IS_RUNNING=true
+      OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by VM launchd'
+      return 0
+    }
+    sync_openclaw_config() {
+      CONFIG_TARGETED_UPDATED=true
+      success 'Targeted ClawBox OpenClaw settings updated.'
+      out 'OpenClaw may reload these settings automatically; no gateway was restarted.'
+    }
+    ensure_vm_provision_script() { out 'Deployment reached.'; }
+    ensure_openclaw_provisioned() { return 0; }
+    setup_launchagent() { return 0; }
+    handle_openclaw_runtime_state() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { return 0; }
+
+    VM_HOST='tester@192.168.64.2'
+    VM_RUNTIME_PATH='/Users/tester/ClawBox'
+
+    run_provisioning_and_deployment
+  } 2>&1)"
+
+  assert_contains 'targeted update completion is reported before restart prompt' "$output" 'Targeted ClawBox OpenClaw settings updated.'
+  assert_contains 'targeted update restart prompt is offered with default no' "$output" 'Restart the VM OpenClaw gateway now to apply targeted config changes? [y/N]:'
+  assert_contains 'declined targeted restart preserves default-no behavior' "$output" 'OpenClaw was not restarted.'
+
+  if python3 - "$output" <<'PY'
+import sys
+text = sys.argv[1]
+updated = text.find("Targeted ClawBox OpenClaw settings updated.")
+prompt = text.find("Restart the VM OpenClaw gateway now to apply targeted config changes?")
+deployment = text.find(" > Deployment")
+raise SystemExit(0 if -1 not in (updated, prompt, deployment) and updated < prompt < deployment else 1)
+PY
+  then
+    pass "targeted OpenClaw restart prompt appears before Deployment"
+  else
+    fail "targeted OpenClaw restart prompt should appear before Deployment"
+  fi
+}
+
+test_openclaw_preparation_status_covers_remote_drift_detection() {
+  local output marker="$TEMP_DIR/openclaw-prep-status-active.marker"
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    _status_can_spin() {
+      return 0
+    }
+
+    CLAWBOX_STATUS_INTERVAL_SECONDS=0.001
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    detect_openclaw_runtime_state() { return 0; }
+    ensure_vm_provision_script() { return 0; }
+    ensure_openclaw_provisioned() { return 0; }
+    setup_launchagent() { return 0; }
+    handle_openclaw_runtime_state() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { return 0; }
+    ensure_openclaw_gateway_auth_config() { return 0; }
+
+    ssh_run_quiet() { return 0; }
+    ssh_exec() {
+      local command_text="${1-}"
+      [[ "$command_text" == *"test -f"* ]] && return 0
+      return 0
+    }
+    openclaw_config_desired_entries_for_scope() {
+      printf '%s\t%s\n' 'agents.defaults.model.primary' 'clawbox/local'
+    }
+    openclaw_config_remote_get() {
+      local key="${1-}"
+      if [ "$key" = 'agents.defaults.model.primary' ] \
+        && [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] \
+        && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Preparing OpenClaw configuration...' ]; then
+        : > "$marker"
+        sleep 0.02
+      fi
+      printf '%s\n' 'clawbox/local'
+    }
+
+    VM_HOST='tester@192.168.64.2'
+    VM_RUNTIME_PATH='/Users/tester/ClawBox'
+    REMOTE_CONFIG_DIR='~/.openclaw'
+    REMOTE_CONFIG_PATH='~/.openclaw/openclaw.json'
+
+    run_provisioning_and_deployment
+  } 2>&1)"
+
+  if [ -f "$marker" ]; then
+    pass "OpenClaw preparation status stays active during remote drift reads"
+  else
+    fail "OpenClaw preparation status should cover remote drift reads"
+  fi
+
+  if python3 - "$output" <<'PY'
+import sys
+text = sys.argv[1]
+done = text.find("Preparing OpenClaw configuration... ✓")
+matched = text.find("OpenClaw config already matched; no OpenClaw changes were made.")
+raise SystemExit(0 if -1 not in (done, matched) and done < matched else 1)
+PY
+  then
+    pass "OpenClaw preparation status completes immediately before sync result"
+  else
+    fail "OpenClaw preparation status should complete immediately before sync result"
+  fi
+
+  assert_contains 'OpenClaw preparation status visibly repaints during remote drift reads' "$output" 'Preparing OpenClaw configuration /'
+}
+
+test_openclaw_gateway_auth_status_covers_post_comparison_remote_work() {
+  local output auth_get_marker="$TEMP_DIR/openclaw-auth-status-get.marker"
+  local chmod_marker="$TEMP_DIR/openclaw-auth-status-chmod.marker"
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    _status_can_spin() {
+      return 0
+    }
+
+    CLAWBOX_STATUS_INTERVAL_SECONDS=0.001
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    detect_openclaw_runtime_state() { return 0; }
+    ensure_vm_provision_script() { return 0; }
+    ensure_openclaw_provisioned() { return 0; }
+    setup_launchagent() { return 0; }
+    handle_openclaw_runtime_state() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { return 0; }
+
+    ssh_run_quiet() { return 0; }
+    ssh_exec() {
+      local command_text="${1-}"
+      [[ "$command_text" == *"test -f"* ]] && return 0
+      if [[ "$command_text" == *"chmod 600"* ]] \
+        && [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] \
+        && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Checking OpenClaw gateway authentication...' ]; then
+        : > "$chmod_marker"
+      fi
+      return 0
+    }
+    openclaw_config_desired_entries_for_scope() {
+      printf '%s\t%s\n' 'agents.defaults.model.primary' 'clawbox/local'
+    }
+    openclaw_config_remote_get() {
+      local key="${1-}"
+      if [ "$key" = 'gateway.auth.token' ] \
+        && [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] \
+        && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Checking OpenClaw gateway authentication...' ]; then
+        : > "$auth_get_marker"
+        sleep 0.02
+        printf '%s\n' '__OPENCLAW_REDACTED__'
+        return 0
+      fi
+      printf '%s\n' 'clawbox/local'
+    }
+
+    VM_HOST='tester@192.168.64.2'
+    VM_RUNTIME_PATH='/Users/tester/ClawBox'
+    REMOTE_CONFIG_DIR='~/.openclaw'
+    REMOTE_CONFIG_PATH='~/.openclaw/openclaw.json'
+
+    run_provisioning_and_deployment
+  } 2>&1)"
+
+  if [ -f "$auth_get_marker" ]; then
+    pass "OpenClaw gateway auth status stays active during remote token reads"
+  else
+    fail "OpenClaw gateway auth status should cover remote token reads"
+  fi
+
+  if [ -f "$chmod_marker" ]; then
+    pass "OpenClaw gateway auth status stays active during remote chmod"
+  else
+    fail "OpenClaw gateway auth status should cover remote chmod"
+  fi
+
+  if python3 - "$output" <<'PY'
+import sys
+text = sys.argv[1]
+matched = text.find("OpenClaw config already matched; no OpenClaw changes were made.")
+auth = text.find("Checking OpenClaw gateway authentication... ✓")
+deployment = text.find(" > Deployment")
+raise SystemExit(0 if -1 not in (matched, auth, deployment) and matched < auth < deployment else 1)
+PY
+  then
+    pass "OpenClaw gateway auth status completes before Deployment"
+  else
+    fail "OpenClaw gateway auth status should complete before Deployment"
+  fi
+
+  assert_contains 'OpenClaw gateway auth status visibly repaints during remote token reads' "$output" 'Checking OpenClaw gateway authentication /'
+}
+
+test_targeted_openclaw_restart_prompt_skips_decline_and_noop_sync() {
+  local declined_output noop_output
+
+  declined_output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    detect_openclaw_runtime_state() { return 0; }
+    sync_openclaw_config() {
+      CONFIG_TARGETED_UPDATED=false
+      out 'OpenClaw config was not changed.'
+    }
+    ensure_vm_provision_script() { return 0; }
+    ensure_openclaw_provisioned() { return 0; }
+    setup_launchagent() { return 0; }
+    handle_openclaw_runtime_state() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { return 0; }
+
+    run_provisioning_and_deployment
+  } 2>&1)"
+
+  noop_output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    detect_openclaw_runtime_state() { return 0; }
+    sync_openclaw_config() {
+      CONFIG_TARGETED_UPDATED=false
+      CONFIG_TARGETED_NO_CHANGE=true
+      out 'OpenClaw config already matched; no OpenClaw changes were made.'
+    }
+    ensure_vm_provision_script() { return 0; }
+    ensure_openclaw_provisioned() { return 0; }
+    setup_launchagent() { return 0; }
+    handle_openclaw_runtime_state() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { return 0; }
+
+    run_provisioning_and_deployment
+  } 2>&1)"
+
+  assert_contains 'declined targeted sync remains visible' "$declined_output" 'OpenClaw config was not changed.'
+  assert_not_contains 'declined targeted sync does not offer restart' "$declined_output" 'Restart the VM OpenClaw gateway now to apply targeted config changes?'
+  assert_contains 'no-op targeted sync remains visible' "$noop_output" 'OpenClaw config already matched; no OpenClaw changes were made.'
+  assert_not_contains 'no-op targeted sync does not offer restart' "$noop_output" 'Restart the VM OpenClaw gateway now to apply targeted config changes?'
+}
+
+test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
+  local output detect_counter="$TEMP_DIR/provisioning-handoff-detect-count"
 
   output="$({
     load_setup_functions
@@ -2755,8 +3074,8 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
     # interactive onboarding action. This fixture must never contact a VM.
     queue_prompt_answers 'y' 'n'
 
-    detect_calls=0
     vm_control_calls=0
+    printf '0\n' > "$detect_counter"
 
     ssh() {
       vm_control_calls=$((vm_control_calls + 1))
@@ -2815,8 +3134,11 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
     }
 
     detect_openclaw_runtime_state() {
-      detect_calls=$((detect_calls + 1))
-      if [ "$detect_calls" -eq 1 ]; then
+      local calls=0
+      IFS= read -r calls < "$detect_counter" || calls=0
+      calls=$((calls + 1))
+      printf '%s\n' "$calls" > "$detect_counter"
+      if [ "$calls" -eq 1 ]; then
         NEEDS_PROVISIONING=true
         IS_RUNNING=false
       else
@@ -2871,7 +3193,7 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
       status=$?
     fi
     printf 'STATUS:%s\n' "$status"
-    printf 'DETECT_CALLS:%s\n' "$detect_calls"
+    printf 'DETECT_CALLS:%s\n' "$(cat "$detect_counter")"
     printf 'VM_CONTROL_CALLS:%s\n' "$vm_control_calls"
   } 2>&1)"
 
@@ -2996,12 +3318,28 @@ test_runtime_service_existing_menu_wording() {
     setup_launchagent
   } 2>&1)"
 
+  assert_contains 'runtime service menu reports discovery progress' "$output" 'Checking host VM auto-start service...'
+  assert_contains 'runtime service menu completes discovery progress before details' "$output" 'Checking host VM auto-start service... ✓'
   assert_contains 'runtime service menu identifies the host vm autostart service' "$output" 'Existing host VM auto-start service detected.'
   assert_contains 'runtime service menu warns that stale keep skips updates' "$output" 'the latest reliability fixes will not be applied'
   assert_contains 'runtime service menu shows option one as keeping the existing host vm autostart service' "$output" '1) Keep the existing host VM auto-start service'
   assert_contains 'runtime service menu recommends reinstalling stale service' "$output" '2) Reinstall/update host VM auto-start service (recommended)'
   assert_contains 'runtime service menu shows option three as removing service' "$output" '3) Disable/remove runtime service'
   assert_contains 'runtime service menu shows option four as skipping management' "$output" '4) Skip runtime service management during setup'
+
+  if python3 - "$output" <<'PY'
+import sys
+text = sys.argv[1]
+done = text.find("Checking host VM auto-start service... ✓")
+details = text.find("Existing host VM auto-start service detected.")
+prompt = text.find("Choose runtime service action")
+raise SystemExit(0 if -1 not in (done, details, prompt) and done < details < prompt else 1)
+PY
+  then
+    pass "runtime service discovery spinner stops before details and prompt"
+  else
+    fail "runtime service discovery spinner should stop before details and prompt"
+  fi
 }
 
 test_host_llama_restart_uses_install_mode_without_hidden_health_wait() {
@@ -3371,6 +3709,7 @@ run_test test_status_helper_compact_mode_suppresses_interline_blank_spacing
 run_test test_status_progress_helper_is_opt_in_and_line_oriented_without_tty
 run_test test_status_progress_finalizes_tty_line_cleanly
 run_test test_status_helper_renders_trailing_spinner_frames
+run_test test_status_helper_repaints_while_waiting_for_background_work
 run_test test_status_helper_uses_fast_spinner_cadence
 run_test test_status_helper_applies_semantic_result_styling
 run_test test_status_helper_restores_cursor_after_completion
@@ -3384,6 +3723,10 @@ run_test test_vm_startup_network_recovery_flow
 run_test test_vm_ip_discovery_recovery_flow
 run_test test_detect_vm_state
 run_test test_provisioning_and_deployment_flow
+run_test test_targeted_openclaw_restart_prompt_follows_config_update_before_deployment
+run_test test_openclaw_preparation_status_covers_remote_drift_detection
+run_test test_openclaw_gateway_auth_status_covers_post_comparison_remote_work
+run_test test_targeted_openclaw_restart_prompt_skips_decline_and_noop_sync
 run_test test_provisioning_and_deployment_continues_after_vm_local_provisioning
 run_test test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete
 run_test test_runtime_service_existing_menu_wording

@@ -146,6 +146,15 @@ What to expect:
 The default `llama-server` port for new setups is `11434`. New setups default
 `LLAMA_CTX` to `32768`. Existing `.env` values are preserved.
 
+For slower local models, ClawBox also manages OpenClaw runtime tuning through
+`.env`: `OPENCLAW_PROVIDER_TIMEOUT_SECONDS` defaults to `1800`,
+`OPENCLAW_STUCK_SESSION_WARN_MS` defaults to `600000`, and
+`OPENCLAW_STUCK_SESSION_ABORT_MS` defaults to `1800000`. These map to the
+configured OpenClaw provider timeout and diagnostics thresholds. They are
+separate from llama.cpp context/token-budget settings and can be changed by
+editing `.env` and rerunning `./clawbox setup`, which proposes targeted
+OpenClaw updates instead of replacing the full VM configuration.
+
 Host-side tool requirements for `llama-server` setup:
 
 - Homebrew is the preferred install method when it is available and writable
