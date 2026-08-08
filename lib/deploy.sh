@@ -523,6 +523,23 @@ openclaw_config_preparation_status_failure() {
   fi
 }
 
+openclaw_gateway_auth_status_active() {
+  [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] || return 1
+  [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Checking OpenClaw gateway authentication...' ]
+}
+
+openclaw_gateway_auth_status_success() {
+  if openclaw_gateway_auth_status_active; then
+    status_end "Checking OpenClaw gateway authentication... ✓" 'progress'
+  fi
+}
+
+openclaw_gateway_auth_status_failure() {
+  if openclaw_gateway_auth_status_active; then
+    status_end "Checking OpenClaw gateway authentication failed." 'error'
+  fi
+}
+
 apply_targeted_openclaw_config_updates() {
   local scope="${1:-all}"
   local key='' desired='' current='' drift=''
@@ -601,7 +618,13 @@ sync_openclaw_config() {
   fi
 
   apply_targeted_openclaw_config_updates all || return $?
-  ensure_openclaw_gateway_auth_config || return $?
+  status_begin_compact "Checking OpenClaw gateway authentication..."
+  if ensure_openclaw_gateway_auth_config; then
+    openclaw_gateway_auth_status_success
+  else
+    openclaw_gateway_auth_status_failure
+    return 1
+  fi
 }
 
 sync_openclaw_config_targeted_only() {
