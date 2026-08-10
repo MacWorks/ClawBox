@@ -41,8 +41,91 @@ for record in records:
 PY
 }
 
+first_mmproj_candidate_for_model() {
+  local model_path="$1"
+  local model_dir=''
+  local candidate=''
+
+  REPLY=''
+  derive_models_directory_from_model_path "$model_path"
+  model_dir="$REPLY"
+  [ -n "$model_dir" ] || return 0
+
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    REPLY="$model_dir/$candidate"
+    return 0
+  done <<EOF
+$(list_mmproj_candidates_in_directory "$model_dir")
+EOF
+}
+
+setup_configure_model_vision() {
+  local model_path_value="$1"
+  local previous_model_path="${2:-${MODEL_PATH:-}}"
+  local previous_mmproj_path="${MMPROJ_PATH:-}"
+  local vision_default='n'
+  local candidate=''
+  local mmproj_default=''
+  local mmproj_value=''
+
+  if [ -n "$previous_model_path" ] \
+    && [ "$previous_model_path" = "$model_path_value" ] \
+    && [ "${OPENCLAW_MODEL_SUPPORTS_VISION:-false}" = true ]; then
+    vision_default='y'
+  fi
+
+  blank_line
+  out 'Vision capability is configured separately from any llama.cpp multimodal projector.'
+  out 'Some vision-capable models need an external mmproj file; others do not.'
+  prompt_yes_no 'Does this primary model support image/vision input?' "$vision_default"
+
+  if ! is_yes "$REPLY"; then
+    OPENCLAW_MODEL_SUPPORTS_VISION='false'
+    MMPROJ_PATH=''
+    return 0
+  fi
+
+  OPENCLAW_MODEL_SUPPORTS_VISION='true'
+  MMPROJ_PATH=''
+
+  first_mmproj_candidate_for_model "$model_path_value"
+  candidate="$REPLY"
+  if [ -n "$candidate" ]; then
+    out "Detected possible multimodal projector: $candidate"
+    prompt_yes_no 'Use this projector with llama-server?' 'y'
+    if is_yes "$REPLY"; then
+      MMPROJ_PATH="$candidate"
+      return 0
+    fi
+  fi
+
+  if [ -n "$previous_model_path" ] \
+    && [ "$previous_model_path" = "$model_path_value" ] \
+    && [ -n "$previous_mmproj_path" ]; then
+    mmproj_default="$previous_mmproj_path"
+  else
+    mmproj_default=''
+  fi
+
+  prompt_with_default 'Optional mmproj path for this model (blank for none)' "$mmproj_default"
+  mmproj_value="$REPLY"
+  if [ -z "$mmproj_value" ]; then
+    MMPROJ_PATH=''
+    return 0
+  fi
+
+  if ! mmproj_path_is_valid_file "$mmproj_value"; then
+    error 'Multimodal projector path must be an existing readable .gguf file.'
+    return 1
+  fi
+
+  MMPROJ_PATH="$mmproj_value"
+}
+
 setup_configure_model_selection() {
   local model_path_value=''
+  local previous_model_path=''
   local models_dir_default=''
   local models_dir_value=''
   local selected_model_name=''
@@ -182,6 +265,8 @@ EOF
   derive_model_filename "$model_path_value"
   selected_model_name="$REPLY"
 
+  previous_model_path="${MODEL_PATH:-}"
+  setup_configure_model_vision "$model_path_value" "$previous_model_path" || return $?
   MODEL_PATH="$model_path_value"
   write_env_from_template
   source_env_file || return $?

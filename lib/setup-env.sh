@@ -69,6 +69,8 @@ write_env_from_template() {
   replace_template_value "$temp_file" "VM_RUNTIME_PATH" "${VM_RUNTIME_PATH:-}"
   replace_template_value "$temp_file" "VM_MACHINE_NAME" "${VM_MACHINE_NAME:-}"
   replace_template_value "$temp_file" "MODEL_PATH" "${MODEL_PATH:-}"
+  replace_template_value "$temp_file" "OPENCLAW_MODEL_SUPPORTS_VISION" "${OPENCLAW_MODEL_SUPPORTS_VISION:-}"
+  replace_template_value "$temp_file" "MMPROJ_PATH" "${MMPROJ_PATH:-}"
   replace_template_value "$temp_file" "LLAMA_BIN" "${LLAMA_BIN:-}"
   replace_template_value "$temp_file" "LLAMA_HOST" "${LLAMA_HOST:-}"
   replace_template_value "$temp_file" "LLAMA_PORT" "${LLAMA_PORT:-}"

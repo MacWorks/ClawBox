@@ -44,6 +44,7 @@ Relevant values:
 - `LLAMA_GPU_LAYERS`
 - `LLAMA_FLASH_ATTENTION`
 - `LLAMA_JINJA`
+- `MMPROJ_PATH`
 - `LLAMA_MLOCK`
 - `LLAMA_EXTRA_ARGS` (optional simple whitespace-separated flags appended after
   ClawBox's required arguments; quoting, embedded spaces, and shell expansion
@@ -86,13 +87,21 @@ tool-calling flows generally need. It does not guarantee that every model will
 tool-call correctly; some models may still require a model-specific chat
 template or may not provide a compatible template.
 
+`MMPROJ_PATH` optionally points to a readable `.gguf` multimodal projector for
+the primary llama.cpp runtime. When it is set, the wrapper passes
+`--mmproj <path>` as a distinct argument, so paths containing spaces are safe.
+This setting does not by itself tell OpenClaw that the model accepts images;
+that capability is controlled by `OPENCLAW_MODEL_SUPPORTS_VISION`. Some
+vision-capable models do not require an external projector, and text-only
+models should leave both the vision declaration and projector path unset/false.
+
 ClawBox owns the following llama-server arguments for the primary managed
 service: context size, parallel slots, GPU layers, flash attention, Jinja, and
-mlock.
+the optional multimodal projector, and mlock.
 If `LLAMA_EXTRA_ARGS` includes equivalent flags such as `--ctx-size`,
-`--parallel`, `--n-gpu-layers`, `--flash-attn`, `--jinja`, or `--mlock`, setup
-fails clearly and asks the user to move those values into first-class `.env`
-keys.
+`--parallel`, `--n-gpu-layers`, `--flash-attn`, `--jinja`, `--mmproj`, or
+`--mlock`, setup fails clearly and asks the user to move those values into
+first-class `.env` keys.
 This prevents launchd from starting with contradictory managed and extra
 arguments. Optional embeddings runtime settings stay under `EMBEDDINGS_*` and
 are not inferred from primary model settings.

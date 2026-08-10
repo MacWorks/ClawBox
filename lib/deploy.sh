@@ -131,6 +131,7 @@ required_name = required.get("name")
 required_api = required.get("api")
 required_context = required.get("contextWindow")
 required_max_tokens = required.get("maxTokens")
+required_input = required.get("input", ["text"])
 required_compat = required.get("compat", {})
 if not isinstance(required_compat, dict):
     required_compat = {}
@@ -190,6 +191,9 @@ def managed_fields_match(model, require_local_identity):
         max_tokens_matches = int(model.get("maxTokens")) == int(required_max_tokens)
     except Exception:
         max_tokens_matches = model.get("maxTokens") == required_max_tokens
+    input_value = model.get("input", ["text"])
+    if not isinstance(input_value, list):
+        input_value = []
 
     if require_local_identity and (
         model.get("id") != required_id or model.get("name") != required_name
@@ -204,6 +208,7 @@ def managed_fields_match(model, require_local_identity):
         model.get("api") == required_api
         and context_matches
         and max_tokens_matches
+        and input_value == required_input
         and compat.get("supportsDeveloperRole") == required_developer_role
         and all(keyword in unsupported for keyword in required_unsupported)
     )
@@ -421,8 +426,9 @@ openclaw_config_value_for_remote_set() {
 openclaw_config_model_array() {
   local max_tokens="${OPENCLAW_MAX_TOKENS:-8192}"
   local effective_context="${OPENCLAW_EFFECTIVE_CONTEXT_WINDOW:-}"
+  local supports_vision="${OPENCLAW_MODEL_SUPPORTS_VISION:-false}"
 
-  python3 - "${OPENCLAW_DEFAULT_MODEL:-local}" "${LLAMA_CTX:-32768}" "$max_tokens" "$effective_context" <<'PY'
+  python3 - "${OPENCLAW_DEFAULT_MODEL:-local}" "${LLAMA_CTX:-32768}" "$max_tokens" "$effective_context" "$supports_vision" <<'PY'
 import json, sys
 try:
     raw_context = int(sys.argv[2])
@@ -459,8 +465,10 @@ if max_tokens >= validation_context:
         file=sys.stderr,
     )
     raise SystemExit(1)
+input_modes = ["text", "image"] if sys.argv[5].lower() in ("true", "yes", "1", "on") else ["text"]
 print(json.dumps([{"id": sys.argv[1], "name": sys.argv[1], "contextWindow": context,
                   "maxTokens": max_tokens,
+                  "input": input_modes,
                   "compat": {
                       "supportsDeveloperRole": False,
                       "unsupportedToolSchemaKeywords": [

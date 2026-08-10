@@ -61,6 +61,7 @@ setup_status_test_mocks() {
   unset CLAWBOX_TEST_STATUS_LAUNCHCTL_PRINT_EXIT_CODE
   unset CLAWBOX_TEST_STATUS_LAUNCHCTL_LOG
   unset CLAWBOX_TEST_STATUS_CURL_LOG
+  unset CLAWBOX_TEST_STATUS_MODELS_JSON
   unset CLAWBOX_TEST_STATUS_PROPS_JSON
   unset CLAWBOX_TEST_STATUS_SLOTS_JSON
   unset CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT
@@ -125,6 +126,9 @@ for arg in "$@"; do
   last_arg="$arg"
 done
 case "$last_arg" in
+  */models)
+    [ -n "${CLAWBOX_TEST_STATUS_MODELS_JSON:-}" ] && printf "%s\n" "$CLAWBOX_TEST_STATUS_MODELS_JSON"
+    ;;
   */props)
     [ -n "${CLAWBOX_TEST_STATUS_PROPS_JSON:-}" ] && printf "%s\n" "$CLAWBOX_TEST_STATUS_PROPS_JSON"
     ;;
@@ -1820,6 +1824,8 @@ VM_HOST="vm-user@192.168.64.2"
 LLAMA_PORT="18080"
 LLAMA_BASE_URL="http://127.0.0.1:18080/v1"
 LLAMA_JINJA="true"
+OPENCLAW_MODEL_SUPPORTS_VISION="false"
+MMPROJ_PATH=""
 MODEL_PATH="/Users/vm-user/models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 OPENCLAW_PROVIDER_NAME="clawbox"
 OPENCLAW_DEFAULT_MODEL="local"
@@ -1873,6 +1879,7 @@ EOF
   export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_MODELS_JSON='{"data":[{"id":"local","capabilities":["completion"]}]}'
   export CLAWBOX_TEST_STATUS_PROPS_JSON='{"default_generation_settings":{"n_ctx":65536},"total_slots":1}'
   export CLAWBOX_TEST_STATUS_SLOTS_JSON='[{"id":0,"n_ctx":65536}]'
   export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
@@ -1895,6 +1902,10 @@ EOF
   assert_contains 'status normalized OpenClaw provider model reports stable alias' "$output" 'PASS: OpenClaw stable alias model entry is configured'
   assert_contains 'status normalized OpenClaw provider model reports context section' "$output" 'Context and Token Budget'
   assert_contains 'status normalized OpenClaw provider model reports configured Jinja' "$output" 'Configured LLAMA_JINJA: true'
+  assert_contains 'status normalized OpenClaw provider model reports configured vision' "$output" 'Configured vision: false'
+  assert_contains 'status normalized OpenClaw provider model reports projector state' "$output" 'Multimodal projector: not configured'
+  assert_contains 'status normalized OpenClaw provider model reports text-only OpenClaw input' "$output" 'OpenClaw input: text'
+  assert_contains 'status normalized OpenClaw provider model reports runtime multimodal absence' "$output" 'Runtime multimodal capability: no'
   assert_contains 'status normalized OpenClaw provider model reports runtime context' "$output" 'Runtime context: 65536'
   assert_contains 'status normalized OpenClaw provider model reports OpenClaw context' "$output" 'OpenClaw contextWindow: 65536'
   assert_contains 'status normalized OpenClaw provider model reports OpenClaw maxTokens' "$output" 'OpenClaw maxTokens: 8192'
@@ -1909,6 +1920,117 @@ EOF
   assert_contains 'status normalized OpenClaw provider model reports healthy summary' "$output" 'RESULT: HEALTHY'
   assert_not_contains 'status normalized OpenClaw provider model has no obsolete concrete warning' "$output" 'WARN: OpenClaw provider has obsolete concrete model entry'
   assert_not_contains 'status normalized OpenClaw provider model has no warnings summary' "$output" 'HEALTHY WITH WARNINGS'
+}
+
+run_status_vision_fixture() {
+  local configured_vision="$1"
+  local openclaw_input_json="$2"
+  local models_json="$3"
+  local expected_status="$4"
+  local active_config="$TEMP_DIR/status-vision-openclaw.json"
+  local output=''
+  local status=0
+
+  prepare_status_test_home
+  setup_status_test_mocks
+  cat > "$ENV_FILE" <<EOF
+HOST_IP="127.0.0.1"
+VM_HOST="vm-user@192.168.64.2"
+LLAMA_PORT="18080"
+LLAMA_BASE_URL="http://127.0.0.1:18080/v1"
+LLAMA_CTX="32768"
+LLAMA_PARALLEL="1"
+LLAMA_JINJA="true"
+OPENCLAW_MODEL_SUPPORTS_VISION="$configured_vision"
+MMPROJ_PATH="/Users/vm-user/models/projector.gguf"
+MODEL_PATH="/Users/vm-user/models/vision.gguf"
+OPENCLAW_PROVIDER_NAME="clawbox"
+OPENCLAW_DEFAULT_MODEL="local"
+OPENCLAW_PROVIDER_TIMEOUT_SECONDS="1800"
+OPENCLAW_STUCK_SESSION_WARN_MS="600000"
+OPENCLAW_STUCK_SESSION_ABORT_MS="1800000"
+LLAMA_EXTERNAL="false"
+EOF
+  cat > "$HOME/Library/Application Support/ClawBox/clawbox.env" <<'EOF'
+MODEL_PATH="/Users/vm-user/models/vision.gguf"
+EOF
+  python3 - "$active_config" "$openclaw_input_json" <<'PY'
+import json, sys
+path, input_json = sys.argv[1], sys.argv[2]
+data = {
+  "agents": {"defaults": {"compaction": {"reserveTokens": 8192, "reserveTokensFloor": 8192}}},
+  "diagnostics": {"stuckSessionWarnMs": 600000, "stuckSessionAbortMs": 1800000},
+  "models": {"providers": {"clawbox": {
+    "baseUrl": "http://127.0.0.1:18080/v1",
+    "timeoutSeconds": 1800,
+    "models": [{
+      "id": "local",
+      "name": "local",
+      "api": "openai-completions",
+      "contextWindow": 32768,
+      "maxTokens": 8192,
+      "input": json.loads(input_json),
+      "compat": {
+        "supportsDeveloperRole": False,
+        "unsupportedToolSchemaKeywords": ["pattern", "additionalProperties"],
+      },
+    }],
+  }}},
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle)
+PY
+
+  export CLAWBOX_TEST_STATUS_PROCESS_ARGS_OUTPUT='/opt/homebrew/bin/llama-server -m /Users/vm-user/models/vision.gguf --mmproj /Users/vm-user/models/projector.gguf --host 0.0.0.0 --port 18080 --ctx-size 32768'
+  export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_CURL_EXIT_CODE=0
+  export CLAWBOX_TEST_STATUS_MODELS_JSON="$models_json"
+  export CLAWBOX_TEST_STATUS_PROPS_JSON='{"default_generation_settings":{"n_ctx":32768},"total_slots":1}'
+  export CLAWBOX_TEST_STATUS_SLOTS_JSON='[{"id":0,"n_ctx":32768}]'
+  export CLAWBOX_TEST_SSH_ECHO_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_PROCESS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_OPENCLAW_CONFIG_REAL_FILE="$active_config"
+  export CLAWBOX_TEST_SSH_VM_MODELS_EXIT_CODE=0
+  export CLAWBOX_TEST_SSH_VM_RESPONSES_EXIT_CODE=0
+  export CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/status-vision-user.err.log"
+  export CLAWBOX_LLAMA_ERR_LOG="$TEMP_DIR/status-vision-system.err.log"
+  rm -f "$CLAWBOX_LLAMA_USER_ERR_LOG" "$CLAWBOX_LLAMA_ERR_LOG"
+
+  set +e
+  output="$(/bin/bash "$ROOT_DIR/scripts/status.sh" 2>&1)"
+  status=$?
+  set -e
+
+  STATUS_VISION_OUTPUT="$output"
+  STATUS_VISION_STATUS="$status"
+  assert_equals 'status vision fixture exit status' "$status" "$expected_status"
+}
+
+test_status_reports_vision_runtime_capability_match() {
+  run_status_vision_fixture true '["text","image"]' '{"data":[{"id":"local","capabilities":["completion","multimodal"]}]}' 0
+
+  assert_contains 'status reports configured vision enabled' "$STATUS_VISION_OUTPUT" 'Configured vision: true'
+  assert_contains 'status reports configured projector' "$STATUS_VISION_OUTPUT" 'Multimodal projector: /Users/vm-user/models/projector.gguf'
+  assert_contains 'status reports OpenClaw image input' "$STATUS_VISION_OUTPUT" 'OpenClaw input: text,image'
+  assert_contains 'status reports runtime multimodal capability' "$STATUS_VISION_OUTPUT" 'Runtime multimodal capability: yes'
+  assert_contains 'status passes runtime multimodal validation' "$STATUS_VISION_OUTPUT" 'PASS: llama-server reports multimodal capability'
+}
+
+test_status_fails_when_configured_vision_runtime_is_text_only() {
+  run_status_vision_fixture true '["text","image"]' '{"data":[{"id":"local","capabilities":["completion"]}]}' 1
+
+  assert_contains 'status reports runtime multimodal absence for configured vision' "$STATUS_VISION_OUTPUT" 'Runtime multimodal capability: no'
+  assert_contains 'status fails configured vision without runtime multimodal evidence' "$STATUS_VISION_OUTPUT" 'FAIL: configured vision model is not reported as multimodal by llama-server'
+}
+
+test_status_warns_when_vision_runtime_metadata_unavailable() {
+  run_status_vision_fixture true '["text","image"]' '{"data":[{"id":"local"}]}' 0
+
+  assert_contains 'status reports unknown runtime multimodal metadata' "$STATUS_VISION_OUTPUT" 'Runtime multimodal capability: unknown'
+  assert_contains 'status warns when runtime multimodal metadata is unavailable' "$STATUS_VISION_OUTPUT" 'WARN: llama-server multimodal capability metadata is unavailable'
+  assert_contains 'status summary remains warning-level for unavailable capability metadata' "$STATUS_VISION_OUTPUT" 'RESULT: HEALTHY WITH WARNINGS'
 }
 
 run_status_context_contract_fixture() {
@@ -2862,6 +2984,9 @@ run_test test_status_managed_local_host_probe_ignores_custom_llama_base_url_when
 run_test test_status_displays_primary_model_summary
 run_test test_status_warns_about_obsolete_openclaw_concrete_model_entries
 run_test test_status_reports_normalized_openclaw_provider_models_healthy
+run_test test_status_reports_vision_runtime_capability_match
+run_test test_status_fails_when_configured_vision_runtime_is_text_only
+run_test test_status_warns_when_vision_runtime_metadata_unavailable
 run_test test_status_reports_incomplete_when_props_unavailable
 run_test test_status_reports_incomplete_when_slots_unavailable
 run_test test_status_fails_on_inconsistent_llama_slot_contexts

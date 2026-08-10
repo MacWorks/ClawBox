@@ -98,6 +98,82 @@ test_model_selection_flow() {
   assert_no_excessive_blank_lines 'model flow avoids excessive blank lines' "$output"
 }
 
+test_model_selection_resets_vision_state_for_new_primary_model() {
+  local output
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    local models_dir="$TEMP_DIR/vision-reset-models"
+    mkdir -p "$models_dir"
+    : > "$models_dir/new-primary.gguf"
+    : > "$models_dir/new-primary-mmproj-Q8_0.gguf"
+
+    queue_prompt_answers \
+      "$models_dir" \
+      ''
+
+    ENV_FILE="$TEMP_DIR/.env"
+    MODEL_PATH='/Users/tester/models/old-primary.gguf'
+    OPENCLAW_MODEL_SUPPORTS_VISION='true'
+    MMPROJ_PATH='/Users/tester/models/old-primary-mmproj.gguf'
+    VM_USER='tester'
+
+    source_env_file() { :; }
+    write_env_from_template() { :; }
+
+    setup_configure_model_selection
+    printf 'MODEL_PATH=%s\n' "$MODEL_PATH"
+    printf 'VISION=%s\n' "$OPENCLAW_MODEL_SUPPORTS_VISION"
+    printf 'MMPROJ=%s\n' "$MMPROJ_PATH"
+  } 2>&1)"
+
+  assert_contains 'model selection excludes mmproj candidates from primary model selection' "$output" 'Using model: new-primary.gguf'
+  assert_contains 'new primary model selection does not silently retain vision support' "$output" 'VISION=false'
+  assert_contains 'new primary model selection clears stale projector path' "$output" 'MMPROJ='
+}
+
+test_model_selection_can_configure_vision_with_projector_candidate() {
+  local output
+  local expected_model_path="$TEMP_DIR/vision-models/vision-primary.gguf"
+  local expected_mmproj_path="$TEMP_DIR/vision-models/vision-primary-mmproj-Q8_0.gguf"
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    local models_dir="$TEMP_DIR/vision-models"
+    mkdir -p "$models_dir"
+    : > "$expected_model_path"
+    : > "$expected_mmproj_path"
+
+    queue_prompt_answers \
+      "$models_dir" \
+      'y' \
+      ''
+
+    ENV_FILE="$TEMP_DIR/.env"
+    MODEL_PATH=''
+    OPENCLAW_MODEL_SUPPORTS_VISION='false'
+    MMPROJ_PATH=''
+    VM_USER='tester'
+
+    source_env_file() { :; }
+    write_env_from_template() { :; }
+
+    setup_configure_model_selection
+    printf 'MODEL_PATH=%s\n' "$MODEL_PATH"
+    printf 'VISION=%s\n' "$OPENCLAW_MODEL_SUPPORTS_VISION"
+    printf 'MMPROJ=%s\n' "$MMPROJ_PATH"
+  } 2>&1)"
+
+  assert_contains 'vision model selection stores the primary model path' "$output" "MODEL_PATH=$expected_model_path"
+  assert_contains 'vision model selection stores configured vision support' "$output" 'VISION=true'
+  assert_contains 'vision model selection offers and stores the mmproj candidate' "$output" "MMPROJ=$expected_mmproj_path"
+  assert_contains 'vision model selection explains projector independence' "$output" 'Vision capability is configured separately from any llama.cpp multimodal projector.'
+}
+
 test_model_selection_recovery_accepts_corrected_directory_after_empty_scan() {
   local output
   local expected_model_path="$TEMP_DIR/valid-models/model-alpha.gguf"
@@ -491,6 +567,7 @@ test_first_run_bootstrap_detects_cross_user_llama_before_binary_setup() {
       "$models_dir" \
       '' \
       '' \
+      '' \
       '2' \
       ''
 
@@ -606,6 +683,7 @@ test_first_run_bootstrap_honors_explicit_custom_llama_port() {
 
     queue_prompt_answers \
       "$models_dir" \
+      '' \
       '11801' \
       '' \
       '' \
@@ -3676,6 +3754,8 @@ printf 'Running output normalization tests\n'
 TEMP_DIR="$(mktemp -d)"
 
 run_test test_model_selection_flow
+run_test test_model_selection_resets_vision_state_for_new_primary_model
+run_test test_model_selection_can_configure_vision_with_projector_candidate
 run_test test_model_selection_recovery_accepts_corrected_directory_after_empty_scan
 run_test test_model_selection_requires_explicit_file_path_when_directory_is_empty
 run_test test_model_selection_recovery_rescans_current_directory

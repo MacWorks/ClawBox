@@ -38,7 +38,7 @@ managed_arg_conflicts() {
   local conflicts='' word=''
   for word in ${LLAMA_EXTRA_ARGS:-}; do
     case "$word" in
-      --ctx-size|--ctx-size=*|-c|-c[0-9]*|--parallel|--parallel=*|-np|-np[0-9]*|--n-gpu-layers|--n-gpu-layers=*|-ngl|-ngl[0-9]*|--flash-attn|--flash-attn=*|-fa|--jinja|--mlock)
+      --ctx-size|--ctx-size=*|-c|-c[0-9]*|--parallel|--parallel=*|-np|-np[0-9]*|--n-gpu-layers|--n-gpu-layers=*|-ngl|-ngl[0-9]*|--flash-attn|--flash-attn=*|-fa|--jinja|--mlock|--mmproj|--mmproj=*)
         conflicts="${conflicts}${conflicts:+ }$word"
         ;;
     esac
@@ -70,6 +70,24 @@ if [ ! -f "$MODEL_PATH" ]; then
   exit 1
 fi
 
+if [ "${CLAWBOX_LLAMA_INSTANCE:-primary}" != embeddings ] && [ -n "${MMPROJ_PATH:-}" ]; then
+  if [ ! -f "$MMPROJ_PATH" ]; then
+    echo "multimodal projector not found: $MMPROJ_PATH"
+    exit 1
+  fi
+  if [ ! -r "$MMPROJ_PATH" ]; then
+    echo "multimodal projector is not readable: $MMPROJ_PATH"
+    exit 1
+  fi
+  case "$MMPROJ_PATH" in
+    *.gguf) ;;
+    *)
+      echo "multimodal projector path must be a .gguf file: $MMPROJ_PATH"
+      exit 1
+      ;;
+  esac
+fi
+
 ########################################
 # Start Server
 ########################################
@@ -95,6 +113,10 @@ if [ "${CLAWBOX_LLAMA_INSTANCE:-primary}" != embeddings ]; then
 
   if clawbox_bool_enabled "${LLAMA_JINJA:-false}"; then
     LLAMA_ARGS+=(--jinja)
+  fi
+
+  if [ -n "${MMPROJ_PATH:-}" ]; then
+    LLAMA_ARGS+=(--mmproj "$MMPROJ_PATH")
   fi
 fi
 

@@ -103,6 +103,11 @@ Important values:
 - `VM_MACHINE_NAME`: UTM VM name used for optional login auto-start
 - `LLAMA_BIN`: absolute path to the host `llama-server` binary
 - `MODEL_PATH`: absolute path to the model file used by `llama-server`
+- `OPENCLAW_MODEL_SUPPORTS_VISION`: whether the selected primary model should
+  be advertised to OpenClaw as accepting image input; defaults to `false` for
+  existing/text-only configurations
+- `MMPROJ_PATH`: optional readable `.gguf` multimodal projector passed to the
+  primary llama.cpp runtime with `--mmproj`; blank means no external projector
 - `LLAMA_HOST`, `LLAMA_PORT`, `LLAMA_CTX`, `LLAMA_JINJA`, `LLAMA_BASE_URL`: host inference settings, with a default port of `11434`, default requested context of `32768`, and Jinja chat-template processing enabled for new primary setups
 - `OPENCLAW_MAX_TOKENS`: output-token budget advertised for the managed OpenClaw local model; defaults to `8192`, must be less than the effective llama-server context window, and is separate from the requested context window
 - `LLAMA_EXTERNAL`: whether setup explicitly accepted an externally managed `llama-server` instance for the configured endpoint
@@ -127,6 +132,14 @@ model matches the running `llama-server` process, ClawBox offers a
 Fast/Full/Skip qualification menu. Fast runs a reduced validation profile,
 Full runs the complete suite, and Skip is the default. The menu is not shown
 during noninteractive model switches.
+
+Primary model selection also asks whether the selected GGUF supports
+image/vision input. That capability is stored separately from `MMPROJ_PATH`
+because some multimodal models need an external projector and others do not.
+When a new primary model is selected, ClawBox does not silently carry over the
+previous model's vision declaration or projector path; setup asks again and
+offers a conservative same-directory `mmproj`/`projector` candidate only after
+confirmation.
 
 Use `.env.example` as the reference for required keys and expected value formats.
 

@@ -192,6 +192,15 @@ arguments only; quoted values or embedded spaces are not supported. Common
 primary runtime flags such as GPU layers, Flash Attention, Jinja chat-template
 processing, and mlock are first-class ClawBox settings.
 
+Vision-capable primary models are configured with two independent settings.
+`OPENCLAW_MODEL_SUPPORTS_VISION=true` declares that the selected primary model
+can accept image input, so ClawBox advertises `["text", "image"]` for the
+stable OpenClaw `clawbox/local` model. `MMPROJ_PATH` optionally points at a
+readable `.gguf` multimodal projector that llama.cpp should receive with
+`--mmproj`; leave it blank for models that do not need an external projector.
+Text-only models keep `OPENCLAW_MODEL_SUPPORTS_VISION=false` and OpenClaw
+continues to advertise `["text"]`.
+
 To switch only the host GGUF model after setup, run `./clawbox model`. It
 updates `MODEL_PATH`, restarts the managed host `llama-server`, and leaves VM
 provisioning and the OpenClaw config file intact. It may verify and correct

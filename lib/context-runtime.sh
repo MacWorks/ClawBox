@@ -89,7 +89,7 @@ llama_managed_runtime_arg_conflicts() {
 
   for word in $extra_args; do
     case "$word" in
-      --ctx-size|--ctx-size=*|-c|-c[0-9]*|--parallel|--parallel=*|-np|-np[0-9]*|--n-gpu-layers|--n-gpu-layers=*|-ngl|-ngl[0-9]*|--flash-attn|--flash-attn=*|-fa|--jinja|--mlock)
+      --ctx-size|--ctx-size=*|-c|-c[0-9]*|--parallel|--parallel=*|-np|-np[0-9]*|--n-gpu-layers|--n-gpu-layers=*|-ngl|-ngl[0-9]*|--flash-attn|--flash-attn=*|-fa|--jinja|--mlock|--mmproj|--mmproj=*)
         conflicts="${conflicts}${conflicts:+ }$word"
         ;;
     esac
@@ -112,6 +112,7 @@ llama_migrate_managed_runtime_extra_args() {
   LLAMA_MIGRATION_FLASH_ATTENTION="${LLAMA_FLASH_ATTENTION:-false}"
   LLAMA_MIGRATION_JINJA="${LLAMA_JINJA:-false}"
   LLAMA_MIGRATION_MLOCK="${LLAMA_MLOCK:-false}"
+  LLAMA_MIGRATION_MMPROJ_PATH="${MMPROJ_PATH:-}"
   LLAMA_MIGRATION_EXTRA_ARGS="$extra_args"
   LLAMA_MIGRATION_CHANGED=false
 
@@ -230,6 +231,20 @@ llama_migrate_managed_runtime_extra_args() {
         LLAMA_MIGRATION_JINJA=true
         LLAMA_MIGRATION_CHANGED=true
         ;;
+      --mmproj=*)
+        LLAMA_MIGRATION_MMPROJ_PATH="${word#*=}"
+        LLAMA_MIGRATION_CHANGED=true
+        ;;
+      --mmproj)
+        value="${1:-}"
+        if [ -n "$value" ]; then
+          shift || true
+          LLAMA_MIGRATION_MMPROJ_PATH="$value"
+          LLAMA_MIGRATION_CHANGED=true
+        else
+          remaining_args+=("$word")
+        fi
+        ;;
       *)
         remaining_args+=("$word")
         ;;
@@ -238,6 +253,32 @@ llama_migrate_managed_runtime_extra_args() {
 
   LLAMA_MIGRATION_EXTRA_ARGS="${remaining_args[*]-}"
   [ "$LLAMA_MIGRATION_CHANGED" = true ]
+}
+
+llama_validate_mmproj_path() {
+  local mmproj_path="${1:-${MMPROJ_PATH:-}}"
+
+  [ -n "$mmproj_path" ] || return 0
+
+  if [ ! -f "$mmproj_path" ]; then
+    llama_fail "multimodal projector not found: $mmproj_path"
+    return 1
+  fi
+
+  if [ ! -r "$mmproj_path" ]; then
+    llama_fail "multimodal projector is not readable: $mmproj_path"
+    return 1
+  fi
+
+  case "$mmproj_path" in
+    *.gguf)
+      return 0
+      ;;
+    *)
+      llama_fail "multimodal projector path must be a .gguf file: $mmproj_path"
+      return 1
+      ;;
+  esac
 }
 
 llama_validate_managed_runtime_settings() {
@@ -263,6 +304,8 @@ llama_validate_managed_runtime_settings() {
         ;;
     esac
   fi
+
+  llama_validate_mmproj_path "${MMPROJ_PATH:-}" || return 1
 
   if llama_managed_runtime_arg_conflicts "${LLAMA_EXTRA_ARGS:-}"; then
     llama_fail "LLAMA_EXTRA_ARGS conflicts with ClawBox-managed llama-server settings: $REPLY"
@@ -290,6 +333,10 @@ llama_append_managed_runtime_args() {
 
   if clawbox_bool_enabled "${LLAMA_JINJA:-false}"; then
     eval "$args_name+=(--jinja)"
+  fi
+
+  if [ -n "${MMPROJ_PATH:-}" ]; then
+    eval "$args_name+=(--mmproj \"\$MMPROJ_PATH\")"
   fi
 
   if clawbox_bool_enabled "${LLAMA_MLOCK:-false}"; then
