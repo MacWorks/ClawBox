@@ -3369,6 +3369,11 @@ test_launchagent_setup_start_waits_for_wrapper_state() {
   assert_contains 'setup-time LaunchAgent bootstraps in user GUI domain' "$(cat "$launchctl_log")" 'bootstrap gui/'
   assert_contains 'setup-time LaunchAgent kickstarts selected service' "$(cat "$launchctl_log")" 'kickstart -k gui/'
   assert_contains 'setup-time LaunchAgent reports verified startup' "$output" 'Selected VM startup verified.'
+  assert_contains 'setup-time LaunchAgent traces wrapper/plist installation' "$(cat "$BASE_DIR/logs/vm/clawbox-startutmvm.out.log")" 'event=setup-write-files-start'
+  assert_contains 'setup-time LaunchAgent traces bootout handoff timing' "$(cat "$BASE_DIR/logs/vm/clawbox-startutmvm.out.log")" 'event=setup-bootout-start'
+  assert_contains 'setup-time LaunchAgent traces bootstrap handoff timing' "$(cat "$BASE_DIR/logs/vm/clawbox-startutmvm.out.log")" 'event=setup-bootstrap-start'
+  assert_contains 'setup-time LaunchAgent traces kickstart handoff timing' "$(cat "$BASE_DIR/logs/vm/clawbox-startutmvm.out.log")" 'event=setup-kickstart-end status=0'
+  assert_contains 'setup-time LaunchAgent traces wait for wrapper state' "$(cat "$BASE_DIR/logs/vm/clawbox-startutmvm.out.log")" 'event=setup-wait-wrapper-start'
   assert_contains 'setup-time LaunchAgent records setup observation timestamp' "$(cat "$BASE_DIR/logs/vm/clawbox-startutmvm.out.log")" 'event=setup-observed-state state=running'
 
   HOME="$original_home"

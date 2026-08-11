@@ -89,13 +89,35 @@ launchagent_timestamp_now() {
   date +%s 2>/dev/null || printf '0'
 }
 
-launchagent_record_setup_observation() {
-  local observed_state="$1"
+launchagent_timestamp_ms() {
+  if command -v perl >/dev/null 2>&1; then
+    perl -MTime::HiRes=time -e 'printf "%.0f\n", time() * 1000' 2>/dev/null && return 0
+  fi
+
+  printf '%s000\n' "$(launchagent_timestamp_now)"
+}
+
+launchagent_record_setup_trace() {
+  local event="$1"
+  shift || true
 
   launchagent_init_paths
   mkdir -p "$(dirname "$LAUNCHAGENT_STDOUT_LOG")" 2>/dev/null || true
-  printf '[INFO] trace time=%s event=setup-observed-state state=%s\n' \
-    "$(launchagent_timestamp_now)" "$observed_state" >>"$LAUNCHAGENT_STDOUT_LOG" 2>/dev/null || true
+  {
+    printf '[INFO] trace time=%s time_ms=%s event=%s' \
+      "$(launchagent_timestamp_now)" "$(launchagent_timestamp_ms)" "$event"
+    while [ "$#" -gt 0 ]; do
+      printf ' %s' "$1"
+      shift
+    done
+    printf '\n'
+  } >>"$LAUNCHAGENT_STDOUT_LOG" 2>/dev/null || true
+}
+
+launchagent_record_setup_observation() {
+  local observed_state="$1"
+
+  launchagent_record_setup_trace 'setup-observed-state' "state=$observed_state"
 }
 
 launchagent_read_start_state() {
@@ -193,11 +215,31 @@ launchagent_print_start_attempt_summary() {
 }
 
 launchagent_bootout_service() {
+  local status=0
+
+  launchagent_record_setup_trace 'setup-bootout-start'
   if command -v launchctl >/dev/null 2>&1; then
-    launchctl bootout "$(launchagent_service_domain)" "$LAUNCHAGENT_PATH" >/dev/null 2>&1 || \
-      launchctl bootout "$(launchagent_service_target)" >/dev/null 2>&1 || \
-      launchctl unload "$LAUNCHAGENT_PATH" >/dev/null 2>&1 || true
+    launchctl bootout "$(launchagent_service_domain)" "$LAUNCHAGENT_PATH" >/dev/null 2>&1
+    status=$?
+    if [ "$status" -eq 0 ]; then
+      launchagent_record_setup_trace 'setup-bootout-end' 'method=domain-path' "status=$status"
+      return 0
+    fi
+
+    launchctl bootout "$(launchagent_service_target)" >/dev/null 2>&1
+    status=$?
+    if [ "$status" -eq 0 ]; then
+      launchagent_record_setup_trace 'setup-bootout-end' 'method=service-target' "status=$status"
+      return 0
+    fi
+
+    launchctl unload "$LAUNCHAGENT_PATH" >/dev/null 2>&1
+    status=$?
+    launchagent_record_setup_trace 'setup-bootout-end' 'method=unload' "status=$status" 'ignored=true'
+    return 0
   fi
+
+  launchagent_record_setup_trace 'setup-bootout-end' 'method=unavailable' 'status=127' 'ignored=true'
 }
 
 launchagent_write_files() {
@@ -249,6 +291,8 @@ EOF
 }
 
 launchagent_install_and_start() {
+  local status=0
+
   launchagent_init_paths
   clawbox_ensure_standard_log_dirs
 
@@ -257,22 +301,56 @@ launchagent_install_and_start() {
     return 1
   fi
 
+  launchagent_record_setup_trace 'setup-install-start' "vm=$VM_MACHINE_NAME"
+  launchagent_record_setup_trace 'setup-write-files-start'
   launchagent_write_files
+  status=$?
+  launchagent_record_setup_trace 'setup-write-files-end' "status=$status"
+  if [ "$status" -ne 0 ]; then
+    VM_AUTOSTART_STATE='unverified'
+    llama_fail "VM auto-start LaunchAgent files could not be installed."
+    launchagent_record_setup_trace 'setup-install-end' "status=$status"
+    return "$status"
+  fi
+
+  launchagent_record_setup_trace 'setup-state-reset-start'
   rm -f "$LAUNCHAGENT_STATE_FILE"
+  status=$?
+  launchagent_record_setup_trace 'setup-state-reset-end' "status=$status"
+  if [ "$status" -ne 0 ]; then
+    VM_AUTOSTART_STATE='unverified'
+    llama_fail "VM auto-start LaunchAgent state could not be reset."
+    launchagent_record_setup_trace 'setup-install-end' "status=$status"
+    return "$status"
+  fi
 
   launchagent_bootout_service
-  if ! launchctl bootstrap "$(launchagent_service_domain)" "$LAUNCHAGENT_PATH"; then
+  launchagent_record_setup_trace 'setup-bootstrap-start'
+  launchctl bootstrap "$(launchagent_service_domain)" "$LAUNCHAGENT_PATH"
+  status=$?
+  launchagent_record_setup_trace 'setup-bootstrap-end' "status=$status"
+  if [ "$status" -ne 0 ]; then
     VM_AUTOSTART_STATE='unverified'
     llama_fail "VM auto-start LaunchAgent could not be bootstrapped."
-    return 1
+    launchagent_record_setup_trace 'setup-install-end' "status=$status"
+    return "$status"
   fi
-  launchctl kickstart -k "$(launchagent_service_target)" >/dev/null 2>&1 || true
+  launchagent_record_setup_trace 'setup-kickstart-start'
+  launchctl kickstart -k "$(launchagent_service_target)" >/dev/null 2>&1
+  status=$?
+  launchagent_record_setup_trace 'setup-kickstart-end' "status=$status" 'ignored=true'
 
-  if ! launchagent_runtime_operational; then
+  launchagent_record_setup_trace 'setup-operational-check-start'
+  launchagent_runtime_operational
+  status=$?
+  launchagent_record_setup_trace 'setup-operational-check-end' "status=$status"
+  if [ "$status" -ne 0 ]; then
     VM_AUTOSTART_STATE='unverified'
     llama_fail "VM auto-start LaunchAgent was installed but could not be verified as loaded."
+    launchagent_record_setup_trace 'setup-install-end' "status=$status"
     return 1
   fi
+  launchagent_record_setup_trace 'setup-install-end' 'status=0'
 }
 
 launchagent_start_selected_vm_for_setup() {
@@ -289,17 +367,29 @@ launchagent_start_selected_vm_for_setup() {
   VM_AUTOSTART_SETUP_TEMPORARY=true
   VM_HOST=''
 
+  launchagent_record_setup_trace 'setup-start-selected-start' "vm=$VM_MACHINE_NAME"
   status_begin_compact 'Starting selected VM with ClawBox VM startup service...'
-  if launchagent_install_and_start && launchagent_wait_for_start_state; then
-    status_end 'Selected VM startup verified. ✓' 'progress'
-    status=0
+  if launchagent_install_and_start; then
+    launchagent_record_setup_trace 'setup-wait-wrapper-start'
+    if launchagent_wait_for_start_state; then
+      launchagent_record_setup_trace 'setup-wait-wrapper-end' 'status=0'
+      status_end 'Selected VM startup verified. ✓' 'progress'
+      status=0
+    else
+      status=$?
+      launchagent_record_setup_trace 'setup-wait-wrapper-end' "status=$status"
+      status_end 'Selected VM startup could not be verified.' 'warning'
+      status=1
+    fi
   else
     status=$?
+    launchagent_record_setup_trace 'setup-install-failed' "status=$status"
     status_end 'Selected VM startup could not be verified.' 'warning'
     status=1
   fi
 
   VM_HOST="$saved_vm_host"
+  launchagent_record_setup_trace 'setup-start-selected-end' "status=$status"
   return "$status"
 }
 
