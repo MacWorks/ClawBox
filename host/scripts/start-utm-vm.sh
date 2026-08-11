@@ -12,6 +12,10 @@ post_start_poll_interval="${CLAWBOX_VM_AUTOSTART_POST_START_POLL_INTERVAL:-0.5}"
 state_file="${CLAWBOX_VM_AUTOSTART_STATE_FILE:-$HOME/Library/Application Support/ClawBox/state/start-utm-vm.status}"
 attempt=1
 
+timestamp_now() {
+  date +%s 2>/dev/null || printf '0'
+}
+
 log_info() {
   printf '[INFO] %s\n' "$1"
 }
@@ -22,6 +26,10 @@ log_warn() {
 
 log_error() {
   printf '[ERROR] %s\n' "$1" >&2
+}
+
+log_trace() {
+  log_info "trace time=$(timestamp_now) $1"
 }
 
 write_state() {
@@ -36,8 +44,10 @@ write_state() {
     printf 'vm=%s\n' "$VM_NAME"
     printf 'host=%s\n' "$VM_HOST"
     printf 'detail=%s\n' "$detail"
-    printf 'time=%s\n' "$(date +%s 2>/dev/null || printf '0')"
+    printf 'time=%s\n' "$(timestamp_now)"
   } >"$state_file" 2>/dev/null || true
+
+  log_trace "event=state-write state=$state detail=$detail"
 }
 
 command_path() {
@@ -105,15 +115,22 @@ vm_is_running_via_utmctl() {
   local line
   local list_output
   local bin
+  local list_status=0
+  local context="${VM_RUNNING_CHECK_CONTEXT:-unknown}"
 
   bin="$(utmctl_bin)" || return 1
 
-  list_output="$("$bin" list 2>&1)" || {
+  log_trace "event=utmctl-list-start context=$context"
+  list_output="$("$bin" list 2>&1)"
+  list_status=$?
+  log_trace "event=utmctl-list-end context=$context status=$list_status"
+
+  if [ "$list_status" -ne 0 ]; then
     if output_indicates_automation_denial "$list_output"; then
       log_automation_guidance 'utmctl'
     fi
     return 1
-  }
+  fi
 
   while IFS= read -r line; do
     case "$line" in
@@ -158,17 +175,35 @@ vm_is_running() {
   return 1
 }
 
+vm_is_running_with_context() {
+  local context="$1"
+  local result=0
+
+  VM_RUNNING_CHECK_CONTEXT="$context"
+  vm_is_running
+  result=$?
+  VM_RUNNING_CHECK_CONTEXT=''
+
+  return "$result"
+}
+
 start_with_utmctl() {
   local output
   local bin
+  local start_status=0
 
   bin="$(utmctl_bin)" || return 1
 
   log_info "Attempting to start VM with utmctl: $VM_NAME"
-  output="$("$bin" start "$VM_NAME" 2>&1)" && {
+  log_trace "event=utmctl-start-start vm=$VM_NAME"
+  output="$("$bin" start "$VM_NAME" 2>&1)"
+  start_status=$?
+  log_trace "event=utmctl-start-end vm=$VM_NAME status=$start_status"
+
+  if [ "$start_status" -eq 0 ]; then
     log_info "utmctl start requested successfully for VM: $VM_NAME"
     return 0
-  }
+  fi
 
   log_warn "utmctl could not start VM: $VM_NAME"
   if [ -n "$output" ]; then
@@ -237,7 +272,7 @@ if [ "$initial_delay" -gt 0 ] 2>/dev/null; then
   sleep_cmd "$initial_delay"
 fi
 
-if vm_is_running; then
+if [ -n "$VM_HOST" ] && vm_is_running_with_context 'preflight'; then
   if vm_is_reachable_via_ssh; then
     log_info "VM already reachable via SSH: $VM_HOST"
     write_state 'running' "VM already reachable via SSH: $VM_HOST"
@@ -253,7 +288,7 @@ while [ "$attempt" -le "$start_request_attempts" ]; do
   request_vm_start
   sleep_cmd "$post_start_poll_interval"
 
-  if vm_is_running; then
+  if vm_is_running_with_context "post-start-attempt-$attempt"; then
     if vm_is_reachable_via_ssh; then
       log_info "VM is reachable via SSH after startup attempt: $VM_HOST"
       write_state 'running' "VM reachable via SSH after startup attempt: $VM_HOST"
@@ -270,7 +305,7 @@ done
 
 attempt=1
 while [ "$attempt" -le "$max_attempts" ]; do
-  if vm_is_running; then
+  if vm_is_running_with_context "startup-wait-$attempt"; then
     if vm_is_reachable_via_ssh; then
       log_info "VM is reachable via SSH after startup wait: $VM_HOST"
       write_state 'running' "VM reachable via SSH after startup wait: $VM_HOST"

@@ -2692,6 +2692,12 @@ test_launchagent_module() {
     fail "launchagent wrapper should include structured log levels"
   fi
 
+  if [ -f "$wrapper_path" ] && grep -Fq 'event=utmctl-list-start' "$wrapper_path" && grep -Fq 'event=utmctl-start-start' "$wrapper_path" && grep -Fq 'event=state-write' "$wrapper_path"; then
+    pass "launchagent wrapper records timestamped startup trace events"
+  else
+    fail "launchagent wrapper should record timestamped startup trace events"
+  fi
+
   if [ -f "$wrapper_path" ] && grep -Fq 'utmctl list' "$wrapper_path" && grep -Fq 'utmctl start' "$wrapper_path" && grep -Fq '/usr/bin/osascript' "$wrapper_path"; then
     pass "launchagent wrapper checks state before using utmctl and osascript"
   else
@@ -3165,6 +3171,7 @@ EOF
 test_launchagent_wrapper_supports_start_only_without_vm_host() {
   local wrapper="$ROOT_DIR/host/scripts/start-utm-vm.sh"
   local mock_dir="$TEMP_DIR/launchagent-start-only-bin"
+  local utmctl_log="$TEMP_DIR/launchagent-start-only-utmctl.log"
   local ssh_log="$TEMP_DIR/launchagent-start-only-ssh.log"
   local sleep_log="$TEMP_DIR/launchagent-start-only-sleep.log"
   local state_file="$TEMP_DIR/launchagent-start-only.status"
@@ -3173,6 +3180,7 @@ test_launchagent_wrapper_supports_start_only_without_vm_host() {
   mkdir -p "$mock_dir"
   cat > "$mock_dir/utmctl" <<'EOF'
 #!/bin/bash
+printf '%s\n' "$1" >> "$CLAWBOX_TEST_UTMCTL_LOG"
 case "$1" in
   start)
     exit 0
@@ -3206,6 +3214,7 @@ EOF
     CLAWBOX_OSASCRIPT_BIN="$mock_dir/osascript" \
     CLAWBOX_SSH_BIN="$mock_dir/ssh" \
     CLAWBOX_SLEEP_BIN="$mock_dir/sleep" \
+    CLAWBOX_TEST_UTMCTL_LOG="$utmctl_log" \
     CLAWBOX_TEST_SSH_LOG="$ssh_log" \
     CLAWBOX_TEST_SLEEP_LOG="$sleep_log" \
     CLAWBOX_VM_AUTOSTART_STATE_FILE="$state_file" \
@@ -3213,7 +3222,20 @@ EOF
   )"
 
   assert_contains 'launchagent start-only mode logs missing SSH target as expected' "$output" 'Configured VM SSH target: not configured'
-  assert_contains 'launchagent start-only mode verifies UTM runtime state' "$output" 'VM is already running: Test VM'
+  assert_contains 'launchagent start-only mode requests selected VM startup' "$output" 'VM start request attempt 1/3'
+  assert_contains 'launchagent start-only mode verifies UTM runtime state after startup request' "$output" 'VM is running after startup attempt: Test VM'
+
+  if [ "$(head -n 1 "$utmctl_log")" = 'start' ]; then
+    pass 'launchagent start-only mode skips preflight utmctl list before startup'
+  else
+    fail 'launchagent start-only mode should issue utmctl start before any list preflight'
+  fi
+
+  if grep -Fq 'list' "$utmctl_log"; then
+    pass 'launchagent start-only mode verifies selected VM state after startup'
+  else
+    fail 'launchagent start-only mode should verify selected VM state after startup'
+  fi
 
   if [ ! -s "$ssh_log" ]; then
     pass 'launchagent start-only mode does not probe SSH without VM_HOST'
@@ -3221,10 +3243,10 @@ EOF
     fail 'launchagent start-only mode should not probe SSH without VM_HOST'
   fi
 
-  if [ ! -s "$sleep_log" ]; then
+  if ! grep -Fq '10' "$sleep_log" && ! grep -Fq '3' "$sleep_log"; then
     pass 'launchagent wrapper does not use an unconditional startup delay by default'
   else
-    fail 'launchagent wrapper should not sleep before checking VM state by default'
+    fail 'launchagent wrapper should not use old unconditional startup delays by default'
   fi
 
   assert_contains 'launchagent start-only mode records running state' "$(cat "$state_file")" 'state=running'
@@ -3285,6 +3307,7 @@ test_launchagent_setup_start_waits_for_wrapper_state() {
   assert_contains 'setup-time LaunchAgent bootstraps in user GUI domain' "$(cat "$launchctl_log")" 'bootstrap gui/'
   assert_contains 'setup-time LaunchAgent kickstarts selected service' "$(cat "$launchctl_log")" 'kickstart -k gui/'
   assert_contains 'setup-time LaunchAgent reports verified startup' "$output" 'Selected VM startup verified.'
+  assert_contains 'setup-time LaunchAgent records setup observation timestamp' "$(cat "$BASE_DIR/logs/vm/clawbox-startutmvm.out.log")" 'event=setup-observed-state state=running'
 
   HOME="$original_home"
   unset CLAWBOX_VM_AUTOSTART_SETUP_WAIT_ATTEMPTS CLAWBOX_VM_AUTOSTART_SETUP_WAIT_INTERVAL

@@ -85,6 +85,19 @@ launchagent_state_wait_interval() {
   printf '%s\n' "${CLAWBOX_VM_AUTOSTART_SETUP_WAIT_INTERVAL:-1}"
 }
 
+launchagent_timestamp_now() {
+  date +%s 2>/dev/null || printf '0'
+}
+
+launchagent_record_setup_observation() {
+  local observed_state="$1"
+
+  launchagent_init_paths
+  mkdir -p "$(dirname "$LAUNCHAGENT_STDOUT_LOG")" 2>/dev/null || true
+  printf '[INFO] trace time=%s event=setup-observed-state state=%s\n' \
+    "$(launchagent_timestamp_now)" "$observed_state" >>"$LAUNCHAGENT_STDOUT_LOG" 2>/dev/null || true
+}
+
 launchagent_read_start_state() {
   local line=''
   local key=''
@@ -138,9 +151,11 @@ launchagent_wait_for_start_state() {
     if launchagent_read_start_state; then
       case "$LAUNCHAGENT_START_STATE" in
         running)
+          launchagent_record_setup_observation "$LAUNCHAGENT_START_STATE"
           return 0
           ;;
         failed|skipped)
+          launchagent_record_setup_observation "$LAUNCHAGENT_START_STATE"
           return 1
           ;;
       esac
