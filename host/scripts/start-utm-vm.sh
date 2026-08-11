@@ -5,9 +5,10 @@ PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 VM_NAME="$1"
 VM_HOST="$2"
-max_attempts="${CLAWBOX_VM_AUTOSTART_MAX_ATTEMPTS:-10}"
+max_attempts="${CLAWBOX_VM_AUTOSTART_MAX_ATTEMPTS:-14}"
 start_request_attempts="${CLAWBOX_VM_AUTOSTART_START_ATTEMPTS:-3}"
 initial_delay="${CLAWBOX_VM_AUTOSTART_INITIAL_DELAY:-0}"
+post_start_poll_interval="${CLAWBOX_VM_AUTOSTART_POST_START_POLL_INTERVAL:-0.5}"
 state_file="${CLAWBOX_VM_AUTOSTART_STATE_FILE:-$HOME/Library/Application Support/ClawBox/state/start-utm-vm.status}"
 attempt=1
 
@@ -250,7 +251,7 @@ fi
 while [ "$attempt" -le "$start_request_attempts" ]; do
   log_info "VM start request attempt $attempt/$start_request_attempts"
   request_vm_start
-  sleep_cmd 3
+  sleep_cmd "$post_start_poll_interval"
 
   if vm_is_running; then
     if vm_is_reachable_via_ssh; then

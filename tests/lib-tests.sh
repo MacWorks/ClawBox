@@ -2704,16 +2704,16 @@ test_launchagent_module() {
     fail "launchagent wrapper should use non interactive SSH fallback detection"
   fi
 
-  if [ -f "$wrapper_path" ] && grep -Fq 'max_attempts=' "$wrapper_path" && grep -Fq 'sleep_cmd 2' "$wrapper_path"; then
+  if [ -f "$wrapper_path" ] && grep -Fq 'max_attempts="${CLAWBOX_VM_AUTOSTART_MAX_ATTEMPTS:-14}"' "$wrapper_path" && grep -Fq 'sleep_cmd 2' "$wrapper_path"; then
     pass "launchagent wrapper retries VM state checks before giving up"
   else
     fail "launchagent wrapper should retry VM state checks before giving up"
   fi
 
-  if [ -f "$wrapper_path" ] && grep -Fq 'sleep_cmd 3' "$wrapper_path" && grep -Fq 'SSH not yet available for $VM_HOST' "$wrapper_path"; then
-    pass "launchagent wrapper delays briefly after startup and logs SSH retry status"
+  if [ -f "$wrapper_path" ] && grep -Fq 'post_start_poll_interval="${CLAWBOX_VM_AUTOSTART_POST_START_POLL_INTERVAL:-0.5}"' "$wrapper_path" && grep -Fq 'sleep_cmd "$post_start_poll_interval"' "$wrapper_path"; then
+    pass "launchagent wrapper polls promptly after startup requests"
   else
-    fail "launchagent wrapper should delay briefly after startup and log SSH retry status"
+    fail "launchagent wrapper should poll promptly after startup requests"
   fi
 
   if [ -f "$wrapper_path" ] \
@@ -2995,6 +2995,7 @@ test_launchagent_wrapper_retries_and_verifies_runtime_before_success() {
   local mock_dir="$TEMP_DIR/launchagent-retry-bin"
   local start_count_file="$TEMP_DIR/launchagent-start-count.txt"
   local osascript_log="$TEMP_DIR/launchagent-retry-osascript.log"
+  local sleep_log="$TEMP_DIR/launchagent-retry-sleep.log"
   local output=''
 
   mkdir -p "$mock_dir"
@@ -3034,6 +3035,7 @@ exit 255
 EOF
   cat > "$mock_dir/sleep" <<'EOF'
 #!/bin/bash
+printf '%s\n' "$*" >> "$CLAWBOX_TEST_SLEEP_LOG"
 exit 0
 EOF
   chmod +x "$mock_dir/utmctl" "$mock_dir/osascript" "$mock_dir/ssh" "$mock_dir/sleep"
@@ -3045,6 +3047,7 @@ EOF
     CLAWBOX_SLEEP_BIN="$mock_dir/sleep" \
     CLAWBOX_TEST_START_COUNT_FILE="$start_count_file" \
     CLAWBOX_TEST_OSASCRIPT_LOG="$osascript_log" \
+    CLAWBOX_TEST_SLEEP_LOG="$sleep_log" \
     CLAWBOX_VM_AUTOSTART_START_ATTEMPTS=3 \
     CLAWBOX_VM_AUTOSTART_MAX_ATTEMPTS=1 \
     "$wrapper" 'Test VM' 'tester@192.168.64.6' 2>&1
@@ -3084,6 +3087,18 @@ EOF
     pass 'launchagent wrapper does not invoke AppleScript after successful utmctl startup'
   else
     fail 'launchagent wrapper should not invoke AppleScript after successful utmctl startup'
+  fi
+
+  if grep -Fq '0.5' "$sleep_log"; then
+    pass 'launchagent wrapper uses the short post-start poll interval'
+  else
+    fail 'launchagent wrapper should use the short post-start poll interval'
+  fi
+
+  if ! grep -Fq '3' "$sleep_log"; then
+    pass 'launchagent wrapper avoids the old fixed three-second post-start delay'
+  else
+    fail 'launchagent wrapper should avoid the old fixed three-second post-start delay'
   fi
 }
 
