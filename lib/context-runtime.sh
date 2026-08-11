@@ -18,6 +18,97 @@ clawbox_bool_enabled() {
   esac
 }
 
+llama_default_context_window() {
+  printf '32768\n'
+}
+
+llama_context_safe_default() {
+  local current_value="${1:-}"
+  local native_context="${2:-}"
+  local fallback_value="${3:-$(llama_default_context_window)}"
+  local default_value="$fallback_value"
+
+  if clawbox_positive_integer "$current_value"; then
+    default_value="$current_value"
+  fi
+
+  if clawbox_positive_integer "$native_context" \
+    && clawbox_positive_integer "$default_value" \
+    && [ "$default_value" -gt "$native_context" ]
+  then
+    default_value="$native_context"
+  fi
+
+  REPLY="$default_value"
+}
+
+llama_context_validate_value() {
+  local context_value="$1"
+  local native_context="${2:-}"
+  local max_tokens_value="${3:-${OPENCLAW_MAX_TOKENS:-8192}}"
+  local source_label="${4:-configuration}"
+
+  if command -v validate_openclaw_token_context_values >/dev/null 2>&1; then
+    if ! validate_openclaw_token_context_values "$context_value" "$max_tokens_value" "$source_label"; then
+      return 1
+    fi
+  else
+    if ! clawbox_positive_integer "$context_value"; then
+      error "Invalid LLAMA_CTX value in $source_label: $context_value"
+      error 'Set LLAMA_CTX to a positive integer greater than OPENCLAW_MAX_TOKENS.'
+      return 1
+    fi
+    if ! clawbox_positive_integer "$max_tokens_value"; then
+      error "Invalid OPENCLAW_MAX_TOKENS value in $source_label: $max_tokens_value"
+      error 'Set OPENCLAW_MAX_TOKENS to a positive integer less than LLAMA_CTX.'
+      return 1
+    fi
+    if [ "$max_tokens_value" -ge "$context_value" ]; then
+      error "Invalid OpenClaw token configuration in $source_label: OPENCLAW_MAX_TOKENS=$max_tokens_value must be less than LLAMA_CTX=$context_value."
+      error 'Increase LLAMA_CTX or lower OPENCLAW_MAX_TOKENS, then rerun ./clawbox setup.'
+      return 1
+    fi
+  fi
+
+  if clawbox_positive_integer "$native_context" && [ "$context_value" -gt "$native_context" ]; then
+    error "Invalid LLAMA_CTX value in $source_label: $context_value exceeds model native context $native_context."
+    error 'Choose a value less than or equal to the selected model native context.'
+    return 1
+  fi
+
+  return 0
+}
+
+llama_context_prompt_value() {
+  local current_value="${1:-}"
+  local native_context="${2:-}"
+  local max_tokens_value="${3:-${OPENCLAW_MAX_TOKENS:-8192}}"
+  local source_label="${4:-setup input}"
+  local default_value=''
+
+  llama_context_safe_default "$current_value" "$native_context" "$(llama_default_context_window)"
+  default_value="$REPLY"
+
+  while true; do
+    prompt_with_default 'Context size for llama-server' "$default_value" || return $?
+    if llama_context_validate_value "$REPLY" "$native_context" "$max_tokens_value" "$source_label"; then
+      return 0
+    fi
+  done
+}
+
+llama_context_resolve_noninteractive() {
+  local current_value="${1:-}"
+  local native_context="${2:-}"
+  local max_tokens_value="${3:-${OPENCLAW_MAX_TOKENS:-8192}}"
+  local source_label="${4:-configuration}"
+
+  llama_context_safe_default "$current_value" "$native_context" "$(llama_default_context_window)"
+  if ! llama_context_validate_value "$REPLY" "$native_context" "$max_tokens_value" "$source_label"; then
+    return 1
+  fi
+}
+
 openclaw_default_provider_timeout_seconds() {
   printf '1800\n'
 }

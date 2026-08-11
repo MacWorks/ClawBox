@@ -321,9 +321,13 @@ ensure_env_bootstrap() {
   if [ "$LLAMA_USE_EXISTING_INSTANCE" = true ]; then
     configured_or_default 'OPENCLAW_MAX_TOKENS' "${OPENCLAW_MAX_TOKENS:-}" '8192'
     openclaw_max_tokens_value="$REPLY"
-    configured_or_default 'LLAMA_CTX' "${LLAMA_CTX:-}" "${native_context_value:-32768}"
-    llama_ctx_value="$REPLY"
-    validate_openclaw_token_context_values "$llama_ctx_value" "$openclaw_max_tokens_value" 'setup input' || return $?
+    if [ "$llama_section_needed" = true ]; then
+      llama_context_prompt_value "${LLAMA_CTX:-}" "$native_context_value" "$openclaw_max_tokens_value" 'setup input' || return $?
+      llama_ctx_value="$REPLY"
+    else
+      llama_context_resolve_noninteractive "${LLAMA_CTX:-}" "$native_context_value" "$openclaw_max_tokens_value" '.env' || return $?
+      llama_ctx_value="$REPLY"
+    fi
     llama_bin_value="$llama_bin_default"
     if [ "${LLAMA_EXTERNAL:-false}" = true ] && [ -n "${LLAMA_BASE_URL:-}" ]; then
       llama_base_url_value="$LLAMA_BASE_URL"
@@ -333,13 +337,8 @@ ensure_env_bootstrap() {
   else
     configured_or_default 'OPENCLAW_MAX_TOKENS' "${OPENCLAW_MAX_TOKENS:-}" '8192'
     openclaw_max_tokens_value="$REPLY"
-    prompt_llama_context_for_openclaw "${LLAMA_CTX:-}" "${native_context_value:-32768}" "$openclaw_max_tokens_value"
+    prompt_llama_context_for_openclaw "${LLAMA_CTX:-}" "$native_context_value" "$openclaw_max_tokens_value"
     llama_ctx_value="$REPLY"
-    if [ -n "$native_context_value" ] && [ "$llama_ctx_value" -gt "$native_context_value" ] 2>/dev/null; then
-      warn "Configured LLAMA_CTX=$llama_ctx_value exceeds model native context $native_context_value."
-      prompt_yes_no 'Use this larger context anyway?' 'n'
-      is_yes "$REPLY" || return "$LLAMA_EXIT_GRACEFUL"
-    fi
 
     llama_bin_value="$llama_bin_default"
     llama_capture_status resolve_configured_llama_bin "$llama_bin_value"
