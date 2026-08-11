@@ -345,7 +345,7 @@ offer_selected_vm_start_recovery_before_network_setup() {
 }
 
 start_selected_vm_for_setup() {
-  if command -v launchagent_start_selected_vm_for_setup >/dev/null 2>&1; then
+  if [ -z "${VM_HOST:-}" ] && command -v launchagent_start_selected_vm_for_setup >/dev/null 2>&1; then
     launchagent_start_selected_vm_for_setup
     return $?
   fi
@@ -366,6 +366,17 @@ ensure_selected_vm_started_before_network_setup() {
   local selected_runtime_state='unknown'
 
   [ -n "${VM_MACHINE_NAME:-}" ] || return 0
+
+  if command -v launchagent_start_selected_vm_for_setup >/dev/null 2>&1; then
+    out "Starting selected VM: ${VM_MACHINE_NAME:-configured VM}"
+    if start_selected_vm_for_setup; then
+      return 0
+    fi
+
+    warn 'ClawBox could not confirm that the selected VM started.'
+    offer_selected_vm_start_recovery_before_network_setup
+    return $?
+  fi
 
   if setup_selected_vm_runtime_state; then
     selected_runtime_state="$REPLY"

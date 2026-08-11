@@ -1633,8 +1633,8 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
       printf 'EVENT:select-vm:%s\n' "$1"
     }
     setup_selected_vm_runtime_state() {
-      REPLY='stopped'
-      return 0
+      printf 'EVENT:unexpected-direct-state-check\n'
+      return 1
     }
     launchagent_start_selected_vm_for_setup() {
       printf 'EVENT:start-selected-vm-with-launchagent:%s\n' "$VM_MACHINE_NAME"
@@ -1659,6 +1659,7 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
 
   assert_contains 'fresh setup selected vm path prompts for detected VM' "$output" 'Use this VM? [Y/n]:'
   assert_contains 'fresh setup starts selected VM through LaunchAgent before network config' "$output" 'EVENT:start-selected-vm-with-launchagent:macOS'
+  assert_not_contains 'fresh setup does not run direct UTM state check before LaunchAgent' "$output" 'EVENT:unexpected-direct-state-check'
   assert_not_contains 'fresh setup does not bypass LaunchAgent with direct UTM start' "$output" 'EVENT:unexpected-direct-utm-start'
   assert_contains 'fresh setup attempts IP discovery after VM startup' "$output" 'EVENT:ip-discovery-after-start:macOS'
   assert_contains 'fresh setup still reaches VM IP prompt after runtime verification' "$output" 'Enter VM IP address'
@@ -2045,8 +2046,10 @@ test_fresh_setup_bad_ip_uses_guided_recovery_without_manual_ssh_dead_end() {
       REPLY="$1"
     }
     setup_selected_vm_runtime_state() {
-      REPLY='running'
-      VM_RUNNING_STATE_CONFIDENCE='exact'
+      fail 'fresh bad-ip setup should not use direct UTM state checks before LaunchAgent startup assurance'
+      return 1
+    }
+    launchagent_start_selected_vm_for_setup() {
       return 0
     }
     ssh_check() {

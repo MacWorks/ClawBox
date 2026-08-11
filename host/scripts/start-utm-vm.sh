@@ -253,6 +253,10 @@ start_with_applescript() {
 
 request_vm_start() {
   start_with_utmctl && return 0
+  if vm_is_running_with_context 'post-utmctl-start-failure'; then
+    log_info "VM is already running after utmctl start response: $VM_NAME"
+    return 0
+  fi
   start_with_applescript && return 0
   return 1
 }

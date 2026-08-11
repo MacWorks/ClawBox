@@ -3108,6 +3108,68 @@ EOF
   fi
 }
 
+test_launchagent_wrapper_normalizes_failed_start_when_vm_is_already_running() {
+  local wrapper="$ROOT_DIR/host/scripts/start-utm-vm.sh"
+  local mock_dir="$TEMP_DIR/launchagent-already-running-bin"
+  local osascript_log="$TEMP_DIR/launchagent-already-running-osascript.log"
+  local output=''
+  local status=0
+
+  mkdir -p "$mock_dir"
+  cat > "$mock_dir/utmctl" <<'EOF'
+#!/bin/bash
+case "$1" in
+  start)
+    printf 'Error: Virtual machine is already running.\n' >&2
+    exit 1
+    ;;
+  list)
+    printf 'UUID                                 Status   Name\n'
+    printf '11111111-2222-3333-4444-555555555555 running  Test VM\n'
+    exit 0
+    ;;
+esac
+exit 1
+EOF
+  cat > "$mock_dir/osascript" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$*" >> "$CLAWBOX_TEST_OSASCRIPT_LOG"
+exit 1
+EOF
+  cat > "$mock_dir/ssh" <<'EOF'
+#!/bin/bash
+exit 255
+EOF
+  cat > "$mock_dir/sleep" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+  chmod +x "$mock_dir/utmctl" "$mock_dir/osascript" "$mock_dir/ssh" "$mock_dir/sleep"
+
+  set +e
+  output="$(
+    CLAWBOX_UTMCTL_BIN="$mock_dir/utmctl" \
+    CLAWBOX_OSASCRIPT_BIN="$mock_dir/osascript" \
+    CLAWBOX_SSH_BIN="$mock_dir/ssh" \
+    CLAWBOX_SLEEP_BIN="$mock_dir/sleep" \
+    CLAWBOX_TEST_OSASCRIPT_LOG="$osascript_log" \
+    CLAWBOX_VM_AUTOSTART_START_ATTEMPTS=1 \
+    CLAWBOX_VM_AUTOSTART_MAX_ATTEMPTS=1 \
+    "$wrapper" 'Test VM' '' 2>&1
+  )"
+  status=$?
+  set -e
+
+  assert_equals 'launchagent wrapper treats failed start plus running verification as success' "$status" '0'
+  assert_contains 'launchagent wrapper verifies running state after failed start response' "$output" 'VM is already running after utmctl start response: Test VM'
+
+  if [ ! -s "$osascript_log" ]; then
+    pass 'launchagent wrapper does not fall back to AppleScript when post-start verification succeeds'
+  else
+    fail 'launchagent wrapper should not fall back to AppleScript when post-start verification succeeds'
+  fi
+}
+
 test_launchagent_wrapper_uses_ssh_reachability_as_success_signal() {
   local wrapper="$ROOT_DIR/host/scripts/start-utm-vm.sh"
   local mock_dir="$TEMP_DIR/launchagent-ssh-bin"
@@ -6410,6 +6472,7 @@ run_test test_launchagent_module
 run_test test_launchagent_wrapper_logs_tcc_denial
 run_test test_launchagent_wrapper_returns_failure_when_vm_never_starts
 run_test test_launchagent_wrapper_retries_and_verifies_runtime_before_success
+run_test test_launchagent_wrapper_normalizes_failed_start_when_vm_is_already_running
 run_test test_launchagent_wrapper_uses_ssh_reachability_as_success_signal
 run_test test_launchagent_wrapper_supports_start_only_without_vm_host
 run_test test_launchagent_setup_start_waits_for_wrapper_state
