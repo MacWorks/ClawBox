@@ -7,7 +7,7 @@ VM_NAME="$1"
 VM_HOST="$2"
 max_attempts="${CLAWBOX_VM_AUTOSTART_MAX_ATTEMPTS:-10}"
 start_request_attempts="${CLAWBOX_VM_AUTOSTART_START_ATTEMPTS:-3}"
-initial_delay="${CLAWBOX_VM_AUTOSTART_INITIAL_DELAY:-10}"
+initial_delay="${CLAWBOX_VM_AUTOSTART_INITIAL_DELAY:-0}"
 state_file="${CLAWBOX_VM_AUTOSTART_STATE_FILE:-$HOME/Library/Application Support/ClawBox/state/start-utm-vm.status}"
 attempt=1
 

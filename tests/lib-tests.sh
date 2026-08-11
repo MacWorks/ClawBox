@@ -3136,6 +3136,7 @@ test_launchagent_wrapper_supports_start_only_without_vm_host() {
   local wrapper="$ROOT_DIR/host/scripts/start-utm-vm.sh"
   local mock_dir="$TEMP_DIR/launchagent-start-only-bin"
   local ssh_log="$TEMP_DIR/launchagent-start-only-ssh.log"
+  local sleep_log="$TEMP_DIR/launchagent-start-only-sleep.log"
   local state_file="$TEMP_DIR/launchagent-start-only.status"
   local output=''
 
@@ -3165,6 +3166,7 @@ exit 0
 EOF
   cat > "$mock_dir/sleep" <<'EOF'
 #!/bin/bash
+printf '%s\n' "$*" >> "$CLAWBOX_TEST_SLEEP_LOG"
 exit 0
 EOF
   chmod +x "$mock_dir/utmctl" "$mock_dir/osascript" "$mock_dir/ssh" "$mock_dir/sleep"
@@ -3175,8 +3177,8 @@ EOF
     CLAWBOX_SSH_BIN="$mock_dir/ssh" \
     CLAWBOX_SLEEP_BIN="$mock_dir/sleep" \
     CLAWBOX_TEST_SSH_LOG="$ssh_log" \
+    CLAWBOX_TEST_SLEEP_LOG="$sleep_log" \
     CLAWBOX_VM_AUTOSTART_STATE_FILE="$state_file" \
-    CLAWBOX_VM_AUTOSTART_INITIAL_DELAY=0 \
     "$wrapper" 'Test VM' '' 2>&1
   )"
 
@@ -3187,6 +3189,12 @@ EOF
     pass 'launchagent start-only mode does not probe SSH without VM_HOST'
   else
     fail 'launchagent start-only mode should not probe SSH without VM_HOST'
+  fi
+
+  if [ ! -s "$sleep_log" ]; then
+    pass 'launchagent wrapper does not use an unconditional startup delay by default'
+  else
+    fail 'launchagent wrapper should not sleep before checking VM state by default'
   fi
 
   assert_contains 'launchagent start-only mode records running state' "$(cat "$state_file")" 'state=running'

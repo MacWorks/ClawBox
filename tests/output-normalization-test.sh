@@ -1585,6 +1585,7 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
   local env_file="$TEMP_DIR/fresh-selected-vm-start.env"
   local status=0
   local start_line=0
+  local discovery_line=0
   local ip_prompt_line=0
 
   output="$({
@@ -1638,6 +1639,10 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
       printf 'EVENT:start-selected-vm-with-launchagent:%s\n' "$VM_MACHINE_NAME"
       return 0
     }
+    utmctl_vm_ip_candidates() {
+      printf 'EVENT:ip-discovery-after-start:%s\n' "$VM_MACHINE_NAME"
+      return 1
+    }
     start_vm_with_utm() {
       printf 'EVENT:unexpected-direct-utm-start\n'
       return 1
@@ -1654,19 +1659,183 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
   assert_contains 'fresh setup selected vm path prompts for detected VM' "$output" 'Use this VM? [Y/n]:'
   assert_contains 'fresh setup starts selected VM through LaunchAgent before network config' "$output" 'EVENT:start-selected-vm-with-launchagent:macOS'
   assert_not_contains 'fresh setup does not bypass LaunchAgent with direct UTM start' "$output" 'EVENT:unexpected-direct-utm-start'
+  assert_contains 'fresh setup attempts IP discovery after VM startup' "$output" 'EVENT:ip-discovery-after-start:macOS'
   assert_contains 'fresh setup still reaches VM IP prompt after runtime verification' "$output" 'Enter VM IP address'
   assert_contains 'fresh setup continues connectivity after VM settings' "$output" 'EVENT:connectivity-after:tester@192.168.64.250'
 
   start_line="$(printf '%s\n' "$output" | awk '/EVENT:start-selected-vm-with-launchagent/ { print NR; exit }')"
   ip_prompt_line="$(printf '%s\n' "$output" | awk '/Enter VM IP address/ { print NR; exit }')"
+  discovery_line="$(printf '%s\n' "$output" | awk '/EVENT:ip-discovery-after-start/ { print NR; exit }')"
   if [ -n "$start_line" ] && [ -n "$ip_prompt_line" ] && [ "$start_line" -lt "$ip_prompt_line" ]; then
     pass 'fresh setup starts selected VM before prompting for VM IP'
   else
     fail 'fresh setup should start selected VM before prompting for VM IP'
   fi
+  if [ -n "$start_line" ] && [ -n "$discovery_line" ] && [ "$start_line" -lt "$discovery_line" ]; then
+    pass 'fresh setup verifies selected VM before IP discovery'
+  else
+    fail 'fresh setup should verify selected VM before IP discovery'
+  fi
+  if [ -n "$discovery_line" ] && [ -n "$ip_prompt_line" ] && [ "$discovery_line" -lt "$ip_prompt_line" ]; then
+    pass 'fresh setup attempts automatic IP discovery before manual IP prompt'
+  else
+    fail 'fresh setup should attempt automatic IP discovery before manual IP prompt'
+  fi
 
   status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
   assert_equals 'fresh setup selected VM start flow succeeds' "$status" '0'
+}
+
+test_fresh_setup_uses_single_discovered_vm_ip_without_manual_prompt() {
+  local output
+  local env_file="$TEMP_DIR/fresh-single-discovered-ip.env"
+  local status=0
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    queue_prompt_answers \
+      'y' \
+      'tester' \
+      '/Users/tester'
+
+    ENV_FILE="$env_file"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    VM_REPAIR_MODE=true
+    HOST_IP='192.168.64.1'
+    VM_IP=''
+    VM_USER=''
+    VM_USER_PATH=''
+    VM_HOST=''
+    VM_RUNTIME_PATH=''
+    VM_MACHINE_NAME=''
+    LLAMA_BIN=''
+    LLAMA_HOST=''
+    LLAMA_PORT=''
+    LLAMA_CTX=''
+    LLAMA_BASE_URL=''
+    MODEL_PATH=''
+    FIREWALL_SHARED_SUBNET=''
+    OPENCLAW_PROVIDER_NAME=''
+    OPENCLAW_DEFAULT_MODEL=''
+    OPENCLAW_AUTOSTART=''
+
+    list_detected_utm_vm_names() {
+      printf 'macOS\n'
+    }
+    select_utm_vm_identity() {
+      VM_UTM_PATH="$TEMP_DIR/macOS.utm"
+      REPLY="$1"
+    }
+    setup_selected_vm_runtime_state() {
+      REPLY='stopped'
+      return 0
+    }
+    launchagent_start_selected_vm_for_setup() {
+      printf 'EVENT:vm-started:%s\n' "$VM_MACHINE_NAME"
+      return 0
+    }
+    utmctl_vm_ip_candidates() {
+      REPLY='192.168.64.6'
+      return 0
+    }
+    ensure_vm_connectivity_or_repair() {
+      printf 'EVENT:connectivity-after:%s\n' "$VM_HOST"
+      return 0
+    }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'STATUS:%s\n' "$?"
+    printf 'FINAL_VM_HOST:%s\n' "$VM_HOST"
+  } 2>&1)"
+
+  status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
+
+  assert_contains 'fresh single IP flow detects VM IP' "$output" 'Detected VM IP: 192.168.64.6'
+  assert_contains 'fresh single IP flow uses discovered VM host' "$output" 'FINAL_VM_HOST:tester@192.168.64.6'
+  assert_contains 'fresh single IP flow reaches connectivity with discovered VM host' "$output" 'EVENT:connectivity-after:tester@192.168.64.6'
+  assert_not_contains 'fresh single IP flow does not ask user to retype discovered IP' "$output" 'Enter VM IP address'
+  assert_equals 'fresh single IP flow succeeds' "$status" '0'
+}
+
+test_fresh_setup_multiple_discovered_vm_ips_offer_manual_choice() {
+  local output
+  local env_file="$TEMP_DIR/fresh-multiple-discovered-ip.env"
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    queue_prompt_answers \
+      'y' \
+      '3' \
+      '192.168.64.8' \
+      'tester' \
+      '/Users/tester'
+
+    ENV_FILE="$env_file"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    VM_REPAIR_MODE=true
+    HOST_IP='192.168.64.1'
+    VM_IP=''
+    VM_USER=''
+    VM_USER_PATH=''
+    VM_HOST=''
+    VM_RUNTIME_PATH=''
+    VM_MACHINE_NAME=''
+    LLAMA_BIN=''
+    LLAMA_HOST=''
+    LLAMA_PORT=''
+    LLAMA_CTX=''
+    LLAMA_BASE_URL=''
+    MODEL_PATH=''
+    FIREWALL_SHARED_SUBNET=''
+    OPENCLAW_PROVIDER_NAME=''
+    OPENCLAW_DEFAULT_MODEL=''
+    OPENCLAW_AUTOSTART=''
+
+    list_detected_utm_vm_names() {
+      printf 'macOS\n'
+    }
+    select_utm_vm_identity() {
+      VM_UTM_PATH="$TEMP_DIR/macOS.utm"
+      REPLY="$1"
+    }
+    setup_selected_vm_runtime_state() {
+      REPLY='stopped'
+      return 0
+    }
+    launchagent_start_selected_vm_for_setup() {
+      return 0
+    }
+    utmctl_vm_ip_candidates() {
+      REPLY='192.168.64.6
+192.168.64.7'
+      return 0
+    }
+    ensure_vm_connectivity_or_repair() {
+      printf 'EVENT:connectivity-after:%s\n' "$VM_HOST"
+      return 0
+    }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'FINAL_VM_HOST:%s\n' "$VM_HOST"
+  } 2>&1)"
+
+  assert_contains 'fresh multiple IP flow reports candidates heading' "$output" 'Detected possible VM IP addresses:'
+  assert_contains 'fresh multiple IP flow lists first candidate' "$output" '1) 192.168.64.6'
+  assert_contains 'fresh multiple IP flow lists second candidate' "$output" '2) 192.168.64.7'
+  assert_contains 'fresh multiple IP flow offers manual entry option' "$output" '3) Enter an IP address manually'
+  assert_contains 'fresh multiple IP flow accepts manual choice' "$output" 'FINAL_VM_HOST:tester@192.168.64.8'
 }
 
 test_fresh_setup_launchagent_start_failure_stays_before_network_prompts() {
@@ -4482,6 +4651,8 @@ run_test test_ensure_env_bootstrap_fast_path_retry_stays_in_setup
 run_test test_setup_preserves_explicit_external_llama_base_url
 run_test test_ensure_env_bootstrap_repair_mode_skips_model_llama_and_openclaw_sections
 run_test test_fresh_setup_starts_selected_vm_before_network_prompts
+run_test test_fresh_setup_uses_single_discovered_vm_ip_without_manual_prompt
+run_test test_fresh_setup_multiple_discovered_vm_ips_offer_manual_choice
 run_test test_fresh_setup_launchagent_start_failure_stays_before_network_prompts
 run_test test_fresh_setup_bad_ip_uses_guided_recovery_without_manual_ssh_dead_end
 run_test test_ensure_env_bootstrap_requires_tty_when_setup_is_needed

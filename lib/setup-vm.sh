@@ -471,6 +471,116 @@ resolve_vm_machine_name_value() {
   done
 }
 
+count_vm_ip_candidates() {
+  local candidates="$1"
+  local candidate_ip=''
+  local count=0
+
+  while IFS= read -r candidate_ip; do
+    [ -n "$candidate_ip" ] || continue
+    count=$((count + 1))
+  done <<EOF
+$candidates
+EOF
+
+  printf '%s\n' "$count"
+}
+
+choose_discovered_vm_ip_candidate() {
+  local candidates="$1"
+  local candidate_count=''
+  local candidate_ip=''
+  local option_number=1
+  local manual_option_number=0
+  local selected_option=''
+
+  candidate_count="$(count_vm_ip_candidates "$candidates")"
+
+  if [ "$candidate_count" -eq 1 ]; then
+    candidate_ip="$candidates"
+    status_end "Detected VM IP: $candidate_ip ✓" 'progress'
+    REPLY="$candidate_ip"
+    return 0
+  fi
+
+  status_end 'VM IP discovery completed.' 'success'
+  menu_begin 'Detected possible VM IP addresses:'
+
+  while IFS= read -r candidate_ip; do
+    [ -n "$candidate_ip" ] || continue
+    outf '%s) %s' "$option_number" "$candidate_ip"
+    option_number=$((option_number + 1))
+  done <<EOF
+$candidates
+EOF
+
+  manual_option_number="$option_number"
+  outf '%s) Enter an IP address manually' "$manual_option_number"
+  menu_end
+
+  while true; do
+    prompt_with_suffix 'Select VM IP' "[1]"
+    selected_option="$REPLY"
+    [ -n "$selected_option" ] || selected_option='1'
+
+    if ! [[ "$selected_option" =~ ^[0-9]+$ ]]; then
+      error "Invalid selection. Enter a number between 1 and $manual_option_number."
+      continue
+    fi
+
+    if [ "$selected_option" -lt 1 ] || [ "$selected_option" -gt "$manual_option_number" ]; then
+      error "Invalid selection. Enter a number between 1 and $manual_option_number."
+      continue
+    fi
+
+    break
+  done
+
+  if [ "$selected_option" -eq "$manual_option_number" ]; then
+    REPLY=''
+    return 1
+  fi
+
+  option_number=1
+  while IFS= read -r candidate_ip; do
+    [ -n "$candidate_ip" ] || continue
+    if [ "$option_number" -eq "$selected_option" ]; then
+      REPLY="$candidate_ip"
+      return 0
+    fi
+    option_number=$((option_number + 1))
+  done <<EOF
+$candidates
+EOF
+
+  return 1
+}
+
+discover_vm_ip_before_manual_prompt() {
+  local vm_ip_default="$1"
+  local discovered_candidates=''
+
+  if ! command -v utmctl_vm_ip_candidates >/dev/null 2>&1; then
+    prompt_with_default 'Enter VM IP address' "$vm_ip_default"
+    return 0
+  fi
+
+  status_begin 'Detecting VM IP address...'
+  if utmctl_vm_ip_candidates; then
+    discovered_candidates="$REPLY"
+    if choose_discovered_vm_ip_candidate "$discovered_candidates"; then
+      return 0
+    fi
+    prompt_with_default 'Enter VM IP address' "$vm_ip_default"
+    return 0
+  fi
+
+  status_end 'VM IP discovery did not find a candidate.' 'warning'
+  out 'ClawBox could not automatically determine the VM IP address.'
+  prompt_with_default 'Enter VM IP address' "$vm_ip_default"
+  return 0
+}
+
 ensure_vm_connection_setup() {
   local vm_ip_default
   local vm_host_ip_default
@@ -493,7 +603,7 @@ ensure_vm_connection_setup() {
   parse_vm_user_from_host "${VM_HOST:-}"
   configured_or_default 'VM_USER' "${VM_USER:-}" "$REPLY"
   vm_user_default="$REPLY"
-  prompt_with_default 'Enter VM IP address' "$vm_ip_default"
+  discover_vm_ip_before_manual_prompt "$vm_ip_default"
   vm_ip_value="$REPLY"
   prompt_with_default 'Enter VM username (lowercase)' "$vm_user_default"
   vm_user_value="$REPLY"
