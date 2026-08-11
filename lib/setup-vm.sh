@@ -299,7 +299,7 @@ offer_selected_vm_start_recovery_before_network_setup() {
   while [ "$attempts" -lt "$max_attempts" ]; do
     blank_line
     out "The selected VM \"${VM_MACHINE_NAME:-configured VM}\" did not enter a running state."
-    print_utm_start_attempt_summary
+    print_selected_vm_start_attempt_summary
     blank_line
     out '1) Try starting the selected VM again'
     out '2) I started the VM manually; check again'
@@ -324,7 +324,7 @@ offer_selected_vm_start_recovery_before_network_setup() {
     case "$choice" in
       1)
         attempts=$((attempts + 1))
-        if start_vm_with_utm && wait_for_vm_running; then
+        if start_selected_vm_for_setup; then
           return 0
         fi
         ;;
@@ -344,6 +344,24 @@ offer_selected_vm_start_recovery_before_network_setup() {
   return "$LLAMA_EXIT_GRACEFUL"
 }
 
+start_selected_vm_for_setup() {
+  if command -v launchagent_start_selected_vm_for_setup >/dev/null 2>&1; then
+    launchagent_start_selected_vm_for_setup
+    return $?
+  fi
+
+  start_vm_with_utm && wait_for_vm_running
+}
+
+print_selected_vm_start_attempt_summary() {
+  if command -v launchagent_print_start_attempt_summary >/dev/null 2>&1; then
+    launchagent_print_start_attempt_summary
+    return 0
+  fi
+
+  print_utm_start_attempt_summary
+}
+
 ensure_selected_vm_started_before_network_setup() {
   local selected_runtime_state='unknown'
 
@@ -358,7 +376,7 @@ ensure_selected_vm_started_before_network_setup() {
   fi
 
   out "Starting selected VM: ${VM_MACHINE_NAME:-configured VM}"
-  if start_vm_with_utm && wait_for_vm_running; then
+  if start_selected_vm_for_setup; then
     return 0
   fi
 

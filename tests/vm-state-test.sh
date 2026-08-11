@@ -686,7 +686,7 @@ test_tcc_blocked_startup_can_continue_into_existing_readiness_flow() {
   ensure_vm_connectivity_or_repair > "$output_file" 2>&1 || status=$?
 
   assert_equals 'manual UTM startup confirmation can continue successfully' "$status" '0'
-  assert_contains 'manual UTM startup recovery identifies the selected vm' "$(cat "$output_file")" 'The selected VM "macOS" is not confirmed running.'
+  assert_contains 'manual UTM startup recovery identifies the selected vm' "$(cat "$output_file")" 'selected VM "macOS"'
   assert_contains 'manual UTM startup recovery offers manual check' "$(cat "$output_file")" '2) I started the VM manually; check again'
   assert_contains 'manual UTM startup recovery offers rediscovery' "$(cat "$output_file")" '3) Discover VM addresses again'
   assert_contains 'manual UTM startup recovery offers manual address entry' "$(cat "$output_file")" '4) Enter the VM address manually'

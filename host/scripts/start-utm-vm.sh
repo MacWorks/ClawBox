@@ -8,6 +8,7 @@ VM_HOST="$2"
 max_attempts="${CLAWBOX_VM_AUTOSTART_MAX_ATTEMPTS:-10}"
 start_request_attempts="${CLAWBOX_VM_AUTOSTART_START_ATTEMPTS:-3}"
 initial_delay="${CLAWBOX_VM_AUTOSTART_INITIAL_DELAY:-10}"
+state_file="${CLAWBOX_VM_AUTOSTART_STATE_FILE:-$HOME/Library/Application Support/ClawBox/state/start-utm-vm.status}"
 attempt=1
 
 log_info() {
@@ -20,6 +21,22 @@ log_warn() {
 
 log_error() {
   printf '[ERROR] %s\n' "$1" >&2
+}
+
+write_state() {
+  local state="$1"
+  local detail="$2"
+  local state_dir
+
+  state_dir="$(dirname "$state_file")"
+  mkdir -p "$state_dir" 2>/dev/null || true
+  {
+    printf 'state=%s\n' "$state"
+    printf 'vm=%s\n' "$VM_NAME"
+    printf 'host=%s\n' "$VM_HOST"
+    printf 'detail=%s\n' "$detail"
+    printf 'time=%s\n' "$(date +%s 2>/dev/null || printf '0')"
+  } >"$state_file" 2>/dev/null || true
 }
 
 command_path() {
@@ -207,11 +224,13 @@ request_vm_start() {
 
 if [ -z "$VM_NAME" ]; then
   log_warn 'VM name not provided; skipping UTM start.'
+  write_state 'skipped' 'VM name not provided.'
   exit 0
 fi
 
 log_info "ClawBox VM auto-start wrapper launched for VM: $VM_NAME"
 log_info "Configured VM SSH target: ${VM_HOST:-not configured}"
+write_state 'starting' 'Wrapper launched.'
 
 if [ "$initial_delay" -gt 0 ] 2>/dev/null; then
   log_info "Waiting briefly for the user GUI session and UTM services to become ready."
@@ -221,8 +240,10 @@ fi
 if vm_is_running; then
   if vm_is_reachable_via_ssh; then
     log_info "VM already reachable via SSH: $VM_HOST"
+    write_state 'running' "VM already reachable via SSH: $VM_HOST"
   else
     log_info "VM is already running: $VM_NAME"
+    write_state 'running' "VM already running: $VM_NAME"
   fi
   exit 0
 fi
@@ -235,8 +256,10 @@ while [ "$attempt" -le "$start_request_attempts" ]; do
   if vm_is_running; then
     if vm_is_reachable_via_ssh; then
       log_info "VM is reachable via SSH after startup attempt: $VM_HOST"
+      write_state 'running' "VM reachable via SSH after startup attempt: $VM_HOST"
     else
       log_info "VM is running after startup attempt: $VM_NAME"
+      write_state 'running' "VM running after startup attempt: $VM_NAME"
     fi
     exit 0
   fi
@@ -250,8 +273,10 @@ while [ "$attempt" -le "$max_attempts" ]; do
   if vm_is_running; then
     if vm_is_reachable_via_ssh; then
       log_info "VM is reachable via SSH after startup wait: $VM_HOST"
+      write_state 'running' "VM reachable via SSH after startup wait: $VM_HOST"
     else
       log_info "VM is running after startup wait: $VM_NAME"
+      write_state 'running' "VM running after startup wait: $VM_NAME"
     fi
     exit 0
   fi
@@ -266,4 +291,5 @@ while [ "$attempt" -le "$max_attempts" ]; do
 done
 
 log_warn "VM did not report running after startup attempts: $VM_NAME"
+write_state 'failed' "VM did not report running after startup attempts: $VM_NAME"
 exit 1

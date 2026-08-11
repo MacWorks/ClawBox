@@ -1634,13 +1634,13 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
       REPLY='stopped'
       return 0
     }
-    start_vm_with_utm() {
-      printf 'EVENT:start-selected-vm:%s\n' "$VM_MACHINE_NAME"
+    launchagent_start_selected_vm_for_setup() {
+      printf 'EVENT:start-selected-vm-with-launchagent:%s\n' "$VM_MACHINE_NAME"
       return 0
     }
-    wait_for_vm_running() {
-      printf 'EVENT:verify-selected-vm-running\n'
-      return 0
+    start_vm_with_utm() {
+      printf 'EVENT:unexpected-direct-utm-start\n'
+      return 1
     }
     ensure_vm_connectivity_or_repair() {
       printf 'EVENT:connectivity-after:%s\n' "$VM_HOST"
@@ -1652,12 +1652,12 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
   } 2>&1)"
 
   assert_contains 'fresh setup selected vm path prompts for detected VM' "$output" 'Use this VM? [Y/n]:'
-  assert_contains 'fresh setup starts selected VM before network config' "$output" 'EVENT:start-selected-vm:macOS'
-  assert_contains 'fresh setup verifies selected VM runtime before network config' "$output" 'EVENT:verify-selected-vm-running'
+  assert_contains 'fresh setup starts selected VM through LaunchAgent before network config' "$output" 'EVENT:start-selected-vm-with-launchagent:macOS'
+  assert_not_contains 'fresh setup does not bypass LaunchAgent with direct UTM start' "$output" 'EVENT:unexpected-direct-utm-start'
   assert_contains 'fresh setup still reaches VM IP prompt after runtime verification' "$output" 'Enter VM IP address'
   assert_contains 'fresh setup continues connectivity after VM settings' "$output" 'EVENT:connectivity-after:tester@192.168.64.250'
 
-  start_line="$(printf '%s\n' "$output" | awk '/EVENT:start-selected-vm/ { print NR; exit }')"
+  start_line="$(printf '%s\n' "$output" | awk '/EVENT:start-selected-vm-with-launchagent/ { print NR; exit }')"
   ip_prompt_line="$(printf '%s\n' "$output" | awk '/Enter VM IP address/ { print NR; exit }')"
   if [ -n "$start_line" ] && [ -n "$ip_prompt_line" ] && [ "$start_line" -lt "$ip_prompt_line" ]; then
     pass 'fresh setup starts selected VM before prompting for VM IP'
@@ -1667,6 +1667,75 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
 
   status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
   assert_equals 'fresh setup selected VM start flow succeeds' "$status" '0'
+}
+
+test_fresh_setup_launchagent_start_failure_stays_before_network_prompts() {
+  local output
+  local env_file="$TEMP_DIR/fresh-selected-vm-start-failure.env"
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    queue_prompt_answers \
+      'y' \
+      '3'
+
+    ENV_FILE="$env_file"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    VM_REPAIR_MODE=true
+    HOST_IP=''
+    VM_IP=''
+    VM_USER=''
+    VM_USER_PATH=''
+    VM_HOST=''
+    VM_RUNTIME_PATH=''
+    VM_MACHINE_NAME=''
+    LLAMA_BIN=''
+    LLAMA_HOST=''
+    LLAMA_PORT=''
+    LLAMA_CTX=''
+    LLAMA_BASE_URL=''
+    MODEL_PATH=''
+    FIREWALL_SHARED_SUBNET=''
+    OPENCLAW_PROVIDER_NAME=''
+    OPENCLAW_DEFAULT_MODEL=''
+    OPENCLAW_AUTOSTART=''
+
+    list_detected_utm_vm_names() {
+      printf 'macOS\n'
+    }
+    select_utm_vm_identity() {
+      VM_UTM_PATH="$TEMP_DIR/macOS.utm"
+      REPLY="$1"
+    }
+    setup_selected_vm_runtime_state() {
+      REPLY='stopped'
+      return 0
+    }
+    launchagent_start_selected_vm_for_setup() {
+      printf 'EVENT:launchagent-start-failed:%s\n' "$VM_MACHINE_NAME"
+      return 1
+    }
+    launchagent_print_start_attempt_summary() {
+      out 'VM startup service state: failed'
+      out 'VM startup detail: utmctl output: Error: Virtual machine not found.'
+    }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'STATUS:%s\n' "$?"
+  } 2>&1)"
+
+  assert_contains 'fresh setup failed LaunchAgent start reports selected VM' "$output" 'EVENT:launchagent-start-failed:macOS'
+  assert_contains 'fresh setup failed LaunchAgent start surfaces wrapper evidence' "$output" 'VM startup detail: utmctl output: Error: Virtual machine not found.'
+  assert_contains 'fresh setup failed LaunchAgent start offers retry' "$output" '1) Try starting the selected VM again'
+  assert_contains 'fresh setup failed LaunchAgent start offers manual-check recovery' "$output" '2) I started the VM manually; check again'
+  assert_not_contains 'fresh setup failed LaunchAgent start does not enter IP prompt' "$output" 'Enter VM IP address'
+  assert_not_contains 'fresh setup failed LaunchAgent start does not enter Manual SSH Setup' "$output" ' > Manual SSH Setup'
 }
 
 test_fresh_setup_bad_ip_uses_guided_recovery_without_manual_ssh_dead_end() {
@@ -4413,6 +4482,7 @@ run_test test_ensure_env_bootstrap_fast_path_retry_stays_in_setup
 run_test test_setup_preserves_explicit_external_llama_base_url
 run_test test_ensure_env_bootstrap_repair_mode_skips_model_llama_and_openclaw_sections
 run_test test_fresh_setup_starts_selected_vm_before_network_prompts
+run_test test_fresh_setup_launchagent_start_failure_stays_before_network_prompts
 run_test test_fresh_setup_bad_ip_uses_guided_recovery_without_manual_ssh_dead_end
 run_test test_ensure_env_bootstrap_requires_tty_when_setup_is_needed
 run_test test_vm_platform_check_without_utm_flow

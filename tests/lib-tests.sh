@@ -2776,7 +2776,7 @@ test_launchagent_module() {
     fail "launchagent plist content should remain stable across runs"
   fi
 
-  if [ -f "$launchctl_log" ] && [ "$(wc -l < "$launchctl_log")" -eq 2 ]; then
+  if [ -f "$launchctl_log" ] && [ "$(wc -l < "$launchctl_log")" -eq 3 ]; then
     pass "launchagent setup avoids duplicate load or unload operations"
   else
     fail "launchagent setup should not repeat load or unload operations once the plist exists"
@@ -2821,7 +2821,7 @@ EOF
     fail "launchagent repair should write the configured VM host argument"
   fi
 
-  if [ -f "$launchctl_log" ] && [ "$(wc -l < "$launchctl_log")" -eq 4 ]; then
+  if [ -f "$launchctl_log" ] && [ "$(wc -l < "$launchctl_log")" -eq 6 ]; then
     pass "launchagent repair reloads the plist when arguments change"
   else
     fail "launchagent repair should reload the plist when arguments change"
@@ -3132,6 +3132,126 @@ EOF
   fi
 }
 
+test_launchagent_wrapper_supports_start_only_without_vm_host() {
+  local wrapper="$ROOT_DIR/host/scripts/start-utm-vm.sh"
+  local mock_dir="$TEMP_DIR/launchagent-start-only-bin"
+  local ssh_log="$TEMP_DIR/launchagent-start-only-ssh.log"
+  local state_file="$TEMP_DIR/launchagent-start-only.status"
+  local output=''
+
+  mkdir -p "$mock_dir"
+  cat > "$mock_dir/utmctl" <<'EOF'
+#!/bin/bash
+case "$1" in
+  start)
+    exit 0
+    ;;
+  list)
+    printf 'UUID                                 Status   Name\n'
+    printf '11111111-2222-3333-4444-555555555555 running  Test VM\n'
+    exit 0
+    ;;
+esac
+exit 1
+EOF
+  cat > "$mock_dir/osascript" <<'EOF'
+#!/bin/bash
+exit 1
+EOF
+  cat > "$mock_dir/ssh" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$*" >> "$CLAWBOX_TEST_SSH_LOG"
+exit 0
+EOF
+  cat > "$mock_dir/sleep" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+  chmod +x "$mock_dir/utmctl" "$mock_dir/osascript" "$mock_dir/ssh" "$mock_dir/sleep"
+
+  output="$(
+    CLAWBOX_UTMCTL_BIN="$mock_dir/utmctl" \
+    CLAWBOX_OSASCRIPT_BIN="$mock_dir/osascript" \
+    CLAWBOX_SSH_BIN="$mock_dir/ssh" \
+    CLAWBOX_SLEEP_BIN="$mock_dir/sleep" \
+    CLAWBOX_TEST_SSH_LOG="$ssh_log" \
+    CLAWBOX_VM_AUTOSTART_STATE_FILE="$state_file" \
+    CLAWBOX_VM_AUTOSTART_INITIAL_DELAY=0 \
+    "$wrapper" 'Test VM' '' 2>&1
+  )"
+
+  assert_contains 'launchagent start-only mode logs missing SSH target as expected' "$output" 'Configured VM SSH target: not configured'
+  assert_contains 'launchagent start-only mode verifies UTM runtime state' "$output" 'VM is already running: Test VM'
+
+  if [ ! -s "$ssh_log" ]; then
+    pass 'launchagent start-only mode does not probe SSH without VM_HOST'
+  else
+    fail 'launchagent start-only mode should not probe SSH without VM_HOST'
+  fi
+
+  assert_contains 'launchagent start-only mode records running state' "$(cat "$state_file")" 'state=running'
+  assert_contains 'launchagent start-only state records VM name' "$(cat "$state_file")" 'vm=Test VM'
+  assert_contains 'launchagent start-only state records empty host' "$(cat "$state_file")" 'host='
+}
+
+test_launchagent_setup_start_waits_for_wrapper_state() {
+  local original_home="$HOME"
+  local launchctl_log="$TEMP_DIR/launchctl-start-selected.log"
+  local output=''
+  local status=0
+
+  HOME="$TEMP_DIR/home-start-selected"
+  BASE_DIR="$ROOT_DIR"
+  VM_MACHINE_NAME='Test VM'
+  VM_HOST=''
+  CLAWBOX_VM_AUTOSTART_SETUP_WAIT_ATTEMPTS=2
+  CLAWBOX_VM_AUTOSTART_SETUP_WAIT_INTERVAL=0
+
+  launchctl() {
+    case "${1:-}" in
+      print)
+        if [ -f "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist" ]; then
+          return 0
+        fi
+        return 1
+        ;;
+      kickstart)
+        printf 'state=running\nvm=Test VM\nhost=\ndetail=VM running after startup attempt: Test VM\ntime=1\n' \
+          > "$HOME/Library/Application Support/ClawBox/state/start-utm-vm.status"
+        printf '%s\n' "$*" >> "$launchctl_log"
+        return 0
+        ;;
+      *)
+        printf '%s\n' "$*" >> "$launchctl_log"
+        return 0
+        ;;
+    esac
+  }
+
+  llama_fail() {
+    error "$1"
+    return 1
+  }
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/launchagent.sh"
+
+  set +e
+  output="$(launchagent_start_selected_vm_for_setup 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'setup-time LaunchAgent selected VM start succeeds from wrapper state' "$status" '0'
+  assert_contains 'setup-time LaunchAgent installs VM-name-only plist' "$(cat "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist")" '<string>Test VM</string>'
+  assert_not_contains 'setup-time LaunchAgent omits VM_HOST before VM address is known' "$(cat "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist")" 'test-vm-host'
+  assert_contains 'setup-time LaunchAgent bootstraps in user GUI domain' "$(cat "$launchctl_log")" 'bootstrap gui/'
+  assert_contains 'setup-time LaunchAgent kickstarts selected service' "$(cat "$launchctl_log")" 'kickstart -k gui/'
+  assert_contains 'setup-time LaunchAgent reports verified startup' "$output" 'Selected VM startup verified.'
+
+  HOME="$original_home"
+  unset CLAWBOX_VM_AUTOSTART_SETUP_WAIT_ATTEMPTS CLAWBOX_VM_AUTOSTART_SETUP_WAIT_INTERVAL
+}
+
 test_launchagent_module_requires_vm_host() {
   local original_home="$HOME"
   local launchctl_log="$TEMP_DIR/launchctl-missing-vm-host.log"
@@ -3223,6 +3343,7 @@ EOF
   chmod +x "$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
 
   prompt_yes_no() {
+    printf 'PROMPT:%s [%s]\n' "$1" "$2"
     REPLY='false'
     return 0
   }
@@ -3253,6 +3374,90 @@ EOF
   assert_contains 'mismatched VM auto-start runtime recommends update' "$output" '2) Reinstall/update host VM auto-start service (recommended)'
   assert_not_contains 'mismatched VM auto-start runtime does not recommend keeping stale service' "$output" '1) Keep and use the existing host VM auto-start service (recommended)'
   assert_contains 'mismatched VM auto-start runtime warns old behavior remains' "$output" 'the latest reliability fixes will not be applied'
+
+  HOME="$original_home"
+}
+
+test_launchagent_temporary_service_prompts_for_retention_yes_and_no() {
+  local original_home="$HOME"
+  local no_home="$TEMP_DIR/home-temp-autostart-no"
+  local yes_home="$TEMP_DIR/home-temp-autostart-yes"
+  local plist_path=''
+  local launchctl_log=''
+  local output=''
+
+  BASE_DIR="$ROOT_DIR"
+
+  launchctl() {
+    case "${1:-}" in
+      print)
+        if [ -f "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist" ]; then
+          return 0
+        fi
+        return 1
+        ;;
+      *)
+        printf '%s\n' "$*" >> "$launchctl_log"
+        return 0
+        ;;
+    esac
+  }
+
+  is_yes() {
+    case "$1" in
+      [Yy]|[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee])
+        return 0
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/launchagent.sh"
+
+  HOME="$no_home"
+  VM_MACHINE_NAME='Test VM'
+  VM_HOST='tester@192.168.64.6'
+  VM_AUTOSTART_SETUP_TEMPORARY=true
+  launchctl_log="$TEMP_DIR/launchctl-temp-no.log"
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Application Support/ClawBox/bin"
+  plist_path="$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist"
+  : > "$plist_path"
+  : > "$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+  chmod +x "$HOME/Library/Application Support/ClawBox/bin/start-utm-vm.sh"
+  prompt_yes_no() {
+    printf 'PROMPT:%s [%s]\n' "$1" "$2"
+    REPLY='false'
+    return 0
+  }
+
+  output="$(setup_launchagent 2>&1)"
+  assert_contains 'temporary setup LaunchAgent still asks retention question' "$output" 'PROMPT:Enable VM auto-start at login? [n]'
+  assert_contains 'declining temporary autostart removes service' "$output" 'LaunchAgent disabled and removed.'
+  if [ ! -f "$plist_path" ]; then
+    pass 'declining temporary autostart removes the plist'
+  else
+    fail 'declining temporary autostart should remove the plist'
+  fi
+
+  HOME="$yes_home"
+  VM_MACHINE_NAME='Test VM'
+  VM_HOST='tester@192.168.64.6'
+  VM_AUTOSTART_SETUP_TEMPORARY=true
+  launchctl_log="$TEMP_DIR/launchctl-temp-yes.log"
+  prompt_yes_no() {
+    printf 'PROMPT:%s [%s]\n' "$1" "$2"
+    REPLY='true'
+    return 0
+  }
+
+  output="$(setup_launchagent 2>&1)"
+  plist_path="$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist"
+  assert_contains 'accepting temporary autostart installs LaunchAgent' "$output" 'LaunchAgent installed.'
+  assert_contains 'accepting temporary setup LaunchAgent still asks retention question' "$output" 'PROMPT:Enable VM auto-start at login? [n]'
+  assert_contains 'accepting temporary autostart writes final VM_HOST' "$(cat "$plist_path")" '<string>tester@192.168.64.6</string>'
 
   HOME="$original_home"
 }
@@ -6145,8 +6350,11 @@ run_test test_launchagent_wrapper_logs_tcc_denial
 run_test test_launchagent_wrapper_returns_failure_when_vm_never_starts
 run_test test_launchagent_wrapper_retries_and_verifies_runtime_before_success
 run_test test_launchagent_wrapper_uses_ssh_reachability_as_success_signal
+run_test test_launchagent_wrapper_supports_start_only_without_vm_host
+run_test test_launchagent_setup_start_waits_for_wrapper_state
 run_test test_launchagent_module_requires_vm_host
 run_test test_launchagent_mismatched_runtime_recommends_update
+run_test test_launchagent_temporary_service_prompts_for_retention_yes_and_no
 run_test test_llama_install_mode_selection
 run_test test_llama_bin_resolution_prompt
 run_test test_llama_bin_resolution_hard_blocks_without_install_methods
