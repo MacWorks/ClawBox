@@ -253,6 +253,57 @@ PY
   assert_not_contains 'text switch does not launch with stale projector' "$output" 'SERVICE:user:/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf:32768::/models/Ternary-Bonsai-27B-mmproj-Q8_0.gguf'
 }
 
+test_primary_model_switch_can_raise_context_for_larger_model_when_requested() {
+  local output
+  output="$({
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    MODEL_PATH='/models/Ternary-Bonsai-27B-Q2_g64.gguf'
+    LLAMA_CTX='32768'
+    OPENCLAW_MAX_TOKENS='8192'
+    LLAMA_GPU_LAYERS=''
+    model_command_is_interactive() { return 0; }
+    prompt_with_default() {
+      printf 'PROMPT:%s:%s\n' "$1" "$2"
+      REPLY='131072'
+    }
+    resolve_primary_model_switch_runtime_settings '/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf' 262144
+    printf 'CTX:%s\n' "$LLAMA_CTX"
+  } 2>&1)"
+
+  assert_contains 'larger-model switch offers existing smaller context as default' "$output" 'PROMPT:Context size for llama-server:32768'
+  assert_contains 'larger-model switch persists explicitly requested larger context' "$output" 'CTX:131072'
+}
+
+test_primary_model_switch_rejects_above_native_context_before_restart() {
+  local output status
+  set +e
+  output="$({
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    MODEL_PATH='/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf'
+    LLAMA_CTX='131072'
+    OPENCLAW_MAX_TOKENS='8192'
+    LLAMA_GPU_LAYERS=''
+    model_command_is_interactive() { return 0; }
+    prompt_count=0
+    prompt_with_default() {
+      prompt_count=$((prompt_count + 1))
+      if [ "$prompt_count" -eq 1 ]; then
+        REPLY='65536'
+      else
+        REPLY='32768'
+      fi
+    }
+    resolve_primary_model_switch_runtime_settings '/models/Ternary-Bonsai-27B-Q2_g64.gguf' 32768
+    printf 'CTX:%s\n' "$LLAMA_CTX"
+  } 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'interactive above-native correction eventually succeeds' "$status" '0'
+  assert_contains 'above-native interactive value is rejected' "$output" 'exceeds model native context 32768'
+  assert_contains 'corrected context is applied before restart' "$output" 'CTX:32768'
+}
+
 test_primary_model_switch_can_configure_vision_model_before_restart() {
   local output mmproj_path
   mmproj_path="$TEMP_DIR/Ternary-Bonsai-27B-mmproj-Q8_0.gguf"
@@ -886,6 +937,8 @@ run_test test_vm_openclaw_restart_warns_for_external_gateway_owner
 run_test test_model_help_lists_instance_subcommands
 run_test test_primary_model_subcommand_preserves_embeddings_state
 run_test test_primary_model_switch_resolves_model_dependent_runtime_before_restart
+run_test test_primary_model_switch_can_raise_context_for_larger_model_when_requested
+run_test test_primary_model_switch_rejects_above_native_context_before_restart
 run_test test_primary_model_switch_can_configure_vision_model_before_restart
 run_test test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure
 run_test test_primary_model_subcommand_reports_no_openclaw_changes_when_sync_has_no_drift

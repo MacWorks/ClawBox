@@ -144,7 +144,22 @@ What to expect:
   VM OpenClaw configuration
 
 The default `llama-server` port for new setups is `11434`. New setups default
-`LLAMA_CTX` to `32768`. Existing `.env` values are preserved.
+`LLAMA_CTX` to `32768`. Existing `.env` values are preserved. Setup, primary
+model switching, and `./clawbox context` validate the requested context against
+readable GGUF native context metadata when it is available; ClawBox will not
+silently raise a smaller configured context when switching back to a larger
+model.
+
+To inspect or change the primary context after setup, run:
+
+```bash
+./clawbox context
+./clawbox context 131072
+```
+
+Changing context updates `.env`, restarts the managed primary `llama-server`,
+and uses targeted OpenClaw synchronization for the managed `contextWindow`
+without replacing the VM OpenClaw configuration.
 
 For slower local models, ClawBox also manages OpenClaw runtime tuning through
 `.env`: `OPENCLAW_PROVIDER_TIMEOUT_SECONDS` defaults to `1800`,

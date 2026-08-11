@@ -222,6 +222,30 @@ write_complete_legacy_setup_env() {
   mv "$temp_file" "$env_file"
 }
 
+write_synthetic_gguf_context_fixture() {
+  local gguf_file="$1"
+  local native_context="$2"
+
+  python3 - "$gguf_file" "$native_context" <<'PY'
+import struct
+import sys
+
+path = sys.argv[1]
+native_context = int(sys.argv[2])
+key = b"llama.context_length"
+
+with open(path, "wb") as handle:
+    handle.write(b"GGUF")
+    handle.write(struct.pack("<I", 3))
+    handle.write(struct.pack("<Q", 0))
+    handle.write(struct.pack("<Q", 1))
+    handle.write(struct.pack("<Q", len(key)))
+    handle.write(key)
+    handle.write(struct.pack("<I", 4))
+    handle.write(struct.pack("<I", native_context))
+PY
+}
+
 test_existing_env_without_vision_keys_prompts_before_runtime_reuse() {
   local output
   local env_file="$TEMP_DIR/legacy-vision.env"
@@ -1026,6 +1050,159 @@ test_first_run_bootstrap_honors_explicit_custom_llama_port() {
   assert_contains 'first-run custom port base URL persists to .env' "$output" 'ENV_FILE_BASE_URL:LLAMA_BASE_URL="http://192.168.64.1:11801/v1"'
   assert_not_contains 'first-run explicit custom port does not discover default service' "$output" 'UNEXPECTED_DISCOVERY'
   assert_not_contains 'first-run explicit custom port does not probe the default llama port' "$output" 'API_PROBE:11434'
+}
+
+test_first_run_bootstrap_selects_custom_context_before_runtime_and_openclaw() {
+  local output
+  local env_example="$TEMP_DIR/fresh-context.env.example"
+  local env_file="$TEMP_DIR/fresh-context.env"
+  local models_dir="$TEMP_DIR/fresh-context-models"
+  local model_path="$models_dir/bonsai-context.gguf"
+  local fake_bin="$TEMP_DIR/fresh-context-bin/llama-server"
+
+  mkdir -p "$models_dir" "$(dirname "$fake_bin")"
+  write_synthetic_gguf_context_fixture "$model_path" 131072
+  printf '#!/bin/bash\nexit 0\n' > "$fake_bin"
+  chmod +x "$fake_bin"
+  cp "$ROOT_DIR/.env.example" "$env_example"
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    queue_prompt_answers \
+      "$models_dir" \
+      '' \
+      '' \
+      '' \
+      '262144' \
+      '65536' \
+      '' \
+      ''
+
+    ENV_EXAMPLE_FILE="$env_example"
+    ENV_FILE="$env_file"
+    BASE_DIR="$TEMP_DIR"
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    ENV_CREATED_FROM_EXAMPLE=true
+    ENV_BOOTSTRAPPED=false
+    VM_REPAIR_MODE=false
+    HOST_IP=''
+    VM_IP=''
+    VM_USER=''
+    VM_USER_PATH=''
+    VM_HOST=''
+    VM_RUNTIME_PATH=''
+    VM_MACHINE_NAME=''
+    LLAMA_BIN=''
+    LLAMA_HOST=''
+    LLAMA_PORT=''
+    LLAMA_CTX=''
+    LLAMA_PARALLEL=''
+    LLAMA_BASE_URL=''
+    LLAMA_USE_EXISTING_INSTANCE=false
+    LLAMA_EXTERNAL=false
+    MODEL_PATH=''
+    OPENCLAW_MODEL_SUPPORTS_VISION=''
+    MMPROJ_PATH=''
+    FIREWALL_SHARED_SUBNET=''
+    OPENCLAW_PROVIDER_NAME=''
+    OPENCLAW_DEFAULT_MODEL=''
+    OPENCLAW_AUTOSTART=''
+    OPENCLAW_EFFECTIVE_CONTEXT_WINDOW=''
+
+    ensure_vm_connection_setup() {
+      VM_IP='192.168.64.2'
+      VM_USER='tester'
+      VM_USER_PATH='/Users/tester'
+      VM_HOST='tester@192.168.64.2'
+      VM_RUNTIME_PATH='/Users/tester/ClawBox'
+      VM_MACHINE_NAME='ClawVM'
+      return 0
+    }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    derive_llama_bin_path() { REPLY="$fake_bin"; }
+    resolve_configured_llama_bin() { REPLY="$fake_bin"; }
+    llama_classify_runtime_health() {
+      LLAMA_INSTANCE_HEALTH='absent'
+      LLAMA_INSTANCE_HAS_PROCESS=false
+      LLAMA_INSTANCE_HAS_LISTENER=false
+      LLAMA_INSTANCE_HEALTHCHECK_OK=false
+      LLAMA_INSTANCE_LAUNCHD_LOADED=false
+      return 0
+    }
+    llama_discover_healthy_instance_port() { return 1; }
+    llama_api_responding() { return 1; }
+    llama_port_in_use() { return 1; }
+
+    ensure_env_bootstrap < <(printf '')
+    bootstrap_status="$?"
+    printf 'BOOTSTRAP_STATUS:%s\n' "$bootstrap_status"
+    printf 'MODEL_PATH:%s\n' "$MODEL_PATH"
+    printf 'LLAMA_CTX:%s\n' "$LLAMA_CTX"
+    printf 'ENV_FILE_CTX:%s\n' "$(grep '^LLAMA_CTX=' "$ENV_FILE")"
+
+    user_has_sudo() { return 1; }
+    detect_existing_llama_install_mode() {
+      REPLY=''
+      return 1
+    }
+    select_requested_llama_install_mode() {
+      REPLY='user'
+      return 0
+    }
+    setup_user_llama_service() {
+      printf 'RUNTIME_CTX:%s\n' "$LLAMA_CTX"
+      return 0
+    }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    detect_openclaw_runtime_state() {
+      NEEDS_PROVISIONING=false
+      IS_RUNNING=false
+      OPENCLAW_RUNTIME_MANAGEMENT_STATE='not running'
+      return 0
+    }
+    sync_openclaw_config() {
+      local models
+      models="$(openclaw_config_model_array)" || return 1
+      python3 - "$models" <<'PY'
+import json
+import sys
+
+print("OPENCLAW_CONTEXT:%s" % json.loads(sys.argv[1])[0]["contextWindow"])
+PY
+      out 'OpenClaw config already matched; no OpenClaw changes were made.'
+    }
+    offer_targeted_openclaw_config_restart() { return 0; }
+    ensure_vm_provision_script() { return 0; }
+    ensure_openclaw_provisioned() { return 0; }
+    setup_launchagent() { return 0; }
+    handle_openclaw_runtime_state() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    resolve_vm_openclaw_bin_path() {
+      REPLY='/opt/homebrew/bin/openclaw'
+      return 0
+    }
+    print_openclaw_personalization_next_step() { return 0; }
+
+    run_provisioning_and_deployment
+  } 2>&1)"
+
+  assert_contains 'fresh context setup starts without an existing env and succeeds' "$output" 'BOOTSTRAP_STATUS:0'
+  assert_contains 'fresh context setup auto-selects the primary model' "$output" 'Using model: bonsai-context.gguf'
+  assert_contains 'fresh context setup stores selected model path' "$output" "MODEL_PATH:$model_path"
+  assert_contains 'fresh context setup discovers native context through GGUF parser' "$output" 'Model native context: 131072'
+  assert_contains 'fresh context setup presents context prompt' "$output" 'Context size for llama-server [32768]:'
+  assert_contains 'fresh context setup rejects above-native context' "$output" '262144 exceeds model native context 131072'
+  assert_contains 'fresh context setup accepts non-default context in memory' "$output" 'LLAMA_CTX:65536'
+  assert_contains 'fresh context setup persists non-default context' "$output" 'ENV_FILE_CTX:LLAMA_CTX="65536"'
+  assert_contains 'fresh context setup finalizes context before runtime launch' "$output" 'RUNTIME_CTX:65536'
+  assert_not_contains 'fresh context setup does not launch runtime with default context' "$output" 'RUNTIME_CTX:32768'
+  assert_contains 'fresh context setup propagates context to OpenClaw model config' "$output" 'OPENCLAW_CONTEXT:65536'
+  assert_not_contains 'fresh context setup does not derive OpenClaw config from default context' "$output" 'OPENCLAW_CONTEXT:32768'
 }
 
 test_ensure_env_bootstrap_fast_path_rewrites_env_after_prestart_port_change() {
@@ -4007,6 +4184,7 @@ run_test test_model_selection_recovery_rescans_current_directory
 run_test test_ensure_env_bootstrap_auto_selects_single_model_without_selection_prompt
 run_test test_first_run_bootstrap_detects_cross_user_llama_before_binary_setup
 run_test test_first_run_bootstrap_honors_explicit_custom_llama_port
+run_test test_first_run_bootstrap_selects_custom_context_before_runtime_and_openclaw
 run_test test_ensure_env_bootstrap_fast_path_rewrites_env_after_prestart_port_change
 run_test test_prestart_discovery_rejects_embeddings_endpoint_as_primary
 run_test test_prestart_discovery_allows_non_embeddings_alternate_primary

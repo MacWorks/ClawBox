@@ -386,11 +386,22 @@ resolve_primary_model_switch_runtime_settings() {
     model_changed=true
   fi
 
-  if [ -n "$native_context" ] && [ -n "$previous_ctx" ] && [[ "$previous_ctx" =~ ^[0-9]+$ ]] && [ "$previous_ctx" -gt "$native_context" ]; then
-    warn "Configured LLAMA_CTX=$previous_ctx exceeds selected model native context $native_context."
-    LLAMA_CTX="$native_context"
-    out "Using LLAMA_CTX=$LLAMA_CTX for the selected model before restarting llama-server."
-    validate_openclaw_token_context_values "$LLAMA_CTX" "$max_tokens" 'model switch' || return $?
+  if model_command_is_interactive; then
+    if [ "$model_changed" = true ]; then
+      out 'Choose the context size to use before restarting llama-server.'
+    fi
+    llama_context_prompt_value "$previous_ctx" "$native_context" "$max_tokens" 'model switch' || return $?
+    LLAMA_CTX="$REPLY"
+  else
+    llama_context_resolve_noninteractive "$previous_ctx" "$native_context" "$max_tokens" 'model switch' || return $?
+    if clawbox_positive_integer "$previous_ctx" \
+      && clawbox_positive_integer "$native_context" \
+      && [ "$previous_ctx" -gt "$native_context" ]
+    then
+      warn "Configured LLAMA_CTX=$previous_ctx exceeds selected model native context $native_context."
+      out "Using LLAMA_CTX=$REPLY for the selected model before restarting llama-server."
+    fi
+    LLAMA_CTX="$REPLY"
   fi
 
   if [ "$model_changed" = true ] && [ -n "$previous_gpu_layers" ]; then

@@ -128,10 +128,14 @@ OpenClaw configuration. The primary model command may verify/correct only the
 stable provider keys for `clawbox/local`; the embeddings command may sync only
 OpenClaw `memorySearch` keys, using `ollama-local` as the local/LAN remote API
 key marker. Primary model switches re-evaluate model-dependent host runtime
-settings before restarting `llama-server`: an oversized `LLAMA_CTX` is lowered
-to the selected model's readable native context, and a forced
+settings before restarting `llama-server`: interactive switches prompt for the
+context to use with the selected model, noninteractive switches lower an
+oversized `LLAMA_CTX` to the selected model's readable native context, and a forced
 `LLAMA_GPU_LAYERS` value is cleared when switching to a different GGUF so the
 new model does not inherit unsafe loading settings from the previous model.
+Use `./clawbox context` or `./clawbox context <size>` to inspect or change the
+primary context without switching models; changes restart the managed primary
+runtime and use targeted OpenClaw synchronization for `contextWindow`.
 When an interactive primary switch succeeds and the configured model matches
 the running `llama-server` process, ClawBox offers a Fast/Full/Skip
 qualification menu. Fast runs a reduced validation profile, Full runs the

@@ -75,7 +75,11 @@ The generated `clawbox/local` model entry sets `maxTokens` from
 `OPENCLAW_MAX_TOKENS`, which defaults to `8192`. This is the output-token
 budget OpenClaw advertises for the managed local model; it is distinct from the
 llama.cpp context window, which remains controlled by `LLAMA_CTX` and maps to
-OpenClaw `contextWindow`. New setups default `LLAMA_CTX` to `32768`. When
+OpenClaw `contextWindow`. New setups default `LLAMA_CTX` to `32768`. Setup,
+primary model switching, and `./clawbox context` use readable GGUF native
+context metadata as an upper bound when it is available. Smaller existing
+contexts are preserved unless the user explicitly changes them; switching back
+to a larger-context model does not silently increase `LLAMA_CTX`. When
 llama-server exposes a smaller effective context through its JSON API, ClawBox
 uses that effective value for OpenClaw `contextWindow` so OpenClaw does not
 advertise more context than the runtime actually serves. `OPENCLAW_MAX_TOKENS`

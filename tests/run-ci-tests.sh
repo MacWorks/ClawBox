@@ -16,6 +16,7 @@ bash tests/output-normalization-test.sh
 bash tests/output-spacing-test.sh
 bash tests/generate-openclaw-config-test.sh
 bash tests/model-command-test.sh
+bash tests/context-command-test.sh
 bash tests/embeddings-test.sh
 bash tests/openclaw-command-test.sh
 bash tests/ui-command-test.sh

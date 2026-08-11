@@ -81,6 +81,13 @@ window. If llama-server reports that it capped the configured `LLAMA_CTX`, setup
 uses the reported effective value for OpenClaw `contextWindow` without rewriting
 the requested `.env` value.
 
+Use `./clawbox context` to inspect or change the primary model context after
+setup. Direct values such as `./clawbox context 131072` are validated before
+they are persisted. If GGUF native context metadata is readable, ClawBox rejects
+requested values above that native limit. If metadata is unavailable, ClawBox
+validates only that `LLAMA_CTX` is a positive integer and remains greater than
+`OPENCLAW_MAX_TOKENS`.
+
 `LLAMA_JINJA=true` renders `--jinja` for the primary managed `llama-server`.
 This enables llama.cpp Jinja chat-template processing, which OpenClaw-compatible
 tool-calling flows generally need. It does not guarantee that every model will
