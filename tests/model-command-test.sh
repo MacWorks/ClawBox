@@ -201,6 +201,107 @@ test_primary_model_subcommand_preserves_embeddings_state() {
   assert_not_contains 'primary subcommand does not directly overwrite OpenClaw config' "$output" 'openclaw.json'
 }
 
+test_primary_model_switch_resolves_model_dependent_runtime_before_restart() {
+  local output
+  output="$({
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+    MODEL_PATH='/models/Ternary-Bonsai-27B-Q2_g64.gguf'
+    OPENCLAW_MODEL_SUPPORTS_VISION='true'
+    MMPROJ_PATH='/models/Ternary-Bonsai-27B-mmproj-Q8_0.gguf'
+    LLAMA_CTX='131072'
+    LLAMA_GPU_LAYERS='99'
+    LLAMA_PARALLEL='1'
+    LLAMA_BASE_URL='http://127.0.0.1:11434/v1'
+    OPENCLAW_MAX_TOKENS='8192'
+    OPENCLAW_DEFAULT_MODEL='local'
+    OPENCLAW_PROVIDER_NAME='clawbox'
+    source_env_file() { :; }
+    offer_openclaw_alias_migration() { :; }
+    offer_vm_openclaw_alias_sync_if_drift() { :; }
+    prompt_yes_no() { REPLY=true; }
+    setup_configure_model_selection() {
+      MODEL_PATH='/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf'
+      OPENCLAW_MODEL_SUPPORTS_VISION='false'
+      MMPROJ_PATH=''
+    }
+    gguf_native_context_from_file() { printf '32768\n'; }
+    write_env_from_template() { printf 'WRITE:%s:%s:%s:%s:%s\n' "$MODEL_PATH" "$LLAMA_CTX" "$LLAMA_GPU_LAYERS" "$OPENCLAW_MODEL_SUPPORTS_VISION" "$MMPROJ_PATH"; }
+    detect_model_llama_mode() { REPLY=user; }
+    setup_llama_service_for_mode() { printf 'SERVICE:%s:%s:%s:%s:%s\n' "$1" "$MODEL_PATH" "$LLAMA_CTX" "$LLAMA_GPU_LAYERS" "$MMPROJ_PATH"; }
+    llama_refresh_openclaw_effective_context_window() { :; }
+    sync_model_openclaw_config_scope() {
+      models="$(openclaw_config_model_array)"
+      python3 - "$models" <<'PY'
+import json, sys
+print("OPENCLAW_INPUT:" + ",".join(json.loads(sys.argv[1])[0]["input"]))
+PY
+      CONFIG_TARGETED_UPDATED=true
+      CONFIG_TARGETED_NO_CHANGE=false
+    }
+    offer_qualification_after_primary_model_switch() { :; }
+    main primary
+  } 2>&1)"
+
+  assert_contains 'text switch reports oversized context resolution' "$output" 'Configured LLAMA_CTX=131072 exceeds model native context 32768; resolving before restart.'
+  assert_contains 'text switch persists resolved context before launch' "$output" 'WRITE:/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf:32768::false:'
+  assert_contains 'text switch clears stale forced gpu layers before launch' "$output" 'SERVICE:user:/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf:32768::'
+  assert_contains 'text switch clears stale projector before launch' "$output" 'SERVICE:user:/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf:32768::'
+  assert_contains 'text switch syncs OpenClaw text input after completed switch' "$output" 'OPENCLAW_INPUT:text'
+  assert_not_contains 'text switch does not launch with stale oversized context' "$output" 'SERVICE:user:/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf:131072'
+  assert_not_contains 'text switch does not launch with stale gpu layers' "$output" 'SERVICE:user:/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf:32768:99'
+  assert_not_contains 'text switch does not launch with stale projector' "$output" 'SERVICE:user:/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf:32768::/models/Ternary-Bonsai-27B-mmproj-Q8_0.gguf'
+}
+
+test_primary_model_switch_can_configure_vision_model_before_restart() {
+  local output mmproj_path
+  mmproj_path="$TEMP_DIR/Ternary-Bonsai-27B-mmproj-Q8_0.gguf"
+  : > "$mmproj_path"
+  output="$({
+    CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
+    ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
+    MODEL_PATH='/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf'
+    OPENCLAW_MODEL_SUPPORTS_VISION='false'
+    MMPROJ_PATH=''
+    LLAMA_CTX='32768'
+    LLAMA_GPU_LAYERS=''
+    LLAMA_PARALLEL='1'
+    LLAMA_BASE_URL='http://127.0.0.1:11434/v1'
+    OPENCLAW_MAX_TOKENS='8192'
+    OPENCLAW_DEFAULT_MODEL='local'
+    OPENCLAW_PROVIDER_NAME='clawbox'
+    source_env_file() { :; }
+    offer_openclaw_alias_migration() { :; }
+    offer_vm_openclaw_alias_sync_if_drift() { :; }
+    prompt_yes_no() { REPLY=true; }
+    setup_configure_model_selection() {
+      MODEL_PATH='/models/Ternary-Bonsai-27B-Q2_g64.gguf'
+      OPENCLAW_MODEL_SUPPORTS_VISION='true'
+      MMPROJ_PATH="$mmproj_path"
+    }
+    gguf_native_context_from_file() { printf '131072\n'; }
+    write_env_from_template() { printf 'WRITE:%s:%s:%s:%s\n' "$MODEL_PATH" "$OPENCLAW_MODEL_SUPPORTS_VISION" "$MMPROJ_PATH" "$LLAMA_CTX"; }
+    detect_model_llama_mode() { REPLY=user; }
+    setup_llama_service_for_mode() { printf 'SERVICE:%s:%s:%s:%s\n' "$1" "$MODEL_PATH" "$MMPROJ_PATH" "$OPENCLAW_MODEL_SUPPORTS_VISION"; }
+    llama_refresh_openclaw_effective_context_window() { :; }
+    sync_model_openclaw_config_scope() {
+      models="$(openclaw_config_model_array)"
+      python3 - "$models" <<'PY'
+import json, sys
+print("OPENCLAW_INPUT:" + ",".join(json.loads(sys.argv[1])[0]["input"]))
+PY
+      CONFIG_TARGETED_UPDATED=true
+      CONFIG_TARGETED_NO_CHANGE=false
+    }
+    offer_qualification_after_primary_model_switch() { :; }
+    main primary
+  } 2>&1)"
+
+  assert_contains 'vision switch persists vision before launch' "$output" "WRITE:/models/Ternary-Bonsai-27B-Q2_g64.gguf:true:$mmproj_path:32768"
+  assert_contains 'vision switch launches with configured projector' "$output" "SERVICE:user:/models/Ternary-Bonsai-27B-Q2_g64.gguf:$mmproj_path:true"
+  assert_contains 'vision switch syncs OpenClaw image input after completed switch' "$output" 'OPENCLAW_INPUT:text,image'
+}
+
 test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure() {
   local output
   output="$(
@@ -784,6 +885,8 @@ run_test test_vm_openclaw_restart_requires_runtime_verification
 run_test test_vm_openclaw_restart_warns_for_external_gateway_owner
 run_test test_model_help_lists_instance_subcommands
 run_test test_primary_model_subcommand_preserves_embeddings_state
+run_test test_primary_model_switch_resolves_model_dependent_runtime_before_restart
+run_test test_primary_model_switch_can_configure_vision_model_before_restart
 run_test test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure
 run_test test_primary_model_subcommand_reports_no_openclaw_changes_when_sync_has_no_drift
 run_test test_primary_model_subcommand_reports_actual_openclaw_sync_when_updated

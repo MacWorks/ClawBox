@@ -127,11 +127,16 @@ switches only the optional embeddings model. Neither command replaces VM or
 OpenClaw configuration. The primary model command may verify/correct only the
 stable provider keys for `clawbox/local`; the embeddings command may sync only
 OpenClaw `memorySearch` keys, using `ollama-local` as the local/LAN remote API
-key marker. When an interactive primary switch succeeds and the configured
-model matches the running `llama-server` process, ClawBox offers a
-Fast/Full/Skip qualification menu. Fast runs a reduced validation profile,
-Full runs the complete suite, and Skip is the default. The menu is not shown
-during noninteractive model switches.
+key marker. Primary model switches re-evaluate model-dependent host runtime
+settings before restarting `llama-server`: an oversized `LLAMA_CTX` is lowered
+to the selected model's readable native context, and a forced
+`LLAMA_GPU_LAYERS` value is cleared when switching to a different GGUF so the
+new model does not inherit unsafe loading settings from the previous model.
+When an interactive primary switch succeeds and the configured model matches
+the running `llama-server` process, ClawBox offers a Fast/Full/Skip
+qualification menu. Fast runs a reduced validation profile, Full runs the
+complete suite, and Skip is the default. The menu is not shown during
+noninteractive model switches.
 
 Primary model selection also asks whether the selected GGUF supports
 image/vision input. That capability is stored separately from `MMPROJ_PATH`

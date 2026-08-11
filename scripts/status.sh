@@ -210,11 +210,11 @@ except Exception:
 capability = sys.argv[2]
 items = []
 if isinstance(data, dict):
-    if isinstance(data.get("data"), list):
-        items = data["data"]
-    elif isinstance(data.get("models"), list):
-        items = data["models"]
-    else:
+    for key in ("data", "models"):
+        value = data.get(key)
+        if isinstance(value, list):
+            items.extend(value)
+    if not items:
         items = [data]
 elif isinstance(data, list):
     items = data

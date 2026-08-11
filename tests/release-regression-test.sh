@@ -2018,6 +2018,13 @@ test_status_reports_vision_runtime_capability_match() {
   assert_contains 'status passes runtime multimodal validation' "$STATUS_VISION_OUTPUT" 'PASS: llama-server reports multimodal capability'
 }
 
+test_status_reads_current_llamacpp_models_capabilities_shape() {
+  run_status_vision_fixture true '["text","image"]' '{"models":[{"id":"local","capabilities":["completion","multimodal"]}],"object":"list","data":[]}' 0
+
+  assert_contains 'status reads multimodal capability from top-level models array' "$STATUS_VISION_OUTPUT" 'Runtime multimodal capability: yes'
+  assert_contains 'status validates multimodal capability from current llama.cpp response shape' "$STATUS_VISION_OUTPUT" 'PASS: llama-server reports multimodal capability'
+}
+
 test_status_fails_when_configured_vision_runtime_is_text_only() {
   run_status_vision_fixture true '["text","image"]' '{"data":[{"id":"local","capabilities":["completion"]}]}' 1
 
@@ -2985,6 +2992,7 @@ run_test test_status_displays_primary_model_summary
 run_test test_status_warns_about_obsolete_openclaw_concrete_model_entries
 run_test test_status_reports_normalized_openclaw_provider_models_healthy
 run_test test_status_reports_vision_runtime_capability_match
+run_test test_status_reads_current_llamacpp_models_capabilities_shape
 run_test test_status_fails_when_configured_vision_runtime_is_text_only
 run_test test_status_warns_when_vision_runtime_metadata_unavailable
 run_test test_status_reports_incomplete_when_props_unavailable
