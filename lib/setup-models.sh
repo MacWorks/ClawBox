@@ -49,6 +49,7 @@ first_mmproj_candidate_for_model() {
   REPLY=''
   derive_models_directory_from_model_path "$model_path"
   model_dir="$REPLY"
+  REPLY=''
   [ -n "$model_dir" ] || return 0
 
   while IFS= read -r candidate; do

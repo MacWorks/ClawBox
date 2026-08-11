@@ -141,6 +141,13 @@ previous model's vision declaration or projector path; setup asks again and
 offers a conservative same-directory `mmproj`/`projector` candidate only after
 confirmation.
 
+Existing `.env` files created before managed vision settings are treated as
+unconfigured, not text-only. On the next interactive setup run, ClawBox asks
+once for the existing primary model's vision capability before starting or
+reusing the primary `llama-server`. Choosing text-only persists
+`OPENCLAW_MODEL_SUPPORTS_VISION=false`, so future setup runs do not repeat the
+question unless the primary model is changed.
+
 Use `.env.example` as the reference for required keys and expected value formats.
 
 Install mode behavior:

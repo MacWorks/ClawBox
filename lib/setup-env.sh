@@ -12,6 +12,22 @@ source_env_file() {
   fi
 }
 
+env_file_has_key() {
+  local key="$1"
+
+  [ -f "$ENV_FILE" ] || return 1
+
+  awk -F= -v key="$key" '
+    $0 ~ ("^[[:space:]]*" key "[[:space:]]*=") {
+      found = 1
+      exit
+    }
+    END {
+      exit(found ? 0 : 1)
+    }
+  ' "$ENV_FILE"
+}
+
 replace_template_value() {
   local file_path="$1"
   local key="$2"

@@ -174,6 +174,248 @@ test_model_selection_can_configure_vision_with_projector_candidate() {
   assert_contains 'vision model selection explains projector independence' "$output" 'Vision capability is configured separately from any llama.cpp multimodal projector.'
 }
 
+write_complete_legacy_setup_env() {
+  local env_file="$1"
+  local model_path="$2"
+  local fake_bin="$3"
+  local include_vision="${4:-absent}"
+  local mmproj_path="${5:-}"
+  local temp_file="$TEMP_DIR/legacy-env.tmp"
+
+  cp "$ROOT_DIR/.env.example" "$env_file"
+  awk -v model_path="$model_path" -v fake_bin="$fake_bin" -v include_vision="$include_vision" -v mmproj_path="$mmproj_path" '
+    /^HOST_IP=/ { print "HOST_IP=\"192.168.64.1\""; next }
+    /^VM_IP=/ { print "VM_IP=\"192.168.64.2\""; next }
+    /^VM_USER=/ { print "VM_USER=\"tester\""; next }
+    /^VM_USER_PATH=/ { print "VM_USER_PATH=\"/Users/tester\""; next }
+    /^VM_HOST=/ { print "VM_HOST=\"tester@192.168.64.2\""; next }
+    /^VM_RUNTIME_PATH=/ { print "VM_RUNTIME_PATH=\"/Users/tester/ClawBox\""; next }
+    /^VM_MACHINE_NAME=/ { print "VM_MACHINE_NAME=\"ClawVM\""; next }
+    /^MODEL_PATH=/ { print "MODEL_PATH=\"" model_path "\""; next }
+    /^OPENCLAW_MODEL_SUPPORTS_VISION=/ {
+      if (include_vision == "absent") next
+      print "OPENCLAW_MODEL_SUPPORTS_VISION=\"" include_vision "\""
+      next
+    }
+    /^MMPROJ_PATH=/ {
+      if (include_vision == "absent") next
+      print "MMPROJ_PATH=\"" mmproj_path "\""
+      next
+    }
+    /^LLAMA_BIN=/ { print "LLAMA_BIN=\"" fake_bin "\""; next }
+    /^LLAMA_HOST=/ { print "LLAMA_HOST=\"0.0.0.0\""; next }
+    /^LLAMA_PORT=/ { print "LLAMA_PORT=\"11434\""; next }
+    /^LLAMA_CTX=/ { print "LLAMA_CTX=\"32768\""; next }
+    /^LLAMA_PARALLEL=/ { print "LLAMA_PARALLEL=\"1\""; next }
+    /^LLAMA_BASE_URL=/ { print "LLAMA_BASE_URL=\"http://192.168.64.1:11434/v1\""; next }
+    /^LLAMA_EXTERNAL=/ { print "LLAMA_EXTERNAL=\"false\""; next }
+    /^OPENCLAW_MAX_TOKENS=/ { print "OPENCLAW_MAX_TOKENS=\"8192\""; next }
+    /^FIREWALL_SHARED_SUBNET=/ { print "FIREWALL_SHARED_SUBNET=\"192.168.64.0/24\""; next }
+    /^OPENCLAW_PROVIDER_NAME=/ { print "OPENCLAW_PROVIDER_NAME=\"clawbox\""; next }
+    /^OPENCLAW_DEFAULT_MODEL=/ { print "OPENCLAW_DEFAULT_MODEL=\"local\""; next }
+    /^OPENCLAW_AUTOSTART=/ { print "OPENCLAW_AUTOSTART=\"false\""; next }
+    /^OPENCLAW_PROVIDER_TIMEOUT_SECONDS=/ { print "OPENCLAW_PROVIDER_TIMEOUT_SECONDS=\"1800\""; next }
+    /^OPENCLAW_STUCK_SESSION_WARN_MS=/ { print "OPENCLAW_STUCK_SESSION_WARN_MS=\"600000\""; next }
+    /^OPENCLAW_STUCK_SESSION_ABORT_MS=/ { print "OPENCLAW_STUCK_SESSION_ABORT_MS=\"1800000\""; next }
+    { print }
+  ' "$env_file" > "$temp_file"
+  mv "$temp_file" "$env_file"
+}
+
+test_existing_env_without_vision_keys_prompts_before_runtime_reuse() {
+  local output
+  local env_file="$TEMP_DIR/legacy-vision.env"
+  local model_path="$TEMP_DIR/legacy-models/Ternary-Bonsai-27B-Q2_g64.gguf"
+  local mmproj_path="$TEMP_DIR/legacy-models/Ternary-Bonsai-27B-mmproj-Q8_0.gguf"
+  local fake_bin="$TEMP_DIR/legacy-bin/llama-server"
+
+  mkdir -p "$(dirname "$model_path")" "$(dirname "$fake_bin")"
+  : > "$model_path"
+  : > "$mmproj_path"
+  : > "$fake_bin"
+  chmod +x "$fake_bin"
+  write_complete_legacy_setup_env "$env_file" "$model_path" "$fake_bin" absent
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    queue_prompt_answers 'y' ''
+
+    ENV_FILE="$env_file"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    VM_REPAIR_MODE=false
+
+    run_prestart_llama_instance_flow() {
+      SEEN_PRESTART_VISION="${OPENCLAW_MODEL_SUPPORTS_VISION:-}"
+      SEEN_PRESTART_MMPROJ="${MMPROJ_PATH:-}"
+      REPLY="${2:-11434}"
+      LLAMA_USE_EXISTING_INSTANCE=false
+      LLAMA_EXTERNAL=false
+      return 0
+    }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'PRESTART_VISION:%s\n' "$SEEN_PRESTART_VISION"
+    printf 'PRESTART_MMPROJ:%s\n' "$SEEN_PRESTART_MMPROJ"
+    printf 'ENV_VISION:%s\n' "$(grep '^OPENCLAW_MODEL_SUPPORTS_VISION=' "$ENV_FILE")"
+    printf 'ENV_MMPROJ:%s\n' "$(grep '^MMPROJ_PATH=' "$ENV_FILE")"
+    models="$(openclaw_config_model_array)"
+    python3 - "$models" <<'PY'
+import json, sys
+print("OPENCLAW_INPUT:" + ",".join(json.loads(sys.argv[1])[0]["input"]))
+PY
+  } 2>&1)"
+
+  assert_contains 'legacy existing setup reports vision migration context' "$output" 'This existing ClawBox installation predates managed vision settings.'
+  assert_contains 'legacy existing setup prompts for vision capability' "$output" 'Does this primary model support image/vision input?'
+  assert_contains 'legacy existing setup offers same-directory mmproj candidate' "$output" "Detected possible multimodal projector: $mmproj_path"
+  assert_contains 'legacy existing setup resolves vision before runtime checks' "$output" 'PRESTART_VISION:true'
+  assert_contains 'legacy existing setup resolves mmproj before runtime checks' "$output" "PRESTART_MMPROJ:$mmproj_path"
+  assert_contains 'legacy existing setup persists vision true' "$output" 'ENV_VISION:OPENCLAW_MODEL_SUPPORTS_VISION="true"'
+  assert_contains 'legacy existing setup persists selected mmproj' "$output" "ENV_MMPROJ:MMPROJ_PATH=\"$mmproj_path\""
+  assert_contains 'legacy existing setup generates OpenClaw image input' "$output" 'OPENCLAW_INPUT:text,image'
+}
+
+test_existing_env_without_vision_keys_can_choose_text_only_once() {
+  local output_first output_second
+  local env_file="$TEMP_DIR/legacy-text.env"
+  local model_path="$TEMP_DIR/legacy-text-models/text-primary.gguf"
+  local fake_bin="$TEMP_DIR/legacy-text-bin/llama-server"
+
+  mkdir -p "$(dirname "$model_path")" "$(dirname "$fake_bin")"
+  : > "$model_path"
+  : > "$fake_bin"
+  chmod +x "$fake_bin"
+  write_complete_legacy_setup_env "$env_file" "$model_path" "$fake_bin" absent
+
+  output_first="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    queue_prompt_answers ''
+
+    ENV_FILE="$env_file"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    VM_REPAIR_MODE=false
+
+    run_prestart_llama_instance_flow() {
+      SEEN_PRESTART_VISION="${OPENCLAW_MODEL_SUPPORTS_VISION:-}"
+      SEEN_PRESTART_MMPROJ="${MMPROJ_PATH:-}"
+      REPLY="${2:-11434}"
+      LLAMA_USE_EXISTING_INSTANCE=false
+      LLAMA_EXTERNAL=false
+      return 0
+    }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'PRESTART_VISION:%s\n' "$SEEN_PRESTART_VISION"
+    printf 'PRESTART_MMPROJ:%s\n' "$SEEN_PRESTART_MMPROJ"
+    printf 'ENV_VISION:%s\n' "$(grep '^OPENCLAW_MODEL_SUPPORTS_VISION=' "$ENV_FILE")"
+    printf 'ENV_MMPROJ:%s\n' "$(grep '^MMPROJ_PATH=' "$ENV_FILE")"
+    models="$(openclaw_config_model_array)"
+    python3 - "$models" <<'PY'
+import json, sys
+print("OPENCLAW_INPUT:" + ",".join(json.loads(sys.argv[1])[0]["input"]))
+PY
+  } 2>&1)"
+
+  output_second="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    queue_prompt_answers
+
+    ENV_FILE="$env_file"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    VM_REPAIR_MODE=false
+
+    run_prestart_llama_instance_flow() {
+      SEEN_PRESTART_VISION="${OPENCLAW_MODEL_SUPPORTS_VISION:-}"
+      REPLY="${2:-11434}"
+      LLAMA_USE_EXISTING_INSTANCE=false
+      LLAMA_EXTERNAL=false
+      return 0
+    }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'PRESTART_VISION:%s\n' "$SEEN_PRESTART_VISION"
+  } 2>&1)"
+
+  assert_contains 'legacy text-only migration persists explicit false' "$output_first" 'ENV_VISION:OPENCLAW_MODEL_SUPPORTS_VISION="false"'
+  assert_contains 'legacy text-only migration clears projector' "$output_first" 'ENV_MMPROJ:MMPROJ_PATH=""'
+  assert_contains 'legacy text-only migration reaches runtime as false' "$output_first" 'PRESTART_VISION:false'
+  assert_contains 'legacy text-only migration generates text OpenClaw input' "$output_first" 'OPENCLAW_INPUT:text'
+  assert_not_contains 'explicit false rerun does not ask vision question again' "$output_second" 'Does this primary model support image/vision input?'
+  assert_contains 'explicit false rerun preserves runtime false state' "$output_second" 'PRESTART_VISION:false'
+}
+
+test_existing_env_without_vision_keys_allows_vision_without_projector() {
+  local output
+  local env_file="$TEMP_DIR/legacy-vision-no-projector.env"
+  local model_path="$TEMP_DIR/legacy-vision-plain-models/vision-primary.gguf"
+  local fake_bin="$TEMP_DIR/legacy-vision-plain-bin/llama-server"
+
+  mkdir -p "$(dirname "$model_path")" "$(dirname "$fake_bin")"
+  : > "$model_path"
+  : > "$fake_bin"
+  chmod +x "$fake_bin"
+  write_complete_legacy_setup_env "$env_file" "$model_path" "$fake_bin" absent
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    queue_prompt_answers 'y' ''
+
+    ENV_FILE="$env_file"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    VM_REPAIR_MODE=false
+
+    run_prestart_llama_instance_flow() {
+      SEEN_PRESTART_VISION="${OPENCLAW_MODEL_SUPPORTS_VISION:-}"
+      SEEN_PRESTART_MMPROJ="${MMPROJ_PATH:-}"
+      REPLY="${2:-11434}"
+      LLAMA_USE_EXISTING_INSTANCE=false
+      LLAMA_EXTERNAL=false
+      return 0
+    }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'PRESTART_VISION:%s\n' "$SEEN_PRESTART_VISION"
+    printf 'PRESTART_MMPROJ:%s\n' "$SEEN_PRESTART_MMPROJ"
+    printf 'ENV_VISION:%s\n' "$(grep '^OPENCLAW_MODEL_SUPPORTS_VISION=' "$ENV_FILE")"
+    printf 'ENV_MMPROJ:%s\n' "$(grep '^MMPROJ_PATH=' "$ENV_FILE")"
+    models="$(openclaw_config_model_array)"
+    python3 - "$models" <<'PY'
+import json, sys
+print("OPENCLAW_INPUT:" + ",".join(json.loads(sys.argv[1])[0]["input"]))
+PY
+  } 2>&1)"
+
+  assert_contains 'vision migration without projector persists true' "$output" 'ENV_VISION:OPENCLAW_MODEL_SUPPORTS_VISION="true"'
+  assert_contains 'vision migration without projector keeps mmproj blank' "$output" 'ENV_MMPROJ:MMPROJ_PATH=""'
+  assert_contains 'vision migration without projector reaches runtime as vision true' "$output" 'PRESTART_VISION:true'
+  assert_contains 'vision migration without projector reaches runtime with no mmproj' "$output" 'PRESTART_MMPROJ:'
+  assert_contains 'vision migration without projector still generates OpenClaw image input' "$output" 'OPENCLAW_INPUT:text,image'
+}
+
 test_model_selection_recovery_accepts_corrected_directory_after_empty_scan() {
   local output
   local expected_model_path="$TEMP_DIR/valid-models/model-alpha.gguf"
@@ -3756,6 +3998,9 @@ TEMP_DIR="$(mktemp -d)"
 run_test test_model_selection_flow
 run_test test_model_selection_resets_vision_state_for_new_primary_model
 run_test test_model_selection_can_configure_vision_with_projector_candidate
+run_test test_existing_env_without_vision_keys_prompts_before_runtime_reuse
+run_test test_existing_env_without_vision_keys_can_choose_text_only_once
+run_test test_existing_env_without_vision_keys_allows_vision_without_projector
 run_test test_model_selection_recovery_accepts_corrected_directory_after_empty_scan
 run_test test_model_selection_requires_explicit_file_path_when_directory_is_empty
 run_test test_model_selection_recovery_rescans_current_directory
