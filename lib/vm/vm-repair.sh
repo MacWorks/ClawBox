@@ -98,6 +98,7 @@ offer_vm_ip_recovery() {
             return 0
             ;;
           3)
+            REPLY='abort'
             return 1
             ;;
           *)
@@ -182,6 +183,7 @@ EOF
       fi
 
       if [ "$selected_option" -eq "$abort_option_number" ]; then
+        REPLY='abort'
         return 1
       fi
     fi
@@ -193,6 +195,7 @@ EOF
   done
 
   warn 'VM address recovery reached the retry limit.'
+  REPLY='network-timeout'
   return 1
 }
 
@@ -1226,7 +1229,22 @@ ensure_vm_connectivity_or_repair() {
         print_vm_ssh_probe_guidance 'running-no-ssh' 'exact' "$ssh_probe_state"
       fi
     else
-      print_manual_ssh_setup_instructions
+      if [ "${REPLY:-}" = 'abort' ]; then
+        return "$LLAMA_EXIT_GRACEFUL"
+      fi
+
+      if offer_started_vm_network_recovery; then
+        success 'VM SSH is now available.'
+        return 0
+      fi
+
+      recovery_status=$?
+      if [ "$recovery_status" -eq "$LLAMA_EXIT_GRACEFUL" ]; then
+        return "$LLAMA_EXIT_GRACEFUL"
+      fi
+
+      ssh_probe_state="${REPLY:-$ssh_probe_state}"
+      print_vm_ssh_probe_guidance "$vm_state" "$running_confidence" "$ssh_probe_state"
       return "$LLAMA_EXIT_GRACEFUL"
     fi
   fi

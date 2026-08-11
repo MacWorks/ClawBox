@@ -1580,6 +1580,193 @@ test_ensure_env_bootstrap_repair_mode_skips_model_llama_and_openclaw_sections() 
   assert_contains 'repair mode still persists vm connection state' "$output" 'VM_HOST=tester@192.168.64.2'
 }
 
+test_fresh_setup_starts_selected_vm_before_network_prompts() {
+  local output
+  local env_file="$TEMP_DIR/fresh-selected-vm-start.env"
+  local status=0
+  local start_line=0
+  local ip_prompt_line=0
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    queue_prompt_answers \
+      'y' \
+      '192.168.64.250' \
+      'tester' \
+      '/Users/tester'
+
+    ENV_FILE="$env_file"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    VM_REPAIR_MODE=true
+    HOST_IP=''
+    VM_IP=''
+    VM_USER=''
+    VM_USER_PATH=''
+    VM_HOST=''
+    VM_RUNTIME_PATH=''
+    VM_MACHINE_NAME=''
+    LLAMA_BIN=''
+    LLAMA_HOST=''
+    LLAMA_PORT=''
+    LLAMA_CTX=''
+    LLAMA_BASE_URL=''
+    MODEL_PATH=''
+    FIREWALL_SHARED_SUBNET=''
+    OPENCLAW_PROVIDER_NAME=''
+    OPENCLAW_DEFAULT_MODEL=''
+    OPENCLAW_AUTOSTART=''
+
+    list_detected_utm_vm_names() {
+      printf 'macOS\n'
+    }
+    select_utm_vm_identity() {
+      VM_UTM_PATH="$TEMP_DIR/macOS.utm"
+      REPLY="$1"
+      printf 'EVENT:select-vm:%s\n' "$1"
+    }
+    setup_selected_vm_runtime_state() {
+      REPLY='stopped'
+      return 0
+    }
+    start_vm_with_utm() {
+      printf 'EVENT:start-selected-vm:%s\n' "$VM_MACHINE_NAME"
+      return 0
+    }
+    wait_for_vm_running() {
+      printf 'EVENT:verify-selected-vm-running\n'
+      return 0
+    }
+    ensure_vm_connectivity_or_repair() {
+      printf 'EVENT:connectivity-after:%s\n' "$VM_HOST"
+      return 0
+    }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'STATUS:%s\n' "$?"
+  } 2>&1)"
+
+  assert_contains 'fresh setup selected vm path prompts for detected VM' "$output" 'Use this VM? [Y/n]:'
+  assert_contains 'fresh setup starts selected VM before network config' "$output" 'EVENT:start-selected-vm:macOS'
+  assert_contains 'fresh setup verifies selected VM runtime before network config' "$output" 'EVENT:verify-selected-vm-running'
+  assert_contains 'fresh setup still reaches VM IP prompt after runtime verification' "$output" 'Enter VM IP address'
+  assert_contains 'fresh setup continues connectivity after VM settings' "$output" 'EVENT:connectivity-after:tester@192.168.64.250'
+
+  start_line="$(printf '%s\n' "$output" | awk '/EVENT:start-selected-vm/ { print NR; exit }')"
+  ip_prompt_line="$(printf '%s\n' "$output" | awk '/Enter VM IP address/ { print NR; exit }')"
+  if [ -n "$start_line" ] && [ -n "$ip_prompt_line" ] && [ "$start_line" -lt "$ip_prompt_line" ]; then
+    pass 'fresh setup starts selected VM before prompting for VM IP'
+  else
+    fail 'fresh setup should start selected VM before prompting for VM IP'
+  fi
+
+  status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
+  assert_equals 'fresh setup selected VM start flow succeeds' "$status" '0'
+}
+
+test_fresh_setup_bad_ip_uses_guided_recovery_without_manual_ssh_dead_end() {
+  local output
+  local env_file="$TEMP_DIR/fresh-bad-ip-recovery.env"
+  local status=0
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    queue_prompt_answers \
+      'y' \
+      '192.168.64.250' \
+      'tester' \
+      '/Users/tester' \
+      '2' \
+      '192.168.64.6'
+
+    ENV_FILE="$env_file"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    VM_REPAIR_MODE=true
+    HOST_IP='192.168.64.1'
+    VM_IP=''
+    VM_USER=''
+    VM_USER_PATH=''
+    VM_HOST=''
+    VM_RUNTIME_PATH=''
+    VM_MACHINE_NAME=''
+    LLAMA_BIN=''
+    LLAMA_HOST=''
+    LLAMA_PORT=''
+    LLAMA_CTX=''
+    LLAMA_BASE_URL=''
+    MODEL_PATH=''
+    FIREWALL_SHARED_SUBNET=''
+    OPENCLAW_PROVIDER_NAME=''
+    OPENCLAW_DEFAULT_MODEL=''
+    OPENCLAW_AUTOSTART=''
+
+    list_detected_utm_vm_names() {
+      printf 'macOS\n'
+    }
+    select_utm_vm_identity() {
+      VM_UTM_PATH="$TEMP_DIR/macOS.utm"
+      REPLY="$1"
+    }
+    setup_selected_vm_runtime_state() {
+      REPLY='running'
+      VM_RUNNING_STATE_CONFIDENCE='exact'
+      return 0
+    }
+    ssh_check() {
+      return 1
+    }
+    classify_vm_ssh_connectivity() {
+      if [ "$VM_HOST" = 'tester@192.168.64.6' ]; then
+        REPLY='ready'
+        return 0
+      fi
+      REPLY='unreachable'
+      return 1
+    }
+    probe_vm_network_endpoint() {
+      if [ "$VM_HOST" = 'tester@192.168.64.6' ]; then
+        REPLY='ready'
+        return 0
+      fi
+      REPLY='unreachable'
+      return 1
+    }
+    discover_vm_ip_candidates() {
+      printf 'EVENT:discovery-no-candidates\n'
+      REPLY=''
+      return 1
+    }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'STATUS:%s\n' "$?"
+    printf 'FINAL_VM_HOST:%s\n' "$VM_HOST"
+    printf 'ENV_BOOTSTRAPPED:%s\n' "$ENV_BOOTSTRAPPED"
+  } 2>&1)"
+
+  status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
+
+  assert_contains 'fresh bad-ip flow reports configured address unreachable' "$output" 'configured VM address is not reachable'
+  assert_contains 'fresh bad-ip flow attempts discovery' "$output" 'EVENT:discovery-no-candidates'
+  assert_contains 'fresh bad-ip no-candidate path offers discovery retry' "$output" '1) Retry VM address discovery'
+  assert_contains 'fresh bad-ip no-candidate path offers manual IP entry' "$output" '2) Enter VM IP address manually'
+  assert_contains 'fresh bad-ip manual correction updates VM host' "$output" 'FINAL_VM_HOST:tester@192.168.64.6'
+  assert_contains 'fresh bad-ip recovery completes bootstrap' "$output" 'ENV_BOOTSTRAPPED:true'
+  assert_equals 'fresh bad-ip guided recovery succeeds' "$status" '0'
+  assert_not_contains 'fresh bad-ip recovery does not enter Manual SSH Setup' "$output" ' > Manual SSH Setup'
+  assert_not_contains 'fresh bad-ip recovery does not print ssh-copy-id dead-end' "$output" 'ssh-copy-id tester@192.168.64.250'
+}
+
 test_ensure_env_bootstrap_requires_tty_when_setup_is_needed() {
   local output
 
@@ -4225,6 +4412,8 @@ run_test test_ensure_env_bootstrap_fast_path_preserves_configured_custom_port
 run_test test_ensure_env_bootstrap_fast_path_retry_stays_in_setup
 run_test test_setup_preserves_explicit_external_llama_base_url
 run_test test_ensure_env_bootstrap_repair_mode_skips_model_llama_and_openclaw_sections
+run_test test_fresh_setup_starts_selected_vm_before_network_prompts
+run_test test_fresh_setup_bad_ip_uses_guided_recovery_without_manual_ssh_dead_end
 run_test test_ensure_env_bootstrap_requires_tty_when_setup_is_needed
 run_test test_vm_platform_check_without_utm_flow
 run_test test_vm_platform_check_without_vms_flow

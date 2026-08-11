@@ -291,6 +291,81 @@ EOF
   return "$LLAMA_EXIT_GRACEFUL"
 }
 
+offer_selected_vm_start_recovery_before_network_setup() {
+  local choice=''
+  local attempts=0
+  local max_attempts="${CLAWBOX_SELECTED_VM_START_RECOVERY_MAX_ATTEMPTS:-3}"
+
+  while [ "$attempts" -lt "$max_attempts" ]; do
+    blank_line
+    out "The selected VM \"${VM_MACHINE_NAME:-configured VM}\" did not enter a running state."
+    print_utm_start_attempt_summary
+    blank_line
+    out '1) Try starting the selected VM again'
+    out '2) I started the VM manually; check again'
+    out '3) Abort setup'
+    blank_line
+
+    while true; do
+      prompt_with_suffix 'Choose next step' '[1-3]'
+      choice="$REPLY"
+      [ -n "$choice" ] || choice='1'
+
+      case "$choice" in
+        1|2|3)
+          break
+          ;;
+        *)
+          error 'Invalid selection. Enter a number between 1 and 3.'
+          ;;
+      esac
+    done
+
+    case "$choice" in
+      1)
+        attempts=$((attempts + 1))
+        if start_vm_with_utm && wait_for_vm_running; then
+          return 0
+        fi
+        ;;
+      2)
+        attempts=$((attempts + 1))
+        if wait_for_manual_vm_running; then
+          return 0
+        fi
+        ;;
+      3)
+        return "$LLAMA_EXIT_GRACEFUL"
+        ;;
+    esac
+  done
+
+  warn "The selected VM \"${VM_MACHINE_NAME:-configured VM}\" still is not confirmed running."
+  return "$LLAMA_EXIT_GRACEFUL"
+}
+
+ensure_selected_vm_started_before_network_setup() {
+  local selected_runtime_state='unknown'
+
+  [ -n "${VM_MACHINE_NAME:-}" ] || return 0
+
+  if setup_selected_vm_runtime_state; then
+    selected_runtime_state="$REPLY"
+  fi
+
+  if [ "$selected_runtime_state" = 'running' ]; then
+    return 0
+  fi
+
+  out "Starting selected VM: ${VM_MACHINE_NAME:-configured VM}"
+  if start_vm_with_utm && wait_for_vm_running; then
+    return 0
+  fi
+
+  warn 'ClawBox could not confirm that the selected VM started.'
+  offer_selected_vm_start_recovery_before_network_setup
+}
+
 resolve_vm_machine_name_value() {
   local current_value="$1"
   local fallback_value="$2"
@@ -389,6 +464,7 @@ ensure_vm_connection_setup() {
   local vm_machine_name_value
 
   ensure_vm_platform_ready || return $?
+  ensure_selected_vm_started_before_network_setup || return $?
 
   section "Network + VM Configuration"
   parse_vm_ip_from_host "${VM_HOST:-}"
