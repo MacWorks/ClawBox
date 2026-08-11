@@ -114,10 +114,39 @@ launchagent_record_setup_trace() {
   } >>"$LAUNCHAGENT_STDOUT_LOG" 2>/dev/null || true
 }
 
+launchagent_kickstart_status_file() {
+  printf '%s.kickstart\n' "$LAUNCHAGENT_STATE_FILE"
+}
+
 launchagent_record_setup_observation() {
   local observed_state="$1"
 
   launchagent_record_setup_trace 'setup-observed-state' "state=$observed_state"
+}
+
+launchagent_async_kickstart_failed() {
+  local status_file=''
+  local line=''
+  local status=''
+
+  [ "${LAUNCHAGENT_KICKSTART_ASYNC:-false}" = true ] || return 1
+
+  status_file="$(launchagent_kickstart_status_file)"
+  [ -f "$status_file" ] || return 1
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      status=*)
+        status="${line#status=}"
+        ;;
+    esac
+  done < "$status_file"
+
+  [ -n "$status" ] || return 1
+  [ "$status" -eq 0 ] 2>/dev/null && return 1
+
+  launchagent_record_setup_trace 'setup-kickstart-async-failed' "status=$status"
+  return 0
 }
 
 launchagent_read_start_state() {
@@ -181,6 +210,10 @@ launchagent_wait_for_start_state() {
           return 1
           ;;
       esac
+    fi
+
+    if launchagent_async_kickstart_failed; then
+      return 1
     fi
 
     attempts=$((attempts + 1))
@@ -290,6 +323,32 @@ EOF
 EOF
 }
 
+launchagent_kickstart_service() {
+  local status=0
+  local status_file=''
+  local pid=''
+
+  launchagent_record_setup_trace 'setup-kickstart-start' "async=${LAUNCHAGENT_KICKSTART_ASYNC:-false}"
+
+  if [ "${LAUNCHAGENT_KICKSTART_ASYNC:-false}" = true ]; then
+    status_file="$(launchagent_kickstart_status_file)"
+    rm -f "$status_file"
+    (
+      launchctl kickstart -k "$(launchagent_service_target)" >/dev/null 2>&1
+      printf 'status=%s\n' "$?" > "$status_file"
+    ) >/dev/null 2>&1 &
+    pid="$!"
+    status=$?
+    launchagent_record_setup_trace 'setup-kickstart-end' "status=$status" 'async=true' "pid=$pid"
+    return "$status"
+  fi
+
+  launchctl kickstart -k "$(launchagent_service_target)" >/dev/null 2>&1
+  status=$?
+  launchagent_record_setup_trace 'setup-kickstart-end' "status=$status" 'async=false' 'ignored=true'
+  return 0
+}
+
 launchagent_install_and_start() {
   local status=0
 
@@ -315,6 +374,7 @@ launchagent_install_and_start() {
 
   launchagent_record_setup_trace 'setup-state-reset-start'
   rm -f "$LAUNCHAGENT_STATE_FILE"
+  rm -f "$(launchagent_kickstart_status_file)"
   status=$?
   launchagent_record_setup_trace 'setup-state-reset-end' "status=$status"
   if [ "$status" -ne 0 ]; then
@@ -335,10 +395,14 @@ launchagent_install_and_start() {
     launchagent_record_setup_trace 'setup-install-end' "status=$status"
     return "$status"
   fi
-  launchagent_record_setup_trace 'setup-kickstart-start'
-  launchctl kickstart -k "$(launchagent_service_target)" >/dev/null 2>&1
+  launchagent_kickstart_service
   status=$?
-  launchagent_record_setup_trace 'setup-kickstart-end' "status=$status" 'ignored=true'
+  if [ "$status" -ne 0 ]; then
+    VM_AUTOSTART_STATE='unverified'
+    llama_fail "VM auto-start LaunchAgent could not be kickstarted."
+    launchagent_record_setup_trace 'setup-install-end' "status=$status"
+    return "$status"
+  fi
 
   launchagent_record_setup_trace 'setup-operational-check-start'
   launchagent_runtime_operational
@@ -366,6 +430,7 @@ launchagent_start_selected_vm_for_setup() {
 
   VM_AUTOSTART_SETUP_TEMPORARY=true
   VM_HOST=''
+  LAUNCHAGENT_KICKSTART_ASYNC=true
 
   launchagent_record_setup_trace 'setup-start-selected-start' "vm=$VM_MACHINE_NAME"
   status_begin_compact 'Starting selected VM with ClawBox VM startup service...'
@@ -389,6 +454,7 @@ launchagent_start_selected_vm_for_setup() {
   fi
 
   VM_HOST="$saved_vm_host"
+  LAUNCHAGENT_KICKSTART_ASYNC=false
   launchagent_record_setup_trace 'setup-start-selected-end' "status=$status"
   return "$status"
 }

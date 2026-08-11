@@ -3380,6 +3380,135 @@ test_launchagent_setup_start_waits_for_wrapper_state() {
   unset CLAWBOX_VM_AUTOSTART_SETUP_WAIT_ATTEMPTS CLAWBOX_VM_AUTOSTART_SETUP_WAIT_INTERVAL
 }
 
+test_launchagent_setup_start_does_not_wait_for_kickstart_completion() {
+  local original_home="$HOME"
+  local launchctl_log="$TEMP_DIR/launchctl-async-start-selected.log"
+  local release_file="$TEMP_DIR/launchctl-async-release"
+  local finished_file="$TEMP_DIR/launchctl-async-finished"
+  local output=''
+  local status=0
+
+  HOME="$TEMP_DIR/home-async-start-selected"
+  BASE_DIR="$ROOT_DIR"
+  VM_MACHINE_NAME='Test VM'
+  VM_HOST=''
+  CLAWBOX_VM_AUTOSTART_SETUP_WAIT_ATTEMPTS=2
+  CLAWBOX_VM_AUTOSTART_SETUP_WAIT_INTERVAL=0
+
+  launchctl() {
+    case "${1:-}" in
+      print)
+        if [ -f "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist" ]; then
+          return 0
+        fi
+        return 1
+        ;;
+      bootstrap)
+        mkdir -p "$HOME/Library/Application Support/ClawBox/state"
+        printf 'state=running\nvm=Test VM\nhost=\ndetail=VM running after startup attempt: Test VM\ntime=1\n' \
+          > "$HOME/Library/Application Support/ClawBox/state/start-utm-vm.status"
+        printf '%s\n' "$*" >> "$launchctl_log"
+        return 0
+        ;;
+      kickstart)
+        printf 'kickstart-started\n' >> "$launchctl_log"
+        while [ ! -f "$release_file" ]; do
+          sleep 0.05
+        done
+        printf 'kickstart-finished\n' >> "$launchctl_log"
+        : > "$finished_file"
+        return 0
+        ;;
+      *)
+        printf '%s\n' "$*" >> "$launchctl_log"
+        return 0
+        ;;
+    esac
+  }
+
+  llama_fail() {
+    error "$1"
+    return 1
+  }
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/launchagent.sh"
+
+  set +e
+  output="$(launchagent_start_selected_vm_for_setup 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'setup-time LaunchAgent selected VM start succeeds while kickstart is still dispatching' "$status" '0'
+  assert_contains 'setup-time LaunchAgent reports verified startup after async kickstart request' "$output" 'Selected VM startup verified.'
+  assert_contains 'setup-time LaunchAgent starts kickstart request' "$(cat "$launchctl_log")" 'kickstart-started'
+  if [ ! -f "$finished_file" ]; then
+    pass 'setup-time LaunchAgent does not synchronously wait for kickstart completion'
+  else
+    fail 'setup-time LaunchAgent should not wait for kickstart completion before wrapper-state success'
+  fi
+  assert_contains 'setup-time LaunchAgent records asynchronous kickstart request' "$(cat "$BASE_DIR/logs/vm/clawbox-startutmvm.out.log")" 'event=setup-kickstart-end status=0 async=true'
+
+  : > "$release_file"
+  sleep 0.1
+
+  HOME="$original_home"
+  unset CLAWBOX_VM_AUTOSTART_SETUP_WAIT_ATTEMPTS CLAWBOX_VM_AUTOSTART_SETUP_WAIT_INTERVAL
+}
+
+test_launchagent_setup_start_detects_async_kickstart_failure() {
+  local original_home="$HOME"
+  local launchctl_log="$TEMP_DIR/launchctl-async-failure.log"
+  local output=''
+  local status=0
+
+  HOME="$TEMP_DIR/home-async-start-failure"
+  BASE_DIR="$ROOT_DIR"
+  VM_MACHINE_NAME='Test VM'
+  VM_HOST=''
+  CLAWBOX_VM_AUTOSTART_SETUP_WAIT_ATTEMPTS=5
+  CLAWBOX_VM_AUTOSTART_SETUP_WAIT_INTERVAL=0
+
+  launchctl() {
+    case "${1:-}" in
+      print)
+        if [ -f "$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist" ]; then
+          return 0
+        fi
+        return 1
+        ;;
+      kickstart)
+        printf '%s\n' "$*" >> "$launchctl_log"
+        return 42
+        ;;
+      *)
+        printf '%s\n' "$*" >> "$launchctl_log"
+        return 0
+        ;;
+    esac
+  }
+
+  llama_fail() {
+    error "$1"
+    return 1
+  }
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/launchagent.sh"
+
+  set +e
+  output="$(launchagent_start_selected_vm_for_setup 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'setup-time LaunchAgent start fails when async kickstart request fails and no wrapper state appears' "$status" '1'
+  assert_contains 'setup-time LaunchAgent reports unverified startup after kickstart request failure' "$output" 'Selected VM startup could not be verified.'
+  assert_contains 'setup-time LaunchAgent traces async kickstart request failure' "$(cat "$BASE_DIR/logs/vm/clawbox-startutmvm.out.log")" 'event=setup-kickstart-async-failed status=42'
+
+  HOME="$original_home"
+  unset CLAWBOX_VM_AUTOSTART_SETUP_WAIT_ATTEMPTS CLAWBOX_VM_AUTOSTART_SETUP_WAIT_INTERVAL
+}
+
 test_launchagent_module_requires_vm_host() {
   local original_home="$HOME"
   local launchctl_log="$TEMP_DIR/launchctl-missing-vm-host.log"
@@ -6481,6 +6610,8 @@ run_test test_launchagent_wrapper_normalizes_failed_start_when_vm_is_already_run
 run_test test_launchagent_wrapper_uses_ssh_reachability_as_success_signal
 run_test test_launchagent_wrapper_supports_start_only_without_vm_host
 run_test test_launchagent_setup_start_waits_for_wrapper_state
+run_test test_launchagent_setup_start_does_not_wait_for_kickstart_completion
+run_test test_launchagent_setup_start_detects_async_kickstart_failure
 run_test test_launchagent_module_requires_vm_host
 run_test test_launchagent_mismatched_runtime_recommends_update
 run_test test_launchagent_temporary_service_prompts_for_retention_yes_and_no
