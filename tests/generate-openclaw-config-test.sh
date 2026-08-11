@@ -39,12 +39,14 @@ write_fixture_env() {
   local provider_timeout="${11:-1800}"
   local stuck_warn="${12:-600000}"
   local stuck_abort="${13:-1800000}"
+  local supports_vision="${14:-false}"
 
   cat > "$fixture_root/.env" <<EOF
 LLAMA_BASE_URL="$llama_base_url"
 LLAMA_CTX="$llama_ctx"
 OPENCLAW_PROVIDER_NAME="$provider_name"
 OPENCLAW_DEFAULT_MODEL="$default_model"
+OPENCLAW_MODEL_SUPPORTS_VISION="$supports_vision"
 OPENCLAW_GATEWAY_MODE="$gateway_mode"
 OPENCLAW_MAX_TOKENS="$openclaw_max_tokens"
 OPENCLAW_PROVIDER_TIMEOUT_SECONDS="$provider_timeout"
@@ -124,6 +126,17 @@ test_generate_openclaw_config_writes_expected_config() {
   json_query "$fixture_root" 'models.providers.clawbox.models.0.maxTokens'
   assert_equals 'generator writes the default managed OpenClaw maxTokens' "$REPLY" '8192'
 
+  json_query "$fixture_root" 'models.providers.clawbox.models.0.input.0'
+  assert_equals 'generator keeps text-only input by default' "$REPLY" 'text'
+  REPLY="$(python3 - "$fixture_root/vm/runtime/openclaw.json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as handle:
+    model = json.load(handle)["models"]["providers"]["clawbox"]["models"][0]
+print("image" in model.get("input", []))
+PY
+)"
+  assert_equals 'generator does not advertise image input for text-only config' "$REPLY" 'False'
+
   json_query "$fixture_root" 'agents.defaults.compaction.reserveTokens'
   assert_equals 'generator writes derived compaction reserveTokens' "$REPLY" '5000'
 
@@ -160,6 +173,48 @@ print("pattern" in keywords and "additionalProperties" in keywords)
 PY
 )"
   assert_equals 'generator marks required JSON Schema keywords unsupported for local llama.cpp model' "$REPLY" 'True'
+}
+
+test_generate_openclaw_config_supports_vision_model_input() {
+  local fixture_root
+
+  setup_generator_fixture
+  fixture_root="$REPLY"
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '32768' 'clawbox' 'local' 'local' \
+    'false' '' '' '8192' '1800' '600000' '1800000' 'true'
+
+  run_generator "$fixture_root"
+
+  assert_equals 'generator succeeds with vision-capable model configuration' "$GENERATOR_LAST_STATUS" '0'
+  REPLY="$(python3 - "$fixture_root/vm/runtime/openclaw.json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as handle:
+    model = json.load(handle)["models"]["providers"]["clawbox"]["models"][0]
+print(",".join(model.get("input", [])))
+PY
+)"
+  assert_equals 'generator advertises text and image input for vision models' "$REPLY" 'text,image'
+}
+
+test_generate_openclaw_config_treats_absent_vision_setting_as_text_only() {
+  local fixture_root
+
+  setup_generator_fixture
+  fixture_root="$REPLY"
+  write_fixture_env "$fixture_root" 'http://127.0.0.1:11434' '32768' 'clawbox' 'local' 'local'
+  perl -0pi -e 's/^OPENCLAW_MODEL_SUPPORTS_VISION=.*\n//m' "$fixture_root/.env"
+
+  run_generator "$fixture_root"
+
+  assert_equals 'generator succeeds when vision setting is absent from legacy env' "$GENERATOR_LAST_STATUS" '0'
+  REPLY="$(python3 - "$fixture_root/vm/runtime/openclaw.json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as handle:
+    model = json.load(handle)["models"]["providers"]["clawbox"]["models"][0]
+print(",".join(model.get("input", [])))
+PY
+)"
+  assert_equals 'generator treats absent vision setting as text-only' "$REPLY" 'text'
 }
 
 test_generate_openclaw_config_supports_custom_max_tokens() {
@@ -456,6 +511,8 @@ test_generate_openclaw_config_includes_embeddings_memory_search_when_enabled() {
 printf 'Running generate-openclaw-config tests\n'
 
 run_test test_generate_openclaw_config_writes_expected_config
+run_test test_generate_openclaw_config_supports_vision_model_input
+run_test test_generate_openclaw_config_treats_absent_vision_setting_as_text_only
 run_test test_generate_openclaw_config_supports_custom_max_tokens
 run_test test_generate_openclaw_config_supports_custom_runtime_tuning
 run_test test_generate_openclaw_config_uses_effective_context_window_when_known

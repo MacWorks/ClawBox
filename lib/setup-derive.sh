@@ -143,6 +143,38 @@ model_path_is_supported_file() {
   return 1
 }
 
+model_path_is_projector_candidate() {
+  local model_path="$1"
+  local model_name=''
+
+  [ -n "$model_path" ] || return 1
+  model_name="${model_path##*/}"
+
+  case "$model_name" in
+    *[Mm][Mm][Pp][Rr][Oo][Jj]*.gguf|*[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Oo][Rr]*.gguf)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+mmproj_path_is_valid_file() {
+  local mmproj_path="$1"
+
+  [ -n "$mmproj_path" ] || return 1
+  [ -f "$mmproj_path" ] || return 1
+  [ -r "$mmproj_path" ] || return 1
+
+  case "$mmproj_path" in
+    *.gguf)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 derive_openclaw_model_id() {
   local model_filename="$1"
 
@@ -164,7 +196,21 @@ list_models_in_directory() {
     return
   fi
 
-  find "$models_dir" -maxdepth 1 -type f -name '*.gguf' ! -name '.*' -exec basename {} \; | LC_ALL=C sort
+  find "$models_dir" -maxdepth 1 -type f -name '*.gguf' ! -name '.*' -exec basename {} \; \
+    | awk 'tolower($0) !~ /mmproj|projector/' \
+    | LC_ALL=C sort
+}
+
+list_mmproj_candidates_in_directory() {
+  local models_dir="$1"
+
+  if [ ! -d "$models_dir" ]; then
+    return
+  fi
+
+  find "$models_dir" -maxdepth 1 -type f -name '*.gguf' ! -name '.*' -exec basename {} \; \
+    | awk 'tolower($0) ~ /mmproj|projector/' \
+    | LC_ALL=C sort
 }
 
 build_llama_base_url() {

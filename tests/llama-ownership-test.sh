@@ -1030,10 +1030,16 @@ test_prestart_flow_prefers_discovered_healthy_port_before_binary_setup() {
     LLAMA_CTX='16384'
     LLAMA_BASE_URL='http://127.0.0.1:11434/v1'
     MODEL_PATH="$model_path"
+    OPENCLAW_MODEL_SUPPORTS_VISION='false'
+    MMPROJ_PATH=''
     FIREWALL_SHARED_SUBNET='192.168.64.0/24'
     OPENCLAW_PROVIDER_NAME='clawbox'
     OPENCLAW_DEFAULT_MODEL='model'
     OPENCLAW_AUTOSTART='true'
+
+    env_file_has_key() {
+      [ "$1" = 'OPENCLAW_MODEL_SUPPORTS_VISION' ]
+    }
 
     llama_discover_healthy_instance_port() {
       REPLY='11435'

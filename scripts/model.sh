@@ -374,11 +374,41 @@ sync_model_openclaw_config_scope() {
   fi
 }
 
+resolve_primary_model_switch_runtime_settings() {
+  local previous_model_path="$1"
+  local native_context="${2:-}"
+  local model_changed=false
+  local previous_ctx="${LLAMA_CTX:-}"
+  local previous_gpu_layers="${LLAMA_GPU_LAYERS:-}"
+  local max_tokens="${OPENCLAW_MAX_TOKENS:-8192}"
+
+  if [ -n "$previous_model_path" ] && [ -n "${MODEL_PATH:-}" ] && [ "$previous_model_path" != "$MODEL_PATH" ]; then
+    model_changed=true
+  fi
+
+  if [ -n "$native_context" ] && [ -n "$previous_ctx" ] && [[ "$previous_ctx" =~ ^[0-9]+$ ]] && [ "$previous_ctx" -gt "$native_context" ]; then
+    warn "Configured LLAMA_CTX=$previous_ctx exceeds selected model native context $native_context."
+    LLAMA_CTX="$native_context"
+    out "Using LLAMA_CTX=$LLAMA_CTX for the selected model before restarting llama-server."
+    validate_openclaw_token_context_values "$LLAMA_CTX" "$max_tokens" 'model switch' || return $?
+  fi
+
+  if [ "$model_changed" = true ] && [ -n "$previous_gpu_layers" ]; then
+    warn "Clearing model-specific LLAMA_GPU_LAYERS=$previous_gpu_layers for the selected model."
+    LLAMA_GPU_LAYERS=''
+    out 'Reconfigure LLAMA_GPU_LAYERS after confirming the new model loads safely.'
+  fi
+
+  return 0
+}
+
 switch_primary_model() {
   local native_context=''
+  local previous_model_path=''
 
   [ -f "$ENV_FILE" ] || { error 'Missing .env. Run ./clawbox setup first.'; return 1; }
   source_env_file || return $?
+  previous_model_path="${MODEL_PATH:-}"
 
   section 'Host Model'
   out "Current model: ${MODEL_PATH:-not configured}"
@@ -400,11 +430,12 @@ switch_primary_model() {
   then
     out "Model native context: $native_context"
     if [ -n "${LLAMA_CTX:-}" ] && [[ "${LLAMA_CTX:-}" =~ ^[0-9]+$ ]] && [ "$LLAMA_CTX" -gt "$native_context" ]; then
-      warn "Configured LLAMA_CTX=$LLAMA_CTX exceeds model native context $native_context; llama-server may cap the effective runtime context."
+      warn "Configured LLAMA_CTX=$LLAMA_CTX exceeds model native context $native_context; resolving before restart."
     fi
   else
     warn 'Model native context could not be read from GGUF metadata; preserving configured LLAMA_CTX.'
   fi
+  resolve_primary_model_switch_runtime_settings "$previous_model_path" "$native_context" || return $?
   OPENCLAW_DEFAULT_MODEL="${OPENCLAW_DEFAULT_MODEL:-local}"
   write_env_from_template || return $?
   source_env_file || return $?

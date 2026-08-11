@@ -23,6 +23,7 @@ maybe_migrate_llama_extra_args() {
     outf ' LLAMA_FLASH_ATTENTION="%s"' "${LLAMA_MIGRATION_FLASH_ATTENTION:-false}"
     outf ' LLAMA_JINJA="%s"' "${LLAMA_MIGRATION_JINJA:-false}"
     outf ' LLAMA_MLOCK="%s"' "${LLAMA_MIGRATION_MLOCK:-false}"
+    outf ' MMPROJ_PATH="%s"' "${LLAMA_MIGRATION_MMPROJ_PATH:-${MMPROJ_PATH:-}}"
     outf ' LLAMA_EXTRA_ARGS="%s"' "$proposed_extra_args"
     return 1
   fi
@@ -37,6 +38,7 @@ maybe_migrate_llama_extra_args() {
   outf ' LLAMA_FLASH_ATTENTION="%s"' "${LLAMA_MIGRATION_FLASH_ATTENTION:-false}"
   outf ' LLAMA_JINJA="%s"' "${LLAMA_MIGRATION_JINJA:-false}"
   outf ' LLAMA_MLOCK="%s"' "${LLAMA_MIGRATION_MLOCK:-false}"
+  outf ' MMPROJ_PATH="%s"' "${LLAMA_MIGRATION_MMPROJ_PATH:-${MMPROJ_PATH:-}}"
   outf ' LLAMA_EXTRA_ARGS="%s"' "$proposed_extra_args"
 
   prompt_yes_no 'Apply this LLAMA_EXTRA_ARGS migration now?' 'y'
@@ -52,6 +54,7 @@ maybe_migrate_llama_extra_args() {
   LLAMA_FLASH_ATTENTION="${LLAMA_MIGRATION_FLASH_ATTENTION:-false}"
   LLAMA_JINJA="${LLAMA_MIGRATION_JINJA:-false}"
   LLAMA_MLOCK="${LLAMA_MIGRATION_MLOCK:-false}"
+  MMPROJ_PATH="${LLAMA_MIGRATION_MMPROJ_PATH:-${MMPROJ_PATH:-}}"
   LLAMA_EXTRA_ARGS="$proposed_extra_args"
 
   write_env_from_template
@@ -103,6 +106,9 @@ ensure_env_bootstrap() {
   local llama_flash_attention_value
   local llama_jinja_value
   local llama_mlock_value
+  local openclaw_model_supports_vision_value
+  local mmproj_path_value
+  local openclaw_model_supports_vision_configured=false
   local native_context_value=''
 
   if [ ! -f "$ENV_FILE" ]; then
@@ -110,6 +116,9 @@ ensure_env_bootstrap() {
   fi
 
   source_env_file
+  if env_file_has_key 'OPENCLAW_MODEL_SUPPORTS_VISION'; then
+    openclaw_model_supports_vision_configured=true
+  fi
   maybe_migrate_llama_extra_args || return $?
 
   validate_openclaw_token_context_values "${LLAMA_CTX:-32768}" "${OPENCLAW_MAX_TOKENS:-8192}" '.env' || return $?
@@ -122,6 +131,25 @@ ensure_env_bootstrap() {
   LLAMA_FLASH_ATTENTION="${LLAMA_FLASH_ATTENTION:-false}"
   LLAMA_JINJA="${LLAMA_JINJA:-true}"
   LLAMA_MLOCK="${LLAMA_MLOCK:-false}"
+  MMPROJ_PATH="${MMPROJ_PATH:-}"
+
+  if [ "$openclaw_model_supports_vision_configured" != true ] \
+    && ! value_needs_setup 'MODEL_PATH' "${MODEL_PATH:-}"; then
+    if [ ! -t 0 ] && [ ! -p /dev/stdin ]; then
+      error 'Primary model vision capability is not configured in .env.'
+      error 'Run ./clawbox setup in a terminal to choose text-only or vision-capable behavior.'
+      return 1
+    fi
+
+    section "Model Configuration"
+    out 'This existing ClawBox installation predates managed vision settings.'
+    setup_configure_model_vision "${MODEL_PATH:-}" "${MODEL_PATH:-}" || return $?
+    write_env_from_template
+    source_env_file || return $?
+    openclaw_model_supports_vision_configured=true
+  fi
+
+  OPENCLAW_MODEL_SUPPORTS_VISION="${OPENCLAW_MODEL_SUPPORTS_VISION:-false}"
 
   if [ "$VM_REPAIR_MODE" = true ]; then
     required_keys='VM_IP VM_USER VM_USER_PATH VM_HOST VM_RUNTIME_PATH VM_MACHINE_NAME'
@@ -356,11 +384,17 @@ ensure_env_bootstrap() {
   llama_jinja_value="$REPLY"
   configured_or_default 'LLAMA_MLOCK' "${LLAMA_MLOCK:-}" 'false'
   llama_mlock_value="$REPLY"
+  configured_or_default 'OPENCLAW_MODEL_SUPPORTS_VISION' "${OPENCLAW_MODEL_SUPPORTS_VISION:-}" 'false'
+  openclaw_model_supports_vision_value="$REPLY"
+  configured_or_default 'MMPROJ_PATH' "${MMPROJ_PATH:-}" ''
+  mmproj_path_value="$REPLY"
   LLAMA_PARALLEL="$llama_parallel_value"
   LLAMA_GPU_LAYERS="$llama_gpu_layers_value"
   LLAMA_FLASH_ATTENTION="$llama_flash_attention_value"
   LLAMA_JINJA="$llama_jinja_value"
   LLAMA_MLOCK="$llama_mlock_value"
+  OPENCLAW_MODEL_SUPPORTS_VISION="$openclaw_model_supports_vision_value"
+  MMPROJ_PATH="$mmproj_path_value"
   LLAMA_BASE_URL="$llama_base_url_value"
   OPENCLAW_MAX_TOKENS="$openclaw_max_tokens_value"
   write_env_from_template
@@ -408,6 +442,8 @@ ensure_env_bootstrap() {
   LLAMA_FLASH_ATTENTION="$llama_flash_attention_value"
   LLAMA_JINJA="$llama_jinja_value"
   LLAMA_MLOCK="$llama_mlock_value"
+  OPENCLAW_MODEL_SUPPORTS_VISION="$openclaw_model_supports_vision_value"
+  MMPROJ_PATH="$mmproj_path_value"
   LLAMA_BASE_URL="$llama_base_url_value"
   OPENCLAW_MAX_TOKENS="${OPENCLAW_MAX_TOKENS:-8192}"
   FIREWALL_SHARED_SUBNET="$firewall_shared_subnet_value"
@@ -440,6 +476,8 @@ ensure_env_bootstrap() {
   print_summary_value "LLAMA_FLASH_ATTENTION" "${LLAMA_FLASH_ATTENTION:-}"
   print_summary_value "LLAMA_JINJA" "${LLAMA_JINJA:-}"
   print_summary_value "LLAMA_MLOCK" "${LLAMA_MLOCK:-}"
+  print_summary_value "OPENCLAW_MODEL_SUPPORTS_VISION" "${OPENCLAW_MODEL_SUPPORTS_VISION:-}"
+  print_summary_value "MMPROJ_PATH" "${MMPROJ_PATH:-}"
   print_summary_value "LLAMA_BASE_URL" "${LLAMA_BASE_URL:-}"
   print_summary_value "OPENCLAW_MAX_TOKENS" "${OPENCLAW_MAX_TOKENS:-}"
   print_summary_value "MODEL_PATH" "${MODEL_PATH:-}"

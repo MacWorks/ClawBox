@@ -914,6 +914,8 @@ test_runtime_handle_module() {
 test_context_runtime_module() {
   local gguf_file="$TEMP_DIR/context-fixture.gguf"
   local malformed_file="$TEMP_DIR/not-gguf.bin"
+  local mmproj_file="$TEMP_DIR/projector with spaces.gguf"
+  local mmproj_plain_file="$TEMP_DIR/projector.gguf"
   local conflicts=''
   local reserve=''
   local entries=''
@@ -939,6 +941,8 @@ with open(path, "wb") as handle:
     handle.write(struct.pack("<I", 262144))
 PY
   printf 'nope' > "$malformed_file"
+  printf 'mmproj' > "$mmproj_file"
+  printf 'mmproj' > "$mmproj_plain_file"
 
   if [ "$(gguf_native_context_from_file "$gguf_file")" = '262144' ]; then
     pass "GGUF native context parser reads llama.context_length metadata"
@@ -952,9 +956,9 @@ PY
     pass "GGUF native context parser rejects malformed files"
   fi
 
-  if llama_managed_runtime_arg_conflicts '--threads 8 --ctx-size 65536 --parallel 2 --jinja'; then
+  if llama_managed_runtime_arg_conflicts '--threads 8 --ctx-size 65536 --parallel 2 --jinja --mmproj vision.gguf'; then
     conflicts="$REPLY"
-    if [[ "$conflicts" == *'--ctx-size'* ]] && [[ "$conflicts" == *'--parallel'* ]] && [[ "$conflicts" == *'--jinja'* ]]; then
+    if [[ "$conflicts" == *'--ctx-size'* ]] && [[ "$conflicts" == *'--parallel'* ]] && [[ "$conflicts" == *'--jinja'* ]] && [[ "$conflicts" == *'--mmproj'* ]]; then
       pass "managed runtime arg conflict detection catches managed flags in LLAMA_EXTRA_ARGS"
     else
       fail "managed runtime arg conflict detection should report conflicting flags"
@@ -969,6 +973,7 @@ PY
   LLAMA_FLASH_ATTENTION=false
   LLAMA_JINJA=false
   LLAMA_MLOCK=false
+  MMPROJ_PATH=''
   LLAMA_EXTRA_ARGS='-ngl 99 --jinja -fa on --mlock --parallel 1'
   if llama_migrate_managed_runtime_extra_args "$LLAMA_EXTRA_ARGS" \
     && [ "$LLAMA_MIGRATION_GPU_LAYERS" = '99' ] \
@@ -983,6 +988,7 @@ PY
   fi
 
   LLAMA_JINJA=true
+  MMPROJ_PATH=''
   LLAMA_EXTRA_ARGS='--jinja --rope-scaling yarn --threads 8'
   if llama_migrate_managed_runtime_extra_args "$LLAMA_EXTRA_ARGS" \
     && [ "$LLAMA_MIGRATION_JINJA" = 'true' ] \
@@ -993,6 +999,7 @@ PY
   fi
 
   LLAMA_JINJA=false
+  MMPROJ_PATH=''
   LLAMA_EXTRA_ARGS='--jinja --threads 8'
   if llama_migrate_managed_runtime_extra_args "$LLAMA_EXTRA_ARGS" \
     && [ "$LLAMA_MIGRATION_JINJA" = 'true' ]; then
@@ -1008,7 +1015,17 @@ PY
     pass "managed runtime arg migration ignores whitespace-only LLAMA_EXTRA_ARGS"
   fi
 
-  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_JINJA LLAMA_MLOCK LLAMA_EXTRA_ARGS
+  MMPROJ_PATH=''
+  LLAMA_EXTRA_ARGS="--threads 8 --mmproj $mmproj_plain_file --rope-scaling yarn"
+  if llama_migrate_managed_runtime_extra_args "$LLAMA_EXTRA_ARGS" \
+    && [ "$LLAMA_MIGRATION_MMPROJ_PATH" = "$mmproj_plain_file" ] \
+    && [ "$LLAMA_MIGRATION_EXTRA_ARGS" = '--threads 8 --rope-scaling yarn' ]; then
+    pass "managed runtime arg migration moves mmproj into first-class setting"
+  else
+    fail "managed runtime arg migration should move --mmproj into MMPROJ_PATH"
+  fi
+
+  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_JINJA LLAMA_MLOCK LLAMA_EXTRA_ARGS MMPROJ_PATH
 
   LLAMA_CTX=65536
   LLAMA_PARALLEL=2
@@ -1016,6 +1033,7 @@ PY
   LLAMA_FLASH_ATTENTION=true
   LLAMA_JINJA=true
   LLAMA_MLOCK=true
+  MMPROJ_PATH="$mmproj_file"
   unset LLAMA_EXTRA_ARGS
   llama_validate_managed_runtime_settings
   llama_append_managed_runtime_args runtime_args
@@ -1024,6 +1042,7 @@ PY
     && [[ " ${runtime_args[*]} " == *' --n-gpu-layers 99 '* ]] \
     && [[ " ${runtime_args[*]} " == *' --flash-attn on '* ]] \
     && [[ " ${runtime_args[*]} " == *' --jinja '* ]] \
+    && [[ " ${runtime_args[*]} " == *" --mmproj $mmproj_file "* ]] \
     && [[ " ${runtime_args[*]} " == *' --mlock '* ]]; then
     pass "managed runtime args render first-class llama-server settings"
   else
@@ -1033,6 +1052,7 @@ PY
   LLAMA_FLASH_ATTENTION=false
   LLAMA_JINJA=false
   LLAMA_MLOCK=true
+  MMPROJ_PATH=''
   runtime_args=()
   llama_append_managed_runtime_args runtime_args
   if [[ " ${runtime_args[*]} " == *' --flash-attn off --mlock '* ]]; then
@@ -1045,7 +1065,14 @@ PY
   else
     fail "managed runtime args should omit --jinja when LLAMA_JINJA is false"
   fi
-  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_JINJA LLAMA_MLOCK
+  MMPROJ_PATH="$TEMP_DIR/missing-mmproj.gguf"
+  if llama_validate_managed_runtime_settings >/dev/null 2>&1; then
+    fail "managed runtime settings should reject a missing multimodal projector"
+  else
+    pass "managed runtime settings reject a missing multimodal projector"
+  fi
+
+  unset LLAMA_CTX LLAMA_PARALLEL LLAMA_GPU_LAYERS LLAMA_FLASH_ATTENTION LLAMA_JINJA LLAMA_MLOCK MMPROJ_PATH
 
   reserve="$(openclaw_context_reserve_for_context 32768)"
   assert_equals "OpenClaw reserve policy derives 8192 from 32768 context" "$reserve" '8192'
@@ -1171,6 +1198,10 @@ test_deploy_module() {
   local merged_models=''
   local max_tokens_merged_models=''
   local wrong_max_tokens_model=''
+  local vision_models=''
+  local stale_text_only_model=''
+  local stale_vision_model=''
+  local vision_merged_models=''
   local cron_deny='["cron"]'
   local existing_deny='["shell","cron","memory"]'
   local missing_cron_deny='["shell","memory"]'
@@ -1182,6 +1213,7 @@ test_deploy_module() {
   OPENCLAW_DEFAULT_MODEL=local
   OPENCLAW_PROVIDER_NAME=clawbox
   LLAMA_CTX=32768
+  unset OPENCLAW_MODEL_SUPPORTS_VISION
   unset OPENCLAW_MAX_TOKENS
   unset OPENCLAW_PROVIDER_TIMEOUT_SECONDS
   unset OPENCLAW_STUCK_SESSION_WARN_MS
@@ -1278,6 +1310,7 @@ import json, sys
 models = json.loads(sys.argv[1])
 assert models[0]["maxTokens"] == 8192
 assert models[0]["contextWindow"] == 32768
+assert models[0]["input"] == ["text"]
 assert models[0]["compat"]["supportsDeveloperRole"] is False
 assert models[0]["compat"]["unsupportedToolSchemaKeywords"].count("pattern") == 1
 assert models[0]["compat"]["unsupportedToolSchemaKeywords"].count("additionalProperties") == 1
@@ -1286,6 +1319,47 @@ PY
     pass "OpenClaw provider model generation defaults maxTokens and compatibility metadata"
   else
     fail "OpenClaw provider model generation should default maxTokens and compatibility metadata"
+  fi
+
+  OPENCLAW_MODEL_SUPPORTS_VISION=true
+  vision_models="$(openclaw_config_model_array)"
+  unset OPENCLAW_MODEL_SUPPORTS_VISION
+  if python3 - "$vision_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+assert models[0]["input"] == ["text", "image"]
+PY
+  then
+    pass "OpenClaw provider model generation advertises image input for vision models"
+  else
+    fail "OpenClaw provider model generation should advertise image input for vision models"
+  fi
+
+  stale_text_only_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"input":["text"],"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false}]'
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$stale_text_only_model" "$vision_models"; then
+    fail "OpenClaw provider model comparison should detect missing image input for vision models"
+  else
+    pass "OpenClaw provider model comparison detects missing image input for vision models"
+  fi
+
+  stale_vision_model='[{"id":"local","name":"local","api":"openai-completions","contextWindow":32768,"maxTokens":8192,"input":["text","image"],"compat":{"supportsDeveloperRole":false,"unsupportedToolSchemaKeywords":["pattern","additionalProperties"]},"reasoning":false}]'
+  if openclaw_config_value_matches_for_key 'models.providers.clawbox.models' "$stale_vision_model" "$desired_models"; then
+    fail "OpenClaw provider model comparison should detect stale image input for text-only models"
+  else
+    pass "OpenClaw provider model comparison detects stale image input for text-only models"
+  fi
+
+  vision_merged_models="$(openclaw_config_normalize_value_for_key 'models.providers.clawbox.models' "$stale_text_only_model" "$vision_models")"
+  if python3 - "$vision_merged_models" <<'PY'
+import json, sys
+models = json.loads(sys.argv[1])
+assert models[0]["input"] == ["text", "image"]
+assert models[0]["reasoning"] is False
+PY
+  then
+    pass "OpenClaw provider model update refreshes image input while preserving metadata"
+  else
+    fail "OpenClaw provider model update should refresh image input while preserving metadata"
   fi
 
   OPENCLAW_MAX_TOKENS=12288

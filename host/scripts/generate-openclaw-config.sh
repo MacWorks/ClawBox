@@ -65,6 +65,7 @@ OPENCLAW_COMPACTION_RESERVE_VALUE=''
 OPENCLAW_PROVIDER_TIMEOUT_SECONDS_VALUE=''
 OPENCLAW_STUCK_SESSION_WARN_MS_VALUE=''
 OPENCLAW_STUCK_SESSION_ABORT_MS_VALUE=''
+OPENCLAW_MODEL_INPUT_VALUE='["text"]'
 
 case "$OPENCLAW_GATEWAY_MODE_VALUE" in
   local|remote)
@@ -138,6 +139,15 @@ fi
 
 openclaw_resolve_runtime_tuning_values || exit 1
 
+case "${OPENCLAW_MODEL_SUPPORTS_VISION:-false}" in
+  true|TRUE|yes|YES|1|on|ON)
+    OPENCLAW_MODEL_INPUT_VALUE='["text","image"]'
+    ;;
+  *)
+    OPENCLAW_MODEL_INPUT_VALUE='["text"]'
+    ;;
+esac
+
 OPENCLAW_COMPACTION_RESERVE_VALUE="$(python3 - "$LLAMA_CONTEXT_WINDOW_VALUE" <<'PY'
 import sys
 ctx = int(sys.argv[1])
@@ -158,7 +168,7 @@ PY
 )"
 fi
 
-export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE OPENCLAW_MAX_TOKENS_VALUE OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE OPENCLAW_COMPACTION_RESERVE_VALUE OPENCLAW_PROVIDER_TIMEOUT_SECONDS_VALUE OPENCLAW_STUCK_SESSION_WARN_MS_VALUE OPENCLAW_STUCK_SESSION_ABORT_MS_VALUE
+export OPENCLAW_GATEWAY_MODE_VALUE LLAMA_CONTEXT_WINDOW_VALUE OPENCLAW_MAX_TOKENS_VALUE OPENCLAW_GATEWAY_AUTH_TOKEN_VALUE OPENCLAW_COMPACTION_RESERVE_VALUE OPENCLAW_PROVIDER_TIMEOUT_SECONDS_VALUE OPENCLAW_STUCK_SESSION_WARN_MS_VALUE OPENCLAW_STUCK_SESSION_ABORT_MS_VALUE OPENCLAW_MODEL_INPUT_VALUE
 
 python3 - "$CONFIG_PATH" <<'PY'
 import json
@@ -167,6 +177,7 @@ import sys
 
 provider = os.environ["OPENCLAW_PROVIDER_NAME"]
 model = os.environ["OPENCLAW_DEFAULT_MODEL"]
+model_input = json.loads(os.environ["OPENCLAW_MODEL_INPUT_VALUE"])
 config = {
     "gateway": {
         "mode": os.environ["OPENCLAW_GATEWAY_MODE_VALUE"],
@@ -193,6 +204,7 @@ config = {
             "name": model,
             "contextWindow": int(os.environ["LLAMA_CONTEXT_WINDOW_VALUE"]),
             "maxTokens": int(os.environ["OPENCLAW_MAX_TOKENS_VALUE"]),
+            "input": model_input,
             "compat": {
                 "supportsDeveloperRole": False,
                 "unsupportedToolSchemaKeywords": [

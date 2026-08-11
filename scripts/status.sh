@@ -196,6 +196,71 @@ else:
 PY
 }
 
+status_llama_models_has_capability() {
+  local json="$1"
+  local capability="$2"
+
+  python3 - "$json" "$capability" <<'PY'
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(2)
+
+capability = sys.argv[2]
+items = []
+if isinstance(data, dict):
+    for key in ("data", "models"):
+        value = data.get(key)
+        if isinstance(value, list):
+            items.extend(value)
+    if not items:
+        items = [data]
+elif isinstance(data, list):
+    items = data
+
+if not items:
+    raise SystemExit(2)
+
+metadata_seen = False
+for item in items:
+    if not isinstance(item, dict):
+        continue
+    capabilities = item.get("capabilities")
+    if capabilities is None:
+        continue
+    metadata_seen = True
+    if isinstance(capabilities, list) and capability in capabilities:
+        raise SystemExit(0)
+
+raise SystemExit(1 if metadata_seen else 2)
+PY
+}
+
+status_openclaw_model_input_modes() {
+  local models="$1"
+  local default_model="$2"
+
+  python3 - "$models" "$default_model" <<'PY'
+import json, sys
+try:
+    models = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+default_model = sys.argv[2] or "local"
+if not isinstance(models, list):
+    raise SystemExit(1)
+for model in models:
+    if isinstance(model, dict) and model.get("id") == default_model:
+        input_modes = model.get("input", ["text"])
+        if not isinstance(input_modes, list) or not all(isinstance(item, str) for item in input_modes):
+            raise SystemExit(1)
+        print(",".join(input_modes))
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 env_file_value() {
   local env_path="$1"
   local key="$2"
@@ -663,6 +728,7 @@ section "LLaMA Status"
 api_ok=false
 vm_api_ok=false
 vm_interface_ok=false
+llama_models_json=''
 port_ok=false
 process_ok=false
 bind_failed=false
@@ -673,7 +739,7 @@ MANAGED_LLAMA_PLIST_PATH="$(llama_mode_plist_dest "$MANAGED_LLAMA_MODE")"
 MANAGED_LLAMA_ENV_PATH="$(llama_mode_env_dest "$MANAGED_LLAMA_MODE")"
 
 if $HOST_STATUS_EXPECTS_EXTERNAL; then
-  if status_curl "$HOST_STATUS_LLAMA_MODELS_URL" >/dev/null 2>&1; then
+  if llama_models_json="$(status_curl "$HOST_STATUS_LLAMA_MODELS_URL" 2>/dev/null)"; then
     api_ok=true
     vm_api_ok=true
   fi
@@ -681,7 +747,7 @@ if $HOST_STATUS_EXPECTS_EXTERNAL; then
     vm_interface_ok=true
   fi
 else
-  if status_curl "$HOST_STATUS_LOCAL_LLAMA_MODELS_URL" >/dev/null 2>&1; then
+  if llama_models_json="$(status_curl "$HOST_STATUS_LOCAL_LLAMA_MODELS_URL" 2>/dev/null)"; then
     api_ok=true
   fi
   if status_curl "$HOST_STATUS_LLAMA_MODELS_URL" >/dev/null 2>&1; then
@@ -782,14 +848,21 @@ fi
 
 # --- Model summary ---
 section "Primary Model"
+OPENCLAW_PROVIDER_MODELS="$(vm_openclaw_provider_models_get "$OPENCLAW_PROVIDER_NAME" 2>/dev/null || true)"
 PRIMARY_CONFIGURED_MODEL="${MODEL_PATH:-}"
 PRIMARY_RUNTIME_MODEL=''
 PRIMARY_PROCESS_ARGS=''
 PRIMARY_RUNNING_MODEL=''
 PRIMARY_OPENCLAW_REF="$OPENCLAW_PROVIDER_NAME/${OPENCLAW_DEFAULT_MODEL:-local}"
+PRIMARY_CONFIGURED_VISION="${OPENCLAW_MODEL_SUPPORTS_VISION:-false}"
+PRIMARY_CONFIGURED_MMPROJ="${MMPROJ_PATH:-}"
+PRIMARY_OPENCLAW_INPUT=''
+PRIMARY_RUNTIME_MULTIMODAL='unknown'
 out "Configured: ${PRIMARY_CONFIGURED_MODEL:-not configured}"
 out "API: ${CONFIGURED_LLAMA_BASE_URL:-${HOST_STATUS_DISPLAY_URL%/}/v1}"
 out "OpenClaw: $PRIMARY_OPENCLAW_REF"
+out "Configured vision: $PRIMARY_CONFIGURED_VISION"
+out "Multimodal projector: ${PRIMARY_CONFIGURED_MMPROJ:-not configured}"
 
 if ! $HOST_STATUS_EXPECTS_EXTERNAL; then
   PRIMARY_RUNTIME_MODEL="$(env_file_value "$MANAGED_LLAMA_ENV_PATH" MODEL_PATH 2>/dev/null || true)"
@@ -810,6 +883,61 @@ if $process_ok && PRIMARY_PROCESS_ARGS="$(status_process_args_for_port "$LLAMA_P
   fi
 else
   out "Running: unknown"
+fi
+
+if [ -n "${OPENCLAW_PROVIDER_MODELS:-}" ]; then
+  PRIMARY_OPENCLAW_INPUT="$(status_openclaw_model_input_modes "$OPENCLAW_PROVIDER_MODELS" "${OPENCLAW_DEFAULT_MODEL:-local}" 2>/dev/null || true)"
+fi
+if [ -n "$PRIMARY_OPENCLAW_INPUT" ]; then
+  out "OpenClaw input: $PRIMARY_OPENCLAW_INPUT"
+  if clawbox_bool_enabled "$PRIMARY_CONFIGURED_VISION"; then
+    case ",$PRIMARY_OPENCLAW_INPUT," in
+      *,text,*image,*|*,image,*text,*)
+        pass "OpenClaw model input includes image"
+        ;;
+      *)
+        fail "OpenClaw model input does not include image for configured vision model"
+        ;;
+    esac
+  else
+    case ",$PRIMARY_OPENCLAW_INPUT," in
+      *,image,*)
+        warn_status "OpenClaw model input includes image while configured vision is disabled"
+        ;;
+      *)
+        pass "OpenClaw model input is text-only"
+        ;;
+    esac
+  fi
+else
+  warn_status "OpenClaw model input metadata is unavailable"
+fi
+
+if [ -n "$llama_models_json" ]; then
+  if status_llama_models_has_capability "$llama_models_json" multimodal; then
+    PRIMARY_RUNTIME_MULTIMODAL='yes'
+  else
+    case "$?" in
+      1) PRIMARY_RUNTIME_MULTIMODAL='no' ;;
+      *) PRIMARY_RUNTIME_MULTIMODAL='unknown' ;;
+    esac
+  fi
+fi
+out "Runtime multimodal capability: $PRIMARY_RUNTIME_MULTIMODAL"
+if clawbox_bool_enabled "$PRIMARY_CONFIGURED_VISION"; then
+  case "$PRIMARY_RUNTIME_MULTIMODAL" in
+    yes)
+      pass "llama-server reports multimodal capability"
+      ;;
+    no)
+      fail "configured vision model is not reported as multimodal by llama-server"
+      ;;
+    *)
+      warn_status "llama-server multimodal capability metadata is unavailable"
+      ;;
+  esac
+elif [ "$PRIMARY_RUNTIME_MULTIMODAL" = yes ]; then
+  warn_status "llama-server reports multimodal capability but OpenClaw vision is disabled"
 fi
 
 # --- Optional embeddings LLaMA ---
@@ -960,7 +1088,7 @@ if vm_ssh_exec "jq -e --arg provider \"$OPENCLAW_PROVIDER_NAME\" '.models.provid
 else
   fail "OpenClaw config invalid or unreadable"
 fi
-if OPENCLAW_PROVIDER_MODELS="$(vm_openclaw_provider_models_get "$OPENCLAW_PROVIDER_NAME" 2>/dev/null)"; then
+if [ -n "${OPENCLAW_PROVIDER_MODELS:-}" ]; then
   while IFS=$'\t' read -r status_kind status_message; do
     [ -n "$status_kind" ] || continue
     case "$status_kind" in

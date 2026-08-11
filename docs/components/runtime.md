@@ -85,6 +85,14 @@ responses avoid ending with `stopReason=length`, but it does not by itself
 recover interrupted or non-replay-safe tool turns such as an incomplete
 `stopReason=toolUse` turn.
 
+The same stable `clawbox/local` model entry advertises input capability from
+`OPENCLAW_MODEL_SUPPORTS_VISION`. Text-only configurations use
+`input=["text"]`. When the selected primary model is explicitly declared
+vision-capable, ClawBox writes `input=["text","image"]` so OpenClaw can route
+image attachments to the same local model alias. This declaration is separate
+from `MMPROJ_PATH`, which is only the optional llama.cpp runtime projector
+passed to the primary host `llama-server` with `--mmproj`.
+
 ClawBox also manages OpenClaw's default compaction reserve for the local model
 context. The reserve is derived from the effective context window, bounded to a
 useful floor and ceiling, and written to both `reserveTokens` and
