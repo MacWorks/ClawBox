@@ -2725,6 +2725,12 @@ test_launchagent_module() {
     fail "launchagent wrapper should use object-based AppleScript VM startup"
   fi
 
+  if [ -f "$wrapper_path" ] && ! grep -Fq -- "-e 'activate'" "$wrapper_path"; then
+    pass "launchagent wrapper does not explicitly activate the UTM management window"
+  else
+    fail "launchagent wrapper should not explicitly activate the UTM management window"
+  fi
+
   if [ -f "$wrapper_path" ] \
     && grep -Fq 'CLAWBOX_UTMCTL_BIN' "$wrapper_path" \
     && grep -Fq 'CLAWBOX_OSASCRIPT_BIN' "$wrapper_path" \
@@ -2988,6 +2994,7 @@ test_launchagent_wrapper_retries_and_verifies_runtime_before_success() {
   local wrapper="$ROOT_DIR/host/scripts/start-utm-vm.sh"
   local mock_dir="$TEMP_DIR/launchagent-retry-bin"
   local start_count_file="$TEMP_DIR/launchagent-start-count.txt"
+  local osascript_log="$TEMP_DIR/launchagent-retry-osascript.log"
   local output=''
 
   mkdir -p "$mock_dir"
@@ -3018,6 +3025,7 @@ exit 1
 EOF
   cat > "$mock_dir/osascript" <<'EOF'
 #!/bin/bash
+printf '%s\n' "$*" >> "$CLAWBOX_TEST_OSASCRIPT_LOG"
 exit 1
 EOF
   cat > "$mock_dir/ssh" <<'EOF'
@@ -3036,6 +3044,7 @@ EOF
     CLAWBOX_SSH_BIN="$mock_dir/ssh" \
     CLAWBOX_SLEEP_BIN="$mock_dir/sleep" \
     CLAWBOX_TEST_START_COUNT_FILE="$start_count_file" \
+    CLAWBOX_TEST_OSASCRIPT_LOG="$osascript_log" \
     CLAWBOX_VM_AUTOSTART_START_ATTEMPTS=3 \
     CLAWBOX_VM_AUTOSTART_MAX_ATTEMPTS=1 \
     "$wrapper" 'Test VM' 'tester@192.168.64.6' 2>&1
@@ -3069,6 +3078,12 @@ EOF
     pass 'launchagent wrapper made exactly two utmctl start attempts'
   else
     fail 'launchagent wrapper should make exactly two utmctl start attempts'
+  fi
+
+  if [ ! -s "$osascript_log" ]; then
+    pass 'launchagent wrapper does not invoke AppleScript after successful utmctl startup'
+  else
+    fail 'launchagent wrapper should not invoke AppleScript after successful utmctl startup'
   fi
 }
 

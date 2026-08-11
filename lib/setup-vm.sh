@@ -559,21 +559,52 @@ EOF
 discover_vm_ip_before_manual_prompt() {
   local vm_ip_default="$1"
   local discovered_candidates=''
+  local saved_vm_ip="${VM_IP:-}"
+  local saved_vm_user="${VM_USER:-}"
+  local attempts=1
+  local max_attempts=''
+  local interval=''
 
-  if ! command -v utmctl_vm_ip_candidates >/dev/null 2>&1; then
+  if ! command -v discover_vm_ip_candidates >/dev/null 2>&1; then
     prompt_with_default 'Enter VM IP address' "$vm_ip_default"
     return 0
   fi
+
+  max_attempts="${CLAWBOX_FRESH_VM_IP_DISCOVERY_ATTEMPTS:-8}"
+  interval="${CLAWBOX_FRESH_VM_IP_DISCOVERY_INTERVAL:-2}"
 
   status_begin 'Detecting VM IP address...'
-  if utmctl_vm_ip_candidates; then
-    discovered_candidates="$REPLY"
-    if choose_discovered_vm_ip_candidate "$discovered_candidates"; then
+  VM_IP="$vm_ip_default"
+  if [ -z "${VM_USER:-}" ]; then
+    VM_USER='clawbox'
+  fi
+
+  while [ "$attempts" -le "$max_attempts" ]; do
+    if discover_vm_ip_candidates; then
+      discovered_candidates="$REPLY"
+      VM_IP="$saved_vm_ip"
+      VM_USER="$saved_vm_user"
+      if choose_discovered_vm_ip_candidate "$discovered_candidates"; then
+        return 0
+      fi
+      prompt_with_default 'Enter VM IP address' "$vm_ip_default"
       return 0
     fi
-    prompt_with_default 'Enter VM IP address' "$vm_ip_default"
-    return 0
-  fi
+
+    if [ "$attempts" -lt "$max_attempts" ]; then
+      status_tick 'Detecting VM IP address...'
+      if [ -n "${CLAWBOX_SLEEP_BIN:-}" ]; then
+        "$CLAWBOX_SLEEP_BIN" "$interval"
+      else
+        sleep "$interval"
+      fi
+    fi
+
+    attempts=$((attempts + 1))
+  done
+
+  VM_IP="$saved_vm_ip"
+  VM_USER="$saved_vm_user"
 
   status_end 'VM IP discovery did not find a candidate.' 'warning'
   out 'ClawBox could not automatically determine the VM IP address.'

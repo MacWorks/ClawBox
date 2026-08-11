@@ -192,7 +192,6 @@ start_with_applescript() {
     -e 'on run argv' \
     -e 'set vmIdentifier to item 1 of argv' \
     -e 'tell application "UTM"' \
-    -e 'activate' \
     -e 'set matchingVMs to every virtual machine whose name is my vmIdentifier' \
     -e 'if (count of matchingVMs) is 0 then set matchingVMs to every virtual machine whose id is my vmIdentifier' \
     -e 'if (count of matchingVMs) is 0 then error "No registered UTM virtual machine matches identity: " & my vmIdentifier number -1728' \

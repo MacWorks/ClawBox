@@ -1622,6 +1622,7 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
     OPENCLAW_PROVIDER_NAME=''
     OPENCLAW_DEFAULT_MODEL=''
     OPENCLAW_AUTOSTART=''
+    CLAWBOX_FRESH_VM_IP_DISCOVERY_ATTEMPTS=1
 
     list_detected_utm_vm_names() {
       printf 'macOS\n'
@@ -1639,7 +1640,7 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
       printf 'EVENT:start-selected-vm-with-launchagent:%s\n' "$VM_MACHINE_NAME"
       return 0
     }
-    utmctl_vm_ip_candidates() {
+    discover_vm_ip_candidates() {
       printf 'EVENT:ip-discovery-after-start:%s\n' "$VM_MACHINE_NAME"
       return 1
     }
@@ -1740,7 +1741,7 @@ test_fresh_setup_uses_single_discovered_vm_ip_without_manual_prompt() {
       printf 'EVENT:vm-started:%s\n' "$VM_MACHINE_NAME"
       return 0
     }
-    utmctl_vm_ip_candidates() {
+    discover_vm_ip_candidates() {
       REPLY='192.168.64.6'
       return 0
     }
@@ -1761,6 +1762,93 @@ test_fresh_setup_uses_single_discovered_vm_ip_without_manual_prompt() {
   assert_contains 'fresh single IP flow reaches connectivity with discovered VM host' "$output" 'EVENT:connectivity-after:tester@192.168.64.6'
   assert_not_contains 'fresh single IP flow does not ask user to retype discovered IP' "$output" 'Enter VM IP address'
   assert_equals 'fresh single IP flow succeeds' "$status" '0'
+}
+
+test_fresh_setup_retries_ip_discovery_until_new_vm_network_is_ready() {
+  local output
+  local env_file="$TEMP_DIR/fresh-retry-discovered-ip.env"
+  local status=0
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    queue_prompt_answers \
+      'y' \
+      'tester' \
+      '/Users/tester'
+
+    ENV_FILE="$env_file"
+    ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
+    ENV_CREATED_FROM_EXAMPLE=false
+    ENV_BOOTSTRAPPED=false
+    ENV_BACKUP_DECISION_MADE=true
+    ENV_BACKUP_ENABLED=false
+    VM_REPAIR_MODE=true
+    HOST_IP='192.168.64.1'
+    VM_IP=''
+    VM_USER=''
+    VM_USER_PATH=''
+    VM_HOST=''
+    VM_RUNTIME_PATH=''
+    VM_MACHINE_NAME=''
+    LLAMA_BIN=''
+    LLAMA_HOST=''
+    LLAMA_PORT=''
+    LLAMA_CTX=''
+    LLAMA_BASE_URL=''
+    MODEL_PATH=''
+    FIREWALL_SHARED_SUBNET=''
+    OPENCLAW_PROVIDER_NAME=''
+    OPENCLAW_DEFAULT_MODEL=''
+    OPENCLAW_AUTOSTART=''
+    CLAWBOX_FRESH_VM_IP_DISCOVERY_ATTEMPTS=3
+    CLAWBOX_FRESH_VM_IP_DISCOVERY_INTERVAL=0
+
+    list_detected_utm_vm_names() {
+      printf 'macOS\n'
+    }
+    select_utm_vm_identity() {
+      VM_UTM_PATH="$TEMP_DIR/macOS.utm"
+      REPLY="$1"
+    }
+    setup_selected_vm_runtime_state() {
+      REPLY='stopped'
+      return 0
+    }
+    launchagent_start_selected_vm_for_setup() {
+      return 0
+    }
+    discover_vm_ip_candidates() {
+      if [ "${DISCOVERY_CALLS:-0}" -lt 1 ]; then
+        DISCOVERY_CALLS=1
+        printf 'EVENT:ip-discovery-empty\n'
+        return 1
+      fi
+      DISCOVERY_CALLS=2
+      printf 'EVENT:ip-discovery-found\n'
+      REPLY='192.168.64.6'
+      return 0
+    }
+    ensure_vm_connectivity_or_repair() {
+      printf 'EVENT:connectivity-after:%s\n' "$VM_HOST"
+      return 0
+    }
+
+    ensure_env_bootstrap < <(printf '')
+    printf 'STATUS:%s\n' "$?"
+    printf 'DISCOVERY_CALLS:%s\n' "${DISCOVERY_CALLS:-0}"
+    printf 'FINAL_VM_HOST:%s\n' "$VM_HOST"
+  } 2>&1)"
+
+  status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
+
+  assert_contains 'fresh retry IP flow observes initially missing guest IP' "$output" 'EVENT:ip-discovery-empty'
+  assert_contains 'fresh retry IP flow retries discovery after initial miss' "$output" 'EVENT:ip-discovery-found'
+  assert_contains 'fresh retry IP flow records two discovery attempts' "$output" 'DISCOVERY_CALLS:2'
+  assert_contains 'fresh retry IP flow uses discovered VM host' "$output" 'FINAL_VM_HOST:tester@192.168.64.6'
+  assert_not_contains 'fresh retry IP flow does not fall back to manual entry after retry success' "$output" 'Enter VM IP address'
+  assert_equals 'fresh retry IP flow succeeds' "$status" '0'
 }
 
 test_fresh_setup_multiple_discovered_vm_ips_offer_manual_choice() {
@@ -1817,7 +1905,7 @@ test_fresh_setup_multiple_discovered_vm_ips_offer_manual_choice() {
     launchagent_start_selected_vm_for_setup() {
       return 0
     }
-    utmctl_vm_ip_candidates() {
+    discover_vm_ip_candidates() {
       REPLY='192.168.64.6
 192.168.64.7'
       return 0
@@ -2955,9 +3043,15 @@ test_vm_connection_setup_prefers_configured_vm_ip_default() {
       return 0
     }
 
+    discover_vm_ip_candidates() {
+      REPLY=''
+      return 1
+    }
+
     VM_IP='192.168.64.7'
     VM_HOST='tester@192.168.64.2'
     VM_USER='tester'
+    CLAWBOX_FRESH_VM_IP_DISCOVERY_ATTEMPTS=1
 
     ensure_vm_connection_setup
   } 2>&1)"
@@ -4652,6 +4746,7 @@ run_test test_setup_preserves_explicit_external_llama_base_url
 run_test test_ensure_env_bootstrap_repair_mode_skips_model_llama_and_openclaw_sections
 run_test test_fresh_setup_starts_selected_vm_before_network_prompts
 run_test test_fresh_setup_uses_single_discovered_vm_ip_without_manual_prompt
+run_test test_fresh_setup_retries_ip_discovery_until_new_vm_network_is_ready
 run_test test_fresh_setup_multiple_discovered_vm_ips_offer_manual_choice
 run_test test_fresh_setup_launchagent_start_failure_stays_before_network_prompts
 run_test test_fresh_setup_bad_ip_uses_guided_recovery_without_manual_ssh_dead_end
