@@ -2581,6 +2581,96 @@ test_offer_vm_ip_recovery_keeps_reachable_configured_ip() {
   assert_equals 'ip recovery reports reachable state to caller' "$recovery_reply" 'reachable'
 }
 
+test_offer_vm_ip_recovery_retries_discovery_then_accepts_manual_ip() {
+  local output
+  local output_file="$TEMP_DIR/ip-recovery-retry-output.txt"
+  local status=0
+  local discovery_calls=0
+
+  prepare_vm_state_mocks
+
+  unset -f offer_vm_ip_recovery
+  load_setup_functions
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/vm/vm-repair.sh"
+  install_prompt_stubs
+  queue_prompt_answers '1' '2' '192.168.64.12'
+
+  VM_IP='192.168.64.7'
+  VM_USER='vm-user'
+  VM_HOST='vm-user@192.168.64.7'
+  CLAWBOX_VM_IP_RECOVERY_MAX_ATTEMPTS=3
+
+  probe_vm_network_endpoint() {
+    REPLY='unreachable'
+    return 1
+  }
+
+  discover_vm_ip_candidates() {
+    discovery_calls=$((discovery_calls + 1))
+    REPLY=''
+    return 1
+  }
+
+  set +e
+  offer_vm_ip_recovery > "$output_file" 2>&1
+  status=$?
+  set -e
+  {
+    printf 'DISCOVERY_CALLS=%s\n' "$discovery_calls"
+    printf 'VM_HOST=%s\n' "$VM_HOST"
+  } >> "$output_file"
+  output="$(cat "$output_file")"
+  unset CLAWBOX_VM_IP_RECOVERY_MAX_ATTEMPTS
+
+  assert_equals 'ip recovery manual selection after retry succeeds' "$status" '0'
+  assert_contains 'ip recovery reruns discovery when requested' "$output" 'DISCOVERY_CALLS=2'
+  assert_contains 'ip recovery no-candidate path offers discovery retry' "$output" '1) Retry VM address discovery'
+  assert_contains 'ip recovery no-candidate path offers manual IP entry' "$output" '2) Enter VM IP address manually'
+  assert_contains 'ip recovery no-candidate path preserves explicit abort' "$output" '3) Abort setup'
+  assert_contains 'ip recovery manual selection updates vm host' "$output" 'VM_HOST=vm-user@192.168.64.12'
+  assert_not_contains 'ip recovery no-candidate path does not dump manual ssh setup' "$output" ' > Manual SSH Setup'
+}
+
+test_offer_vm_ip_recovery_abort_path_is_explicit() {
+  local output
+  local status=0
+
+  prepare_vm_state_mocks
+
+  unset -f offer_vm_ip_recovery
+  load_setup_functions
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/vm/vm-repair.sh"
+  install_prompt_stubs
+  queue_prompt_answers '3'
+
+  VM_IP='192.168.64.7'
+  VM_USER='vm-user'
+  VM_HOST='vm-user@192.168.64.7'
+  CLAWBOX_VM_IP_RECOVERY_MAX_ATTEMPTS=3
+
+  probe_vm_network_endpoint() {
+    REPLY='unreachable'
+    return 1
+  }
+
+  discover_vm_ip_candidates() {
+    REPLY=''
+    return 1
+  }
+
+  set +e
+  output="$({ offer_vm_ip_recovery; } 2>&1)"
+  status=$?
+  set -e
+  unset CLAWBOX_VM_IP_RECOVERY_MAX_ATTEMPTS
+
+  assert_equals 'ip recovery explicit abort exits non-zero' "$status" '1'
+  assert_contains 'ip recovery abort path is offered' "$output" '3) Abort setup'
+  assert_not_contains 'ip recovery abort path does not print manual ssh setup' "$output" ' > Manual SSH Setup'
+}
+
 printf 'Running VM state tests\n'
 
 test_setup_vm_is_running_uses_resolved_utmctl
@@ -2614,6 +2704,9 @@ test_ensure_vm_connectivity_classifies_missing_key_auth_without_failure_framing
 test_ensure_vm_connectivity_skips_bootstrap_when_key_auth_is_ready
 test_ensure_vm_connectivity_emits_single_ssh_bootstrap_success_line
 test_ensure_vm_connectivity_retries_ssh_after_remote_login_confirmation
+test_offer_vm_ip_recovery_keeps_reachable_configured_ip
+test_offer_vm_ip_recovery_retries_discovery_then_accepts_manual_ip
+test_offer_vm_ip_recovery_abort_path_is_explicit
 test_remote_login_recovery_continues_to_model_configuration
 test_remote_login_confirmation_allows_one_bounded_refusal_retry
 test_remote_login_retry_hostkey_failure_prints_known_hosts_remediation
@@ -2644,7 +2737,6 @@ test_wait_for_known_vm_ssh_readiness_distinguishes_network_ready_from_ssh_auth_f
 test_discover_vm_ip_candidates_prefers_utmctl_guest_ip_metadata
 test_discover_vm_ip_candidates_excludes_host_api_address
 test_discover_vm_ip_candidates_excludes_local_interface_addresses
-test_offer_vm_ip_recovery_keeps_reachable_configured_ip
 test_discover_vm_ip_candidates_excludes_ips_already_proven_unreachable
 
 if [ "$FAILURES" -eq 0 ]; then

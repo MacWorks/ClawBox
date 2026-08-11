@@ -30,18 +30,42 @@ print_openclaw_gateway_restart_guidance() {
 
 restart_clawbox_managed_openclaw_gateway() {
   local label=''
+  local attempt=1
+  local max_attempts="${CLAWBOX_OPENCLAW_RESTART_VERIFY_MAX_ATTEMPTS:-45}"
 
   label="$(openclaw_runtime_service_label)"
   ssh_exec_zsh "uid=\$(id -u)
 launchctl kickstart -k \"gui/\$uid/$label\"" || return 1
 
-  local attempt=1
-  while [ "$attempt" -le 30 ]; do
-    openclaw_runtime_has_running_gateway_service && return 0
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if openclaw_runtime_has_running_gateway_service \
+      && openclaw_gateway_local_http_ready
+    then
+      return 0
+    fi
     attempt=$((attempt + 1))
     sleep 1
   done
   return 1
+}
+
+openclaw_gateway_local_http_ready() {
+  local gateway_port=''
+
+  if command -v vm_openclaw_gateway_port >/dev/null 2>&1; then
+    gateway_port="$(vm_openclaw_gateway_port)"
+  else
+    gateway_port='18789'
+  fi
+
+  ssh_exec_zsh "gateway_port=$(printf '%q' "$gateway_port")
+if command -v curl >/dev/null 2>&1; then
+  status=\$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 \"http://127.0.0.1:\$gateway_port/\" 2>/dev/null || true)
+  case \"\$status\" in
+    2??|3??|401|403|404) exit 0 ;;
+  esac
+fi
+exit 1"
 }
 
 offer_openclaw_restart_after_llama_update() {

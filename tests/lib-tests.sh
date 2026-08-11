@@ -1101,6 +1101,21 @@ PY
   fi
 }
 
+test_llama_port_availability_does_not_depend_on_lsof_visibility() {
+  local helper_body=''
+
+  helper_body="$(awk '
+    /^llama_port_in_use\(\)/ { in_fn=1 }
+    in_fn { print }
+    in_fn && /^}/ { exit }
+  ' "$ROOT_DIR/lib/llama/llama-health.sh")"
+
+  assert_contains 'primary llama port availability uses a cross-user TCP probe' "$helper_body" '/dev/tcp/127.0.0.1/'
+  assert_not_contains 'primary llama port availability does not depend on lsof visibility' "$helper_body" 'lsof'
+  assert_contains 'embeddings setup checks requested ports with shared port probe' "$(cat "$ROOT_DIR/lib/setup-embeddings.sh")" 'llama_port_in_use "$port"'
+  assert_contains 'embeddings setup checks default ports with shared port probe' "$(cat "$ROOT_DIR/lib/setup-embeddings.sh")" 'llama_port_in_use "$port_default"'
+}
+
 test_deploy_module() {
   local prompt_marker="$TEMP_DIR/deploy-prompt-called"
   local upload_marker="$TEMP_DIR/deploy-upload-called"
@@ -6119,6 +6134,7 @@ run_test test_ssh_module
 run_test test_runtime_module
 run_test test_runtime_handle_module
 run_test test_context_runtime_module
+run_test test_llama_port_availability_does_not_depend_on_lsof_visibility
 run_test test_deploy_module
 run_test test_setup_deployment_flow_updates_active_openclaw_config
 run_test test_setup_deployment_flow_stops_on_openclaw_sync_failure

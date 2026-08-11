@@ -78,7 +78,7 @@ test_ui_creates_loopback_tunnel_with_defaults() {
   write_ui_env
   output="$({
     load_ui_command
-    BASE_DIR="$TEMP_DIR"
+    BASE_DIR="$TEMP_DIR/ui-lsof-blind-base"
     ENV_FILE="$TEMP_DIR/.env"
     install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
     main --no-open
@@ -107,7 +107,7 @@ test_ui_supports_explicit_port_override() {
   write_ui_env
   output="$({
     load_ui_command
-    BASE_DIR="$TEMP_DIR"
+    BASE_DIR="$TEMP_DIR/ui-lsof-blind-explicit-base"
     ENV_FILE="$TEMP_DIR/.env"
     install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
     ps() {
@@ -127,7 +127,7 @@ test_ui_rejects_invalid_port() {
   set +e
   output="$({
     load_ui_command
-    BASE_DIR="$TEMP_DIR"
+    BASE_DIR="$TEMP_DIR/ui-lsof-blind-base"
     ENV_FILE="$TEMP_DIR/.env"
     main --port nope --no-open
   } 2>&1)"
@@ -163,7 +163,7 @@ test_ui_reuses_existing_tunnel_without_duplicate_forward() {
   : > "$tunnel_marker"
   output="$({
     load_ui_command
-    BASE_DIR="$TEMP_DIR"
+    BASE_DIR="$TEMP_DIR/ui-lsof-blind-explicit-base"
     ENV_FILE="$TEMP_DIR/.env"
     VM_HOST='tester@vm.example'
     openclaw_webui_write_state 4242 18790
@@ -203,6 +203,63 @@ test_ui_uses_fallback_for_unrelated_default_port_owner() {
 
   assert_contains 'ui skips unrelated default port owner' "$(cat "$ssh_log")" '127.0.0.1:18791:127.0.0.1:18789'
   assert_contains 'ui reports deterministic fallback port' "$output" 'Local URL: http://127.0.0.1:18791/'
+}
+
+test_ui_uses_fallback_when_lsof_cannot_see_occupied_default_port() {
+  local output='' ssh_log="$TEMP_DIR/ui-lsof-blind-ssh.log" open_log="$TEMP_DIR/ui-lsof-blind-open.log"
+  local tunnel_marker="$TEMP_DIR/ui-lsof-blind-started"
+
+  write_ui_env
+  output="$({
+    load_ui_command
+    BASE_DIR="$TEMP_DIR/ui-lsof-blind-base"
+    ENV_FILE="$TEMP_DIR/.env"
+    install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
+    lsof() { return 1; }
+    openclaw_webui_loopback_port_accepts_connections() {
+      [ "$1" = '18790' ]
+    }
+    ps() {
+      if [[ "$*" == *'4242'* ]]; then
+        printf '%s\n' 'ssh -f -N -L 127.0.0.1:18791:127.0.0.1:18789 tester@vm.example'
+        return 0
+      fi
+      return 1
+    }
+    main --no-open
+  } 2>&1)"
+
+  assert_contains 'ui cross-user port check skips lsof-hidden default listener' "$(cat "$ssh_log")" '127.0.0.1:18791:127.0.0.1:18789'
+  assert_contains 'ui cross-user port check reports fallback port' "$output" 'Local URL: http://127.0.0.1:18791/'
+}
+
+test_ui_rejects_explicit_port_when_lsof_cannot_see_listener() {
+  local output='' status=0
+
+  write_ui_env
+  set +e
+  output="$({
+    load_ui_command
+    BASE_DIR="$TEMP_DIR/ui-lsof-blind-explicit-base"
+    ENV_FILE="$TEMP_DIR/.env"
+    ssh() {
+      if [[ "$*" == *'echo ok'* ]]; then
+        printf 'ok\n'
+      fi
+      return 0
+    }
+    lsof() { return 1; }
+    pgrep() { return 1; }
+    openclaw_webui_loopback_port_accepts_connections() {
+      [ "$1" = '18790' ]
+    }
+    main --port 18790 --no-open
+  } 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'ui explicit lsof-hidden occupied port exits non-zero' "$status" '1'
+  assert_contains 'ui explicit lsof-hidden occupied port is rejected' "$output" 'Local port 18790 is already in use by another process.'
 }
 
 test_ui_fails_when_explicit_port_is_unrelated() {
@@ -259,6 +316,7 @@ test_ui_reports_ssh_and_forward_failures() {
         printf 'ok\n'
         return 0
       fi
+      printf '%s\n' 'bind [127.0.0.1]:18790: Address already in use' >&2
       return 255
     }
     lsof() { return 1; }
@@ -268,6 +326,8 @@ test_ui_reports_ssh_and_forward_failures() {
   set -e
   assert_equals 'ui forward failure exits non-zero' "$status" '1'
   assert_contains 'ui forward failure is actionable' "$forward_output" 'Could not establish the OpenClaw Web UI SSH tunnel.'
+  assert_contains 'ui forward failure preserves SSH bind diagnostic' "$forward_output" 'SSH reported:'
+  assert_contains 'ui forward failure reports bind detail' "$forward_output" 'Address already in use'
 }
 
 test_ui_reports_gateway_readiness_timeout() {
@@ -761,6 +821,8 @@ run_test test_ui_rejects_invalid_port
 run_test test_ui_reports_missing_configuration
 run_test test_ui_reuses_existing_tunnel_without_duplicate_forward
 run_test test_ui_uses_fallback_for_unrelated_default_port_owner
+run_test test_ui_uses_fallback_when_lsof_cannot_see_occupied_default_port
+run_test test_ui_rejects_explicit_port_when_lsof_cannot_see_listener
 run_test test_ui_fails_when_explicit_port_is_unrelated
 run_test test_ui_reports_ssh_and_forward_failures
 run_test test_ui_reports_gateway_readiness_timeout

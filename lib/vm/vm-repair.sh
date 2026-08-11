@@ -54,6 +54,8 @@ offer_vm_ip_recovery() {
   local retry_option_number=0
   local abort_option_number=0
   local selected_option=''
+  local recovery_attempts=0
+  local max_recovery_attempts="${CLAWBOX_VM_IP_RECOVERY_MAX_ATTEMPTS:-3}"
 
   if configured_vm_ip_is_network_reachable; then
     warn "The configured VM address (${VM_IP:-}) is reachable; keeping it."
@@ -61,94 +63,137 @@ offer_vm_ip_recovery() {
     return 1
   fi
 
-  status_begin 'Attempting VM IP discovery...'
+  while [ "$recovery_attempts" -lt "$max_recovery_attempts" ]; do
+    recovery_attempts=$((recovery_attempts + 1))
+    candidate_count=0
+    option_number=1
+    retry_option_number=0
+    abort_option_number=0
+    selected_option=''
 
-  if ! discover_vm_ip_candidates; then
-    status_end 'VM IP discovery did not find a candidate.' 'warning'
-    warn 'No likely VM IP addresses were discovered on the expected subnet.'
-    return 1
-  fi
+    status_begin 'Attempting VM IP discovery...'
 
-  status_end 'VM IP discovery completed.' 'success'
+    if ! discover_vm_ip_candidates; then
+      status_end 'VM IP discovery did not find a candidate.' 'warning'
+      warn 'No likely VM IP addresses were discovered on the expected subnet.'
+      blank_line
+      out '1) Retry VM address discovery'
+      out '2) Enter VM IP address manually'
+      out '3) Abort setup'
+      blank_line
 
-  discovered_candidates="$REPLY"
+      while true; do
+        prompt_with_suffix 'Choose next step' '[1-3]'
+        selected_option="$REPLY"
+        [ -n "$selected_option" ] || selected_option='1'
 
-  while IFS= read -r candidate_ip; do
-    [ -n "$candidate_ip" ] || continue
-    candidate_count=$((candidate_count + 1))
-  done <<EOF
-$discovered_candidates
-EOF
+        case "$selected_option" in
+          1)
+            break
+            ;;
+          2)
+            prompt_with_default 'Enter VM IP address' "${VM_IP:-}"
+            update_vm_ip_selection "$REPLY" || return 1
+            success "Using entered VM address: $REPLY"
+            return 0
+            ;;
+          3)
+            return 1
+            ;;
+          *)
+            error 'Invalid selection. Enter a number between 1 and 3.'
+            ;;
+        esac
+      done
 
-  if [ "$candidate_count" -eq 1 ]; then
-    candidate_ip="$discovered_candidates"
-    warn "The current VM IP address (${VM_IP:-}) was unreachable."
-    out "Detected likely VM address: $candidate_ip"
-    prompt_yes_no 'Use this address?' 'y'
-
-    if [ "$REPLY" = 'true' ]; then
-      update_vm_ip_selection "$candidate_ip" || return 1
-      success "Using detected VM address: $candidate_ip"
-      return 0
+      continue
     fi
-  else
-    warn "The current VM IP address (${VM_IP:-}) was unreachable."
-    menu_begin 'Detected possible VM addresses:'
+
+    status_end 'VM IP discovery completed.' 'success'
+
+    discovered_candidates="$REPLY"
 
     while IFS= read -r candidate_ip; do
       [ -n "$candidate_ip" ] || continue
-      outf '%s) %s' "$option_number" "$candidate_ip"
-      option_number=$((option_number + 1))
+      candidate_count=$((candidate_count + 1))
     done <<EOF
 $discovered_candidates
 EOF
 
-    retry_option_number="$option_number"
-    abort_option_number=$((option_number + 1))
-    outf '%s) Retry manual entry' "$retry_option_number"
-    outf '%s) Abort setup' "$abort_option_number"
-    menu_end
+    if [ "$candidate_count" -eq 1 ]; then
+      candidate_ip="$discovered_candidates"
+      warn "The current VM IP address (${VM_IP:-}) was unreachable."
+      out "Detected likely VM address: $candidate_ip"
+      prompt_yes_no 'Use this address?' 'y'
 
-    while true; do
-      prompt_with_suffix 'Choose VM address' "[1-$abort_option_number]"
-      selected_option="$REPLY"
-
-      if ! [[ "$selected_option" =~ ^[0-9]+$ ]]; then
-        error "Invalid selection. Enter a number between 1 and $abort_option_number."
-        continue
+      if [ "$REPLY" = 'true' ]; then
+        update_vm_ip_selection "$candidate_ip" || return 1
+        success "Using detected VM address: $candidate_ip"
+        return 0
       fi
+    else
+      warn "The current VM IP address (${VM_IP:-}) was unreachable."
+      menu_begin 'Detected possible VM addresses:'
 
-      if [ "$selected_option" -lt 1 ] || [ "$selected_option" -gt "$abort_option_number" ]; then
-        error "Invalid selection. Enter a number between 1 and $abort_option_number."
-        continue
-      fi
-
-      break
-    done
-
-    if [ "$selected_option" -lt "$retry_option_number" ]; then
-      option_number=1
       while IFS= read -r candidate_ip; do
         [ -n "$candidate_ip" ] || continue
-        if [ "$option_number" -eq "$selected_option" ]; then
-          update_vm_ip_selection "$candidate_ip" || return 1
-          success "Using detected VM address: $candidate_ip"
-          return 0
-        fi
+        outf '%s) %s' "$option_number" "$candidate_ip"
         option_number=$((option_number + 1))
       done <<EOF
 $discovered_candidates
 EOF
+
+      retry_option_number="$option_number"
+      abort_option_number=$((option_number + 1))
+      outf '%s) Enter VM IP address manually' "$retry_option_number"
+      outf '%s) Abort setup' "$abort_option_number"
+      menu_end
+
+      while true; do
+        prompt_with_suffix 'Choose VM address' "[1-$abort_option_number]"
+        selected_option="$REPLY"
+
+        if ! [[ "$selected_option" =~ ^[0-9]+$ ]]; then
+          error "Invalid selection. Enter a number between 1 and $abort_option_number."
+          continue
+        fi
+
+        if [ "$selected_option" -lt 1 ] || [ "$selected_option" -gt "$abort_option_number" ]; then
+          error "Invalid selection. Enter a number between 1 and $abort_option_number."
+          continue
+        fi
+
+        break
+      done
+
+      if [ "$selected_option" -lt "$retry_option_number" ]; then
+        option_number=1
+        while IFS= read -r candidate_ip; do
+          [ -n "$candidate_ip" ] || continue
+          if [ "$option_number" -eq "$selected_option" ]; then
+            update_vm_ip_selection "$candidate_ip" || return 1
+            success "Using detected VM address: $candidate_ip"
+            return 0
+          fi
+          option_number=$((option_number + 1))
+        done <<EOF
+$discovered_candidates
+EOF
+      fi
+
+      if [ "$selected_option" -eq "$abort_option_number" ]; then
+        return 1
+      fi
     fi
 
-    if [ "$selected_option" -eq "$abort_option_number" ]; then
-      return 1
-    fi
-  fi
+    prompt_with_default 'Enter VM IP address' "${VM_IP:-}"
+    update_vm_ip_selection "$REPLY" || return 1
+    success "Using entered VM address: $REPLY"
+    return 0
+  done
 
-  prompt_with_default 'Enter VM IP address' "${VM_IP:-}"
-  update_vm_ip_selection "$REPLY" || return 1
-  return 0
+  warn 'VM address recovery reached the retry limit.'
+  return 1
 }
 
 prompt_for_vm_ip_replacement() {

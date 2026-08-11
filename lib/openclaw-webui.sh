@@ -127,18 +127,32 @@ openclaw_webui_validate_port() {
 
 openclaw_webui_port_in_use() {
   local port="$1"
+  local lsof_status=1
 
   if command -v lsof >/dev/null 2>&1; then
     lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
-    return $?
+    lsof_status=$?
+    if [ "$lsof_status" -eq 0 ]; then
+      return 0
+    fi
   fi
+
+  if openclaw_webui_loopback_port_accepts_connections "$port"; then
+    return 0
+  fi
+
+  return 1
+}
+
+openclaw_webui_loopback_port_accepts_connections() {
+  local port="$1"
 
   if command -v nc >/dev/null 2>&1; then
     nc -z 127.0.0.1 "$port" >/dev/null 2>&1
     return $?
   fi
 
-  return 1
+  (echo >/dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1
 }
 
 openclaw_webui_find_tunnel_pid() {
@@ -326,6 +340,15 @@ openclaw_webui_start_tunnel() {
     "$VM_HOST"
 }
 
+openclaw_webui_concise_ssh_error() {
+  local output="$1"
+
+  output="${output//$'\r'/}"
+  output="$(printf '%s\n' "$output" | sed -e '/^[[:space:]]*$/d' | head -5)"
+  [ -n "$output" ] || return 1
+  printf '%s\n' "$output"
+}
+
 openclaw_webui_stop_recorded_tunnel() {
   local gateway_port='' state_pid='' state_port=''
 
@@ -425,8 +448,17 @@ openclaw_webui_ensure_tunnel() {
     host_port="$REPLY"
   fi
 
-  if ! openclaw_webui_start_tunnel "$host_port" "$gateway_port" >/dev/null 2>&1; then
+  local tunnel_output=''
+  if ! tunnel_output="$(openclaw_webui_start_tunnel "$host_port" "$gateway_port" 2>&1)"; then
     error 'Could not establish the OpenClaw Web UI SSH tunnel.'
+    if openclaw_webui_concise_ssh_error "$tunnel_output" >/dev/null 2>&1; then
+      error 'SSH reported:'
+      while IFS= read -r line; do
+        error "$line"
+      done <<EOF
+$(openclaw_webui_concise_ssh_error "$tunnel_output")
+EOF
+    fi
     error 'Verify VM SSH access and that the remote OpenClaw gateway is running.'
     return 1
   fi

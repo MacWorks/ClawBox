@@ -4105,7 +4105,9 @@ test_openclaw_restart_recovery_is_limited_to_failed_post_update_inference() {
 }
 
 test_openclaw_restart_recovery_prompts_only_after_failed_inference() {
-  local decline_output success_output failure_output restart_helper_output
+  local decline_output success_output failure_output restart_helper_output delayed_restart_output
+  local delayed_restart_file="$TEMP_DIR/delayed-openclaw-restart-output.txt"
+  local delayed_restart_status=0
 
   decline_output="$({
     load_setup_functions
@@ -4166,6 +4168,37 @@ test_openclaw_restart_recovery_prompts_only_after_failed_inference() {
   )"
   assert_contains 'recovery restart uses the ClawBox launchd label' "$restart_helper_output" 'com.clawbox.openclaw'
   assert_contains 'recovery restart verifies the managed launchd service' "$restart_helper_output" 'MANAGED_SERVICE_VERIFIED'
+
+  set +e
+  {
+    load_setup_functions
+    service_checks=0
+    sleep() { :; }
+    ssh_exec_zsh() {
+      case "${1:-}" in
+        *kickstart*)
+          printf 'KICKSTART=%s\n' "${1:-}"
+          ;;
+        *curl*)
+          printf 'GATEWAY_HTTP_CHECK\n'
+          ;;
+      esac
+      return 0
+    }
+    openclaw_runtime_has_running_gateway_service() {
+      service_checks=$((service_checks + 1))
+      printf 'SERVICE_CHECK:%s\n' "$service_checks"
+      [ "$service_checks" -ge 2 ]
+    }
+    restart_clawbox_managed_openclaw_gateway
+    delayed_restart_status=$?
+    printf 'STATUS:%s\n' "$delayed_restart_status"
+  } > "$delayed_restart_file" 2>&1
+  set -e
+  delayed_restart_output="$(cat "$delayed_restart_file")"
+  assert_contains 'recovery restart waits through delayed managed service verification' "$delayed_restart_output" 'SERVICE_CHECK:2'
+  assert_contains 'recovery restart verifies gateway http readiness after service state' "$delayed_restart_output" 'GATEWAY_HTTP_CHECK'
+  assert_contains 'recovery restart delayed startup succeeds within bounded wait' "$delayed_restart_output" 'STATUS:0'
 }
 
 printf 'Running output normalization tests\n'
