@@ -70,6 +70,46 @@ prestart_discovered_port_is_embeddings_endpoint() {
   return 1
 }
 
+prestart_llama_has_identified_runtime_evidence() {
+  [ "${LLAMA_INSTANCE_HAS_PROCESS:-false}" = true ] && return 0
+  [ "${LLAMA_INSTANCE_HEALTHCHECK_OK:-false}" = true ] && return 0
+  [ "${LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK:-false}" = true ] && return 0
+  [ "${LLAMA_INSTANCE_LAUNCHD_LOADED:-false}" = true ] && return 0
+  return 1
+}
+
+print_prestart_llama_runtime_diagnosis() {
+  local host_ip_value="$1"
+  local llama_port_value="$2"
+
+  if prestart_llama_has_identified_runtime_evidence; then
+    warn "Detected unhealthy llama-server state at http://$host_ip_value:$llama_port_value"
+  elif [ "${LLAMA_INSTANCE_HAS_LISTENER:-false}" = true ]; then
+    warn "Port $llama_port_value is already in use."
+    out 'The listener on this port does not appear to be a healthy ClawBox-managed llama-server.'
+  else
+    warn "Detected unhealthy llama-server state at http://$host_ip_value:$llama_port_value"
+  fi
+
+  out 'Readiness checks:'
+  out "  Process present: ${LLAMA_INSTANCE_HAS_PROCESS:-false}"
+  out "  Listening socket: ${LLAMA_INSTANCE_HAS_LISTENER:-false}"
+  out "  Health endpoint: ${LLAMA_INSTANCE_HEALTHCHECK_OK:-false}"
+  out "  launchd loaded: ${LLAMA_INSTANCE_LAUNCHD_LOADED:-false}"
+}
+
+print_prestart_llama_port_menu_heading() {
+  local host_ip_value="$1"
+  local llama_port_value="$2"
+
+  if prestart_llama_has_identified_runtime_evidence; then
+    warn "Unhealthy llama-server detected at http://$host_ip_value:$llama_port_value"
+  else
+    warn "Port $llama_port_value is already in use."
+    out 'The listener on this port does not appear to be a healthy ClawBox-managed llama-server.'
+  fi
+}
+
 resolve_prestart_llama_port() {
   local host_ip_value="$1"
   local llama_port_value="$2"
@@ -83,12 +123,7 @@ resolve_prestart_llama_port() {
 
   if [ "$LLAMA_INSTANCE_HEALTH" = 'unhealthy' ]; then
     configured_endpoint_unhealthy=true
-    warn "Detected unhealthy llama-server state at http://$host_ip_value:$llama_port_value"
-    out 'Readiness checks:'
-    out "  Process present: $LLAMA_INSTANCE_HAS_PROCESS"
-    out "  Listening socket: $LLAMA_INSTANCE_HAS_LISTENER"
-    out "  Health endpoint: $LLAMA_INSTANCE_HEALTHCHECK_OK"
-    out "  launchd loaded: $LLAMA_INSTANCE_LAUNCHD_LOADED"
+    print_prestart_llama_runtime_diagnosis "$host_ip_value" "$llama_port_value"
     blank_line
   fi
 
@@ -340,7 +375,7 @@ handle_prestart_llama_instance_choice() {
 
   while true; do
     blank_line
-    warn "llama-server detected at http://$host_ip_value:$llama_port_value"
+    print_prestart_llama_port_menu_heading "$host_ip_value" "$llama_port_value"
     blank_line
     out '1) Retry (wait for service to become ready)'
     out '2) Stop existing instance and use ClawBox-managed instance'

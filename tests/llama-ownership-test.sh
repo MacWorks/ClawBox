@@ -851,6 +851,118 @@ test_prestart_resolver_reports_unhealthy_primary_and_finds_healthy_alternate() {
   assert_contains 'prestart resolver returns the healthy alternate port' "$output" 'RESOLVED:11435'
 }
 
+test_prestart_flow_reports_unknown_listener_without_llama_server_claim() {
+  local output=''
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers '3'
+
+    llama_classify_runtime_health() {
+      LLAMA_INSTANCE_HEALTH='unhealthy'
+      LLAMA_INSTANCE_HAS_PROCESS=false
+      LLAMA_INSTANCE_HAS_LISTENER=true
+      LLAMA_INSTANCE_HEALTHCHECK_OK=false
+      LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK=false
+      LLAMA_INSTANCE_LAUNCHD_LOADED=false
+      REPLY="$LLAMA_INSTANCE_HEALTH"
+      return 0
+    }
+
+    llama_discover_healthy_instance_port() {
+      return 1
+    }
+
+    llama_api_responding() {
+      return 1
+    }
+
+    llama_port_in_use() {
+      [ "$1" = '11801' ]
+    }
+
+    llama_prompt_for_available_port() {
+      printf 'PROMPTED_FOR_DIFFERENT_PORT:%s\n' "$2"
+      REPLY='11802'
+      return 0
+    }
+
+    llama_read_choice() {
+      local prompt_label="$1"
+
+      prompt "$prompt_label"
+      take_prompt_answer
+      REPLY="$PROMPT_ANSWER"
+      printf '%s\n' "$PROMPT_ANSWER"
+    }
+
+    run_prestart_llama_instance_flow '192.168.64.1' '11801'
+    printf 'RESOLVED:%s\n' "$REPLY"
+  } 2>&1)"
+
+  assert_contains 'unknown listener reports occupied port' "$output" 'Port 11801 is already in use.'
+  assert_contains 'unknown listener explains missing managed llama evidence' "$output" 'The listener on this port does not appear to be a healthy ClawBox-managed llama-server.'
+  assert_contains 'unknown listener keeps readiness process detail' "$output" 'Process present: false'
+  assert_contains 'unknown listener keeps readiness socket detail' "$output" 'Listening socket: true'
+  assert_contains 'unknown listener keeps readiness health detail' "$output" 'Health endpoint: false'
+  assert_contains 'unknown listener keeps readiness launchd detail' "$output" 'launchd loaded: false'
+  assert_not_contains 'unknown listener does not claim llama-server was detected' "$output" 'llama-server detected at http://192.168.64.1:11801'
+  assert_not_contains 'unknown listener does not claim unhealthy llama-server state' "$output" 'Detected unhealthy llama-server state at http://192.168.64.1:11801'
+  assert_contains 'unknown listener preserves choose different port recovery' "$output" 'PROMPTED_FOR_DIFFERENT_PORT:11801'
+  assert_contains 'unknown listener resolves to selected alternate port' "$output" 'RESOLVED:11802'
+}
+
+test_prestart_flow_identifies_managed_unhealthy_llama_server() {
+  local output=''
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers '5'
+
+    llama_classify_runtime_health() {
+      LLAMA_INSTANCE_HEALTH='unhealthy'
+      LLAMA_INSTANCE_HAS_PROCESS=true
+      LLAMA_INSTANCE_HAS_LISTENER=false
+      LLAMA_INSTANCE_HEALTHCHECK_OK=false
+      LLAMA_INSTANCE_LOCAL_HEALTHCHECK_OK=false
+      LLAMA_INSTANCE_LAUNCHD_LOADED=true
+      REPLY="$LLAMA_INSTANCE_HEALTH"
+      return 0
+    }
+
+    llama_discover_healthy_instance_port() {
+      return 1
+    }
+
+    llama_api_responding() {
+      return 1
+    }
+
+    llama_port_in_use() {
+      return 0
+    }
+
+    llama_read_choice() {
+      local prompt_label="$1"
+
+      prompt "$prompt_label"
+      take_prompt_answer
+      REPLY="$PROMPT_ANSWER"
+      printf '%s\n' "$PROMPT_ANSWER"
+    }
+
+    llama_capture_status run_prestart_llama_instance_flow '192.168.64.1' '11801'
+    printf 'STATUS:%s\n' "$LLAMA_LAST_STATUS"
+  } 2>&1)"
+
+  assert_contains 'managed unhealthy flow reports identified unhealthy llama-server state' "$output" 'Detected unhealthy llama-server state at http://192.168.64.1:11801'
+  assert_contains 'managed unhealthy flow reports unhealthy llama-server in menu' "$output" 'Unhealthy llama-server detected at http://192.168.64.1:11801'
+  assert_not_contains 'managed unhealthy flow does not use unknown-listener diagnosis' "$output" 'does not appear to be a healthy ClawBox-managed llama-server'
+  assert_contains 'managed unhealthy flow exits cleanly' "$output" 'STATUS:42'
+}
+
 test_prestart_resolver_accepts_loopback_healthy_primary_when_vm_interface_absent() {
   local output=''
 
@@ -1112,6 +1224,8 @@ run_test test_runtime_health_classification_accepts_loopback_when_vm_interface_a
 run_test test_listening_port_parser_extracts_ports_without_gawk_match_captures
 run_test test_llama_api_health_probe_uses_bounded_timeouts
 run_test test_prestart_resolver_reports_unhealthy_primary_and_finds_healthy_alternate
+run_test test_prestart_flow_reports_unknown_listener_without_llama_server_claim
+run_test test_prestart_flow_identifies_managed_unhealthy_llama_server
 run_test test_prestart_resolver_accepts_loopback_healthy_primary_when_vm_interface_absent
 run_test test_prestart_existing_service_reuse_menu_reports_loopback_health_without_repair
 run_test test_prestart_resolver_keeps_explicit_selected_port
