@@ -745,19 +745,13 @@ offer_vm_startup_readiness_recovery() {
       1)
         attempts=$((attempts + 1))
         capture_vm_ip_discovery_baseline >/dev/null 2>&1 || true
-        if ! start_vm_with_utm; then
+        if ! start_selected_vm_for_setup; then
           warn 'ClawBox could not start the selected VM automatically.'
-          print_utm_start_attempt_summary
+          print_selected_vm_start_attempt_summary
           probe_state='network-timeout'
           continue
         fi
         VM_RECENTLY_STARTED=true
-        if ! wait_for_vm_running; then
-          warn 'ClawBox started UTM but did not confirm that the selected VM is running.'
-          print_utm_start_attempt_summary
-          probe_state='network-timeout'
-          continue
-        fi
         if wait_for_known_vm_ssh_readiness; then
           set_vm_recovery_outcome "$VM_RECOVERY_CONTINUE_SETUP"
           return 0

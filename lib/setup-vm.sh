@@ -345,7 +345,7 @@ offer_selected_vm_start_recovery_before_network_setup() {
 }
 
 start_selected_vm_for_setup() {
-  if [ -z "${VM_HOST:-}" ] && command -v launchagent_start_selected_vm_for_setup >/dev/null 2>&1; then
+  if command -v launchagent_start_selected_vm_for_setup >/dev/null 2>&1; then
     launchagent_start_selected_vm_for_setup
     return $?
   fi

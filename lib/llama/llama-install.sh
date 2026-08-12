@@ -170,6 +170,7 @@ install_llama_cpp_automatically() {
   local available_install_options
   local choice_homebrew
   local choice_source
+  local choice_back
   local choice_abort
   local single_option_mode=false
   local fallback_choice=''
@@ -251,6 +252,7 @@ install_llama_cpp_automatically() {
     single_option_mode=false
     choice_homebrew=''
     choice_source=''
+    choice_back=''
     choice_abort=''
 
     can_use_homebrew_action=false
@@ -274,7 +276,8 @@ install_llama_cpp_automatically() {
       fi
     fi
 
-    choice_abort=$((available_install_options + 1))
+    choice_back=$((available_install_options + 1))
+    choice_abort=$((available_install_options + 2))
 
     if [ "$available_install_options" -eq 0 ]; then
       error 'Automatic installation is not available in this environment.'
@@ -301,7 +304,7 @@ install_llama_cpp_automatically() {
       while true; do
         install_choice="$(llama_read_choice "Choose install method [1-$choice_abort]:")"
 
-        if [ "$install_choice" != "$choice_homebrew" ] && [ "$install_choice" != "$choice_source" ] && [ "$install_choice" != "$choice_abort" ]; then
+        if [ "$install_choice" != "$choice_homebrew" ] && [ "$install_choice" != "$choice_source" ] && [ "$install_choice" != "$choice_back" ] && [ "$install_choice" != "$choice_abort" ]; then
           err 'Invalid selection. Enter one of the listed options.'
           continue
         fi
@@ -410,6 +413,10 @@ install_llama_cpp_automatically() {
       err 'Please resolve the issue above and try again.'
       err 'Or choose abort setup.'
       continue
+    fi
+
+    if [ "$install_choice" = "$choice_back" ]; then
+      return "$LLAMA_EXIT_BACK"
     fi
 
     if [ "$install_choice" = "$choice_abort" ]; then
@@ -1353,6 +1360,8 @@ print_llama_cpp_install_method_options() {
     option_number=$((option_number + 1))
   fi
 
+  err "$option_number) Back"
+  option_number=$((option_number + 1))
   err "$option_number) Abort setup"
   err_blank_line
 }
@@ -1492,6 +1501,10 @@ resolve_llama_bin_path() {
 
           if [ "$status" -eq "$LLAMA_EXIT_GRACEFUL" ]; then
             return "$LLAMA_EXIT_GRACEFUL"
+          fi
+
+          if [ "$status" -eq "$LLAMA_EXIT_BACK" ]; then
+            break
           fi
 
           if [ "$status" -ne 0 ]; then

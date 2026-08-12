@@ -3827,6 +3827,76 @@ test_llama_bin_resolution_prompt() {
   fi
 }
 
+test_llama_install_method_back_returns_to_binary_resolution_menu() {
+  local resolved_bin="$TEMP_DIR/back-resolved-llama-server"
+  local stderr_file="$TEMP_DIR/llama-bin-back.stderr"
+  local resolved_path=''
+
+  printf '#!/bin/bash\nexit 0\n' > "$resolved_bin"
+  chmod +x "$resolved_bin"
+
+  prompt_with_default() {
+    REPLY="$resolved_bin"
+    return 0
+  }
+
+  command() {
+    if [ "${1:-}" = '-v' ] && [ "${2:-}" = 'brew' ]; then
+      printf '%s\n' '/opt/homebrew/bin/brew'
+      return 0
+    fi
+
+    if [ "${1:-}" = '-v' ] && { [ "${2:-}" = 'git' ] || [ "${2:-}" = 'cmake' ]; }; then
+      printf '%s\n' "/usr/bin/$2"
+      return 0
+    fi
+
+    builtin command "$@"
+  }
+
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/llama.sh"
+
+  llama_homebrew_state() {
+    REPLY='usable'
+  }
+
+  discover_llama_server_binaries() {
+    REPLY=''
+    return 0
+  }
+
+  queue_llama_choices '1' '3' '2'
+
+  llama_read_choice() {
+    next_llama_choice
+  }
+
+  run_llama_capture "$stderr_file" resolve_llama_bin_path ''
+  resolved_path="$REPLY"
+
+  if [ "$LLAMA_LAST_STATUS" -eq 0 ] && [ "$resolved_path" = "$resolved_bin" ]; then
+    pass "llama install method Back returns to binary resolution and accepts existing binary"
+  else
+    fail "llama install method Back should return to binary resolution and accept existing binary"
+  fi
+
+  if grep -Fq '1) Use Homebrew install' "$stderr_file" \
+    && grep -Fq '2) Clone via HTTPS and build locally' "$stderr_file" \
+    && grep -Fq '3) Back' "$stderr_file" \
+    && grep -Fq '4) Abort setup' "$stderr_file"; then
+    pass "llama install method menu shows Back before Abort"
+  else
+    fail "llama install method menu should show Back before Abort"
+  fi
+
+  if [ "$(grep -Fc 'llama-server binary not found.' "$stderr_file" 2>/dev/null || true)" -ge 2 ]; then
+    pass "llama install method Back returns exactly one level to missing-binary options"
+  else
+    fail "llama install method Back should return to missing-binary options"
+  fi
+}
+
 test_llama_bin_resolution_prefers_discovered_binaries() {
   local discovered_bin_one="$TEMP_DIR/discovered-llama-one"
   local discovered_bin_two="$TEMP_DIR/discovered-llama-two"
@@ -6591,6 +6661,7 @@ run_test test_launchagent_mismatched_runtime_recommends_update
 run_test test_launchagent_temporary_service_prompts_for_retention_yes_and_no
 run_test test_llama_install_mode_selection
 run_test test_llama_bin_resolution_prompt
+run_test test_llama_install_method_back_returns_to_binary_resolution_menu
 run_test test_llama_bin_resolution_hard_blocks_without_install_methods
 run_test test_llama_bin_resolution_prefers_discovered_binaries
 run_test test_llama_automatic_install_prefers_homebrew

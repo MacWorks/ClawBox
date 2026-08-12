@@ -171,6 +171,81 @@ test_selected_detected_vm_name_reaches_startup_path() {
   fi
 }
 
+test_configured_vm_host_still_uses_managed_launchagent_start() {
+  local output
+
+  prepare_vm_state_mocks
+
+  load_setup_functions
+
+  VM_MACHINE_NAME='macOS'
+  VM_HOST='tester@192.168.64.6'
+
+  launchagent_start_selected_vm_for_setup() {
+    printf 'LAUNCHAGENT_START_CALLED\n'
+    return 0
+  }
+
+  start_vm_with_utm() {
+    printf 'DIRECT_START_CALLED\n'
+    return 1
+  }
+
+  output="$({ ensure_selected_vm_started_before_network_setup; printf 'STATUS:%s\n' "$?"; } 2>&1)"
+
+  assert_contains 'configured VM host setup start succeeds' "$output" 'STATUS:0'
+  assert_contains 'configured VM host still uses managed LaunchAgent startup rail' "$output" 'LAUNCHAGENT_START_CALLED'
+  assert_not_contains 'configured VM host does not use direct UTM startup fallback' "$output" 'DIRECT_START_CALLED'
+}
+
+test_startup_recovery_retry_uses_managed_launchagent_not_direct_utm() {
+  local output
+
+  prepare_vm_state_mocks
+
+  load_setup_functions
+  install_prompt_stubs
+  queue_prompt_answers '1' '6'
+
+  VM_MACHINE_NAME='macOS'
+  VM_HOST='tester@192.168.64.6'
+
+  capture_vm_ip_discovery_baseline() {
+    return 0
+  }
+
+  vm_startup_readiness_can_prompt() {
+    return 0
+  }
+
+  setup_selected_vm_runtime_state() {
+    REPLY='stopped'
+    return 0
+  }
+
+  launchagent_start_selected_vm_for_setup() {
+    printf 'LAUNCHAGENT_START_CALLED\n'
+    return 1
+  }
+
+  start_vm_with_utm() {
+    printf 'DIRECT_START_CALLED\n'
+    return 1
+  }
+
+  launchagent_print_start_attempt_summary() {
+    out 'VM startup service state: running'
+    out 'VM startup detail: VM running after startup attempt: macOS'
+  }
+
+  output="$({ offer_vm_startup_readiness_recovery 'stopped' 'unknown' 'network-timeout' || true; } 2>&1)"
+
+  assert_contains 'startup retry reports managed startup service state' "$output" 'VM startup service state: running'
+  assert_contains 'startup retry uses managed LaunchAgent rail' "$output" 'LAUNCHAGENT_START_CALLED'
+  assert_not_contains 'startup retry does not use direct UTM fallback' "$output" 'DIRECT_START_CALLED'
+  assert_not_contains 'startup retry does not print package-open fallback' "$output" 'Attempting UTM package path:'
+}
+
 test_start_vm_falls_back_to_applescript_after_utmctl_failure() {
   local osascript_log="$TEMP_DIR/osascript-start.log"
   local output
@@ -2909,6 +2984,8 @@ test_setup_vm_is_running_uses_resolved_utmctl
 test_setup_vm_running_check_times_out_blocked_utmctl
 test_start_vm_uses_selected_vm_name_with_utmctl
 test_selected_detected_vm_name_reaches_startup_path
+test_configured_vm_host_still_uses_managed_launchagent_start
+test_startup_recovery_retry_uses_managed_launchagent_not_direct_utm
 test_start_vm_falls_back_to_applescript_after_utmctl_failure
 test_start_vm_reports_each_failed_start_method
 test_start_vm_reports_tcc_only_for_automation_denial
