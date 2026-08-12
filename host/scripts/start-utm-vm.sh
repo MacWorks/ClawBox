@@ -28,10 +28,6 @@ log_error() {
   printf '[ERROR] %s\n' "$1" >&2
 }
 
-log_trace() {
-  log_info "trace time=$(timestamp_now) $1"
-}
-
 write_state() {
   local state="$1"
   local detail="$2"
@@ -47,7 +43,6 @@ write_state() {
     printf 'time=%s\n' "$(timestamp_now)"
   } >"$state_file" 2>/dev/null || true
 
-  log_trace "event=state-write state=$state detail=$detail"
 }
 
 command_path() {
@@ -120,10 +115,8 @@ vm_is_running_via_utmctl() {
 
   bin="$(utmctl_bin)" || return 1
 
-  log_trace "event=utmctl-list-start context=$context"
   list_output="$("$bin" list 2>&1)"
   list_status=$?
-  log_trace "event=utmctl-list-end context=$context status=$list_status"
 
   if [ "$list_status" -ne 0 ]; then
     if output_indicates_automation_denial "$list_output"; then
@@ -195,10 +188,8 @@ start_with_utmctl() {
   bin="$(utmctl_bin)" || return 1
 
   log_info "Attempting to start VM with utmctl: $VM_NAME"
-  log_trace "event=utmctl-start-start vm=$VM_NAME"
   output="$("$bin" start "$VM_NAME" 2>&1)"
   start_status=$?
-  log_trace "event=utmctl-start-end vm=$VM_NAME status=$start_status"
 
   if [ "$start_status" -eq 0 ]; then
     log_info "utmctl start requested successfully for VM: $VM_NAME"
