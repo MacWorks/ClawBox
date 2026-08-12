@@ -535,9 +535,6 @@ utmctl_vm_ip_candidates() {
     if ! vm_ip_is_ipv4 "$candidate_ip"; then
       continue
     fi
-    if [ "$candidate_ip" = "${VM_IP:-}" ]; then
-      continue
-    fi
     if vm_ip_should_be_excluded "$candidate_ip"; then
       continue
     fi

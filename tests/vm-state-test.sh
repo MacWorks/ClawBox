@@ -2638,6 +2638,35 @@ test_discover_vm_ip_candidates_prefers_utmctl_guest_ip_metadata() {
   assert_equals 'utmctl guest IP discovery returns the authoritative IPv4 address first' "$REPLY" '192.168.64.9'
 }
 
+test_discover_vm_ip_candidates_keeps_configured_ip_from_selected_vm_metadata() {
+  prepare_vm_state_mocks
+
+  load_setup_functions
+
+  VM_MACHINE_NAME='Shared VM'
+  VM_USER='vm-user'
+  VM_IP='192.168.64.6'
+  printf '192.168.64.6\n' > "$CLAWBOX_TEST_UTMCTL_IP_FILE"
+
+  probe_ssh_target_endpoint() {
+    if [ "$1" = 'vm-user@192.168.64.6' ]; then
+      REPLY='ssh-auth-required'
+    else
+      REPLY='unreachable'
+    fi
+    return 0
+  }
+
+  if discover_vm_ip_candidates; then
+    pass 'vm ip discovery keeps configured IP when selected VM metadata reports it'
+  else
+    fail 'vm ip discovery should keep configured IP from selected VM metadata'
+  fi
+
+  assert_equals 'configured IP from selected VM metadata remains the discovered candidate' "$REPLY" '192.168.64.6'
+  assert_equals 'configured IP from selected VM metadata has selected-vm confidence' "$VM_IP_DISCOVERY_CONFIDENCE" 'selected-vm'
+}
+
 test_discover_vm_ip_candidates_excludes_host_api_address() {
   prepare_vm_state_mocks
 
@@ -2939,6 +2968,124 @@ test_single_generic_vm_ip_candidate_requires_confirmation() {
   assert_not_contains 'single generic VM IP candidate does not use high-confidence auto selection' "$output" 'Detected VM IP: 192.168.64.6'
 }
 
+test_fresh_ip_discovery_retains_ready_configured_ip_before_generic_candidates() {
+  local output
+  local discovery_calls=0
+  local probe_log="$TEMP_DIR/configured-ip-ready-probes.txt"
+
+  prepare_vm_state_mocks
+
+  load_setup_functions
+  install_prompt_stubs
+
+  VM_IP='192.168.64.6'
+  VM_USER='vm-user'
+  VM_HOST='vm-user@192.168.64.6'
+  CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS=2
+  CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL=0
+
+  probe_ssh_target_endpoint() {
+    printf '%s\n' "$1" >> "$probe_log"
+    REPLY='ssh-refused'
+    return 0
+  }
+
+  discover_vm_ip_candidates() {
+    discovery_calls=$((discovery_calls + 1))
+    VM_IP_DISCOVERY_CONFIDENCE='generic'
+    REPLY='192.168.64.8'
+    return 0
+  }
+
+  output="$({ discover_vm_ip_before_manual_prompt '192.168.64.6'; printf 'REPLY:%s\n' "$REPLY"; printf 'DISCOVERY_CALLS:%s\n' "$discovery_calls"; } 2>&1)"
+  unset CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL
+
+  assert_contains 'configured IP validation probes the configured target' "$(cat "$probe_log")" 'vm-user@192.168.64.6'
+  assert_contains 'ready configured IP is retained before generic discovery' "$output" 'REPLY:192.168.64.6'
+  assert_contains 'ready configured IP skips broader discovery' "$output" 'DISCOVERY_CALLS:0'
+  assert_contains 'ready configured IP reports detected address' "$output" 'Detected VM IP: 192.168.64.6'
+}
+
+test_fresh_ip_discovery_retries_transient_configured_ip_before_generic_candidates() {
+  local output
+  local probe_calls=0
+  local discovery_calls=0
+
+  prepare_vm_state_mocks
+
+  load_setup_functions
+  install_prompt_stubs
+
+  VM_IP='192.168.64.6'
+  VM_USER='vm-user'
+  VM_HOST='vm-user@192.168.64.6'
+  CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS=3
+  CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL=0
+
+  probe_ssh_target_endpoint() {
+    probe_calls=$((probe_calls + 1))
+    if [ "$probe_calls" -lt 3 ]; then
+      REPLY='ssh-timeout'
+    else
+      REPLY='ready'
+    fi
+    return 0
+  }
+
+  discover_vm_ip_candidates() {
+    discovery_calls=$((discovery_calls + 1))
+    VM_IP_DISCOVERY_CONFIDENCE='generic'
+    REPLY='192.168.64.8'
+    return 0
+  }
+
+  output="$({ discover_vm_ip_before_manual_prompt '192.168.64.6'; printf 'REPLY:%s\n' "$REPLY"; printf 'PROBE_CALLS:%s\n' "$probe_calls"; printf 'DISCOVERY_CALLS:%s\n' "$discovery_calls"; } 2>&1)"
+  unset CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL
+
+  assert_contains 'transient configured IP is retried before discovery' "$output" 'PROBE_CALLS:3'
+  assert_contains 'transient configured IP is retained after becoming reachable' "$output" 'REPLY:192.168.64.6'
+  assert_contains 'transient configured IP skips generic discovery after success' "$output" 'DISCOVERY_CALLS:0'
+}
+
+test_fresh_ip_discovery_does_not_silently_switch_from_unavailable_configured_ip_to_generic_candidate() {
+  local output
+  local probe_calls=0
+
+  prepare_vm_state_mocks
+
+  load_setup_functions
+  install_prompt_stubs
+  queue_prompt_answers '2' '192.168.64.6'
+
+  VM_IP='192.168.64.6'
+  VM_USER='vm-user'
+  VM_HOST='vm-user@192.168.64.6'
+  CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS=2
+  CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL=0
+
+  probe_ssh_target_endpoint() {
+    probe_calls=$((probe_calls + 1))
+    REPLY='ssh-timeout'
+    return 0
+  }
+
+  discover_vm_ip_candidates() {
+    VM_IP_DISCOVERY_CONFIDENCE='generic'
+    REPLY='192.168.64.8'
+    return 0
+  }
+
+  output="$({ discover_vm_ip_before_manual_prompt '192.168.64.6'; printf 'REPLY:%s\n' "$REPLY"; printf 'PROBE_CALLS:%s\n' "$probe_calls"; } 2>&1)"
+  unset CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL
+
+  assert_contains 'unavailable configured IP receives bounded validation attempts' "$output" 'PROBE_CALLS:2'
+  assert_contains 'generic candidate is presented as possible address' "$output" 'Detected possible VM IP addresses:'
+  assert_contains 'generic candidate is listed for explicit confirmation' "$output" '1) 192.168.64.8'
+  assert_contains 'manual option remains available after generic candidate' "$output" '2) Enter an IP address manually'
+  assert_contains 'manual fallback can keep the configured address' "$output" 'REPLY:192.168.64.6'
+  assert_not_contains 'generic candidate is not silently promoted to detected VM IP' "$output" 'Detected VM IP: 192.168.64.8'
+}
+
 test_offer_vm_ip_recovery_abort_path_is_explicit() {
   local output
   local status=0
@@ -3018,6 +3165,9 @@ test_offer_vm_ip_recovery_retries_discovery_then_accepts_manual_ip
 test_offer_vm_ip_recovery_loops_after_multiple_bad_manual_ips
 test_offer_vm_ip_recovery_requires_explicit_abort_after_bad_manual_ip
 test_single_generic_vm_ip_candidate_requires_confirmation
+test_fresh_ip_discovery_retains_ready_configured_ip_before_generic_candidates
+test_fresh_ip_discovery_retries_transient_configured_ip_before_generic_candidates
+test_fresh_ip_discovery_does_not_silently_switch_from_unavailable_configured_ip_to_generic_candidate
 test_offer_vm_ip_recovery_abort_path_is_explicit
 test_remote_login_recovery_continues_to_model_configuration
 test_remote_login_confirmation_allows_one_bounded_refusal_retry
@@ -3047,6 +3197,7 @@ test_wait_for_vm_network_uses_bounded_tcp_probe_timing
 test_vm_onboarding_wait_defaults_increase_spinner_cadence
 test_wait_for_known_vm_ssh_readiness_distinguishes_network_ready_from_ssh_auth_failure
 test_discover_vm_ip_candidates_prefers_utmctl_guest_ip_metadata
+test_discover_vm_ip_candidates_keeps_configured_ip_from_selected_vm_metadata
 test_discover_vm_ip_candidates_excludes_host_api_address
 test_discover_vm_ip_candidates_excludes_local_interface_addresses
 test_discover_vm_ip_candidates_excludes_ips_already_proven_unreachable

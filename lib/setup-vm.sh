@@ -574,9 +574,13 @@ discover_vm_ip_before_manual_prompt() {
   local discovered_candidates=''
   local saved_vm_ip="${VM_IP:-}"
   local saved_vm_user="${VM_USER:-}"
+  local configured_probe_state=''
   local attempts=1
   local max_attempts=''
   local interval=''
+  local configured_attempts=1
+  local configured_max_attempts=''
+  local configured_interval=''
 
   if ! command -v discover_vm_ip_candidates >/dev/null 2>&1; then
     prompt_with_default 'Enter VM IP address' "$vm_ip_default"
@@ -585,8 +589,37 @@ discover_vm_ip_before_manual_prompt() {
 
   max_attempts="${CLAWBOX_FRESH_VM_IP_DISCOVERY_ATTEMPTS:-8}"
   interval="${CLAWBOX_FRESH_VM_IP_DISCOVERY_INTERVAL:-2}"
+  configured_max_attempts="${CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS:-4}"
+  configured_interval="${CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL:-1}"
 
   status_begin 'Discovering VM IP address...'
+
+  if [ -n "$saved_vm_ip" ] && [ -n "$saved_vm_user" ] && vm_ip_is_ipv4 "$saved_vm_ip"; then
+    while [ "$configured_attempts" -le "$configured_max_attempts" ]; do
+      probe_ssh_target_endpoint "${saved_vm_user}@${saved_vm_ip}"
+      configured_probe_state="$REPLY"
+
+      if vm_network_state_is_reachable "$configured_probe_state"; then
+        status_end "Detected VM IP: $saved_vm_ip ✓" 'progress'
+        VM_IP="$saved_vm_ip"
+        VM_USER="$saved_vm_user"
+        REPLY="$saved_vm_ip"
+        return 0
+      fi
+
+      if [ "$configured_attempts" -lt "$configured_max_attempts" ]; then
+        status_tick
+        if [ -n "${CLAWBOX_SLEEP_BIN:-}" ]; then
+          "$CLAWBOX_SLEEP_BIN" "$configured_interval"
+        else
+          sleep "$configured_interval"
+        fi
+      fi
+
+      configured_attempts=$((configured_attempts + 1))
+    done
+  fi
+
   VM_IP="$vm_ip_default"
   if [ -z "${VM_USER:-}" ]; then
     VM_USER='clawbox'
