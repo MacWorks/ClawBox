@@ -509,9 +509,11 @@ choose_discovered_vm_ip_candidate() {
 
   if [ "$candidate_count" -eq 1 ]; then
     candidate_ip="$candidates"
-    status_end "Detected VM IP: $candidate_ip ✓" 'progress'
-    REPLY="$candidate_ip"
-    return 0
+    if [ "${VM_IP_DISCOVERY_CONFIDENCE:-}" = 'selected-vm' ]; then
+      status_end "Detected VM IP: $candidate_ip ✓" 'progress'
+      REPLY="$candidate_ip"
+      return 0
+    fi
   fi
 
   status_end 'VM IP discovery completed.' 'success'

@@ -132,6 +132,7 @@ test_selected_detected_vm_name_reaches_startup_path() {
 
   load_setup_functions
   install_prompt_stubs
+  queue_prompt_answers '3'
   queue_prompt_answers 'y'
 
   ensure_vm_platform_ready() {
@@ -955,6 +956,7 @@ test_ensure_vm_connectivity_fails_fast_for_invalid_target() {
 
   load_setup_functions
   install_prompt_stubs
+  queue_prompt_answers '3'
 
   VM_MACHINE_NAME='Shared VM'
   VM_HOST='vm-user@bad-target'
@@ -983,7 +985,7 @@ test_ensure_vm_connectivity_reports_stale_configured_address() {
   printf 'Shared VM running\n' > "$CLAWBOX_TEST_UTMCTL_LIST_FILE"
   : > "$CLAWBOX_TEST_PROCESS_LIST_FILE"
   CLAWBOX_TEST_SSH_STDERR='ssh: connect to host 192.168.64.2 port 22: No route to host'
-  queue_prompt_answers '6'
+  queue_prompt_answers '3'
 
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
@@ -1575,6 +1577,15 @@ test_classify_vm_ssh_connectivity_promotes_auth_required_when_batch_auth_succeed
     return 0
   }
 
+  probe_vm_network_endpoint() {
+    if [ "$VM_HOST" = 'vm-user@192.168.64.6' ]; then
+      REPLY='ssh-refused'
+      return 0
+    fi
+    REPLY='unreachable'
+    return 1
+  }
+
   probe_ssh_batch_auth_target() {
     REPLY='ready'
     return 0
@@ -1711,7 +1722,7 @@ test_ensure_vm_connectivity_recovers_vm_ip_after_startup() {
 
   load_setup_functions
   install_prompt_stubs
-  queue_prompt_answers 'y' 'y'
+  queue_prompt_answers '1' 'y'
 
   VM_MACHINE_NAME='Shared VM'
   VM_USER='vm-user'
@@ -1747,6 +1758,20 @@ test_ensure_vm_connectivity_recovers_vm_ip_after_startup() {
     return 0
   }
 
+  probe_vm_network_endpoint() {
+    if [ "$VM_HOST" = 'vm-user@192.168.64.6' ]; then
+      REPLY='ssh-refused'
+      return 0
+    fi
+    REPLY='unreachable'
+    return 1
+  }
+
+  wait_for_vm_ssh_service() {
+    REPLY='ready'
+    return 0
+  }
+
   attempt_ssh_access_bootstrap() {
     return 0
   }
@@ -1754,7 +1779,7 @@ test_ensure_vm_connectivity_recovers_vm_ip_after_startup() {
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
   assert_contains 'vm ip recovery reports discovery progress' "$output" 'Attempting VM IP discovery...'
-  assert_contains 'vm ip recovery reports the detected likely address' "$output" 'Detected likely VM address: 192.168.64.6'
+  assert_contains 'vm ip recovery reports the detected generic address as a menu option' "$output" '1) 192.168.64.6'
 }
 
 test_discover_vm_ip_candidates_excludes_ips_already_proven_unreachable() {
@@ -2602,6 +2627,10 @@ test_offer_vm_ip_recovery_retries_discovery_then_accepts_manual_ip() {
   CLAWBOX_VM_IP_RECOVERY_MAX_ATTEMPTS=3
 
   probe_vm_network_endpoint() {
+    if [ "$VM_HOST" = 'vm-user@192.168.64.12' ]; then
+      REPLY='ready'
+      return 0
+    fi
     REPLY='unreachable'
     return 1
   }
@@ -2630,6 +2659,132 @@ test_offer_vm_ip_recovery_retries_discovery_then_accepts_manual_ip() {
   assert_contains 'ip recovery no-candidate path preserves explicit abort' "$output" '3) Abort setup'
   assert_contains 'ip recovery manual selection updates vm host' "$output" 'VM_HOST=vm-user@192.168.64.12'
   assert_not_contains 'ip recovery no-candidate path does not dump manual ssh setup' "$output" ' > Manual SSH Setup'
+}
+
+test_offer_vm_ip_recovery_loops_after_multiple_bad_manual_ips() {
+  local output
+  local output_file="$TEMP_DIR/ip-recovery-multiple-bad-manual-output.txt"
+  local status=0
+  local discovery_calls=0
+  local probe_log="$TEMP_DIR/ip-recovery-multiple-bad-manual-probes.txt"
+
+  prepare_vm_state_mocks
+
+  unset -f offer_vm_ip_recovery
+  load_setup_functions
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/vm/vm-repair.sh"
+  install_prompt_stubs
+  queue_prompt_answers \
+    '3' '192.168.64.249' \
+    '3' '192.168.64.248' \
+    '3' '192.168.64.6'
+
+  VM_IP='192.168.64.250'
+  VM_USER='vm-user'
+  VM_HOST='vm-user@192.168.64.250'
+
+  probe_vm_network_endpoint() {
+    printf '%s\n' "$VM_HOST" >> "$probe_log"
+    if [ "$VM_HOST" = 'vm-user@192.168.64.6' ]; then
+      REPLY='ready'
+      return 0
+    fi
+    REPLY='unreachable'
+    return 1
+  }
+
+  discover_vm_ip_candidates() {
+    discovery_calls=$((discovery_calls + 1))
+    VM_IP_DISCOVERY_CONFIDENCE='generic'
+    REPLY='192.168.64.6
+192.168.64.8'
+    return 0
+  }
+
+  set +e
+  offer_vm_ip_recovery > "$output_file" 2>&1
+  status=$?
+  set -e
+  {
+    printf 'DISCOVERY_CALLS=%s\n' "$discovery_calls"
+    printf 'FINAL_VM_HOST=%s\n' "$VM_HOST"
+    printf 'PROBES:\n'
+    cat "$probe_log"
+  } >> "$output_file"
+  output="$(cat "$output_file")"
+
+  assert_equals 'ip recovery succeeds after multiple bad manual IP entries' "$status" '0'
+  assert_contains 'ip recovery probes the first bad manual address' "$output" 'vm-user@192.168.64.249'
+  assert_contains 'ip recovery probes the second bad manual address' "$output" 'vm-user@192.168.64.248'
+  assert_contains 'ip recovery eventually accepts the corrected manual address' "$output" 'FINAL_VM_HOST=vm-user@192.168.64.6'
+  assert_contains 'ip recovery loops through discovery after bad manual addresses' "$output" 'DISCOVERY_CALLS=3'
+  assert_not_contains 'bad manually entered IP never reaches generic Manual SSH Setup' "$output" ' > Manual SSH Setup'
+  assert_not_contains 'bad manually entered IP does not stop in SSH readiness wait' "$output" 'SSH readiness check stopped.'
+}
+
+test_offer_vm_ip_recovery_requires_explicit_abort_after_bad_manual_ip() {
+  local output
+  local status=0
+
+  prepare_vm_state_mocks
+
+  unset -f offer_vm_ip_recovery
+  load_setup_functions
+  # shellcheck source=/dev/null
+  . "$ROOT_DIR/lib/vm/vm-repair.sh"
+  install_prompt_stubs
+  queue_prompt_answers '3' '192.168.64.249' '4'
+
+  VM_IP='192.168.64.250'
+  VM_USER='vm-user'
+  VM_HOST='vm-user@192.168.64.250'
+
+  probe_vm_network_endpoint() {
+    REPLY='unreachable'
+    return 1
+  }
+
+  discover_vm_ip_candidates() {
+    VM_IP_DISCOVERY_CONFIDENCE='generic'
+    REPLY='192.168.64.6
+192.168.64.8'
+    return 0
+  }
+
+  set +e
+  output="$({ offer_vm_ip_recovery; status=$?; printf 'STATUS:%s\n' "$status"; printf 'REPLY:%s\n' "$REPLY"; } 2>&1)"
+  set -e
+
+  assert_contains 'ip recovery exits nonzero only after explicit abort' "$output" 'STATUS:1'
+  assert_contains 'ip recovery reports abort outcome after explicit abort' "$output" 'REPLY:abort'
+  assert_contains 'ip recovery offers abort after a bad manual address' "$output" '4) Abort setup'
+  assert_not_contains 'explicit abort path does not print manual ssh setup' "$output" ' > Manual SSH Setup'
+}
+
+test_single_generic_vm_ip_candidate_requires_confirmation() {
+  local output
+  local status=0
+
+  prepare_vm_state_mocks
+
+  load_setup_functions
+  install_prompt_stubs
+  queue_prompt_answers '2'
+
+  VM_IP_DISCOVERY_CONFIDENCE='generic'
+
+  set +e
+  output="$({ choose_discovered_vm_ip_candidate '192.168.64.6'; printf 'REPLY:%s\n' "$REPLY"; } 2>&1)"
+  status=$?
+  set -e
+
+  assert_equals 'single generic VM IP candidate manual option returns to caller for entry' "$status" '0'
+  assert_contains 'single generic VM IP candidate is shown as a possible address' "$output" 'Detected possible VM IP addresses:'
+  assert_contains 'single generic VM IP candidate is not silently accepted' "$output" '1) 192.168.64.6'
+  assert_contains 'single generic VM IP candidate keeps manual option available' "$output" '2) Enter an IP address manually'
+  assert_contains 'single generic VM IP manual option leaves address entry to caller' "$output" 'REPLY:'
+  assert_not_contains 'single generic VM IP candidate does not use high-confidence auto selection' "$output" 'Detected VM IP: 192.168.64.6'
 }
 
 test_offer_vm_ip_recovery_abort_path_is_explicit() {
@@ -2706,6 +2861,9 @@ test_ensure_vm_connectivity_emits_single_ssh_bootstrap_success_line
 test_ensure_vm_connectivity_retries_ssh_after_remote_login_confirmation
 test_offer_vm_ip_recovery_keeps_reachable_configured_ip
 test_offer_vm_ip_recovery_retries_discovery_then_accepts_manual_ip
+test_offer_vm_ip_recovery_loops_after_multiple_bad_manual_ips
+test_offer_vm_ip_recovery_requires_explicit_abort_after_bad_manual_ip
+test_single_generic_vm_ip_candidate_requires_confirmation
 test_offer_vm_ip_recovery_abort_path_is_explicit
 test_remote_login_recovery_continues_to_model_configuration
 test_remote_login_confirmation_allows_one_bounded_refusal_retry

@@ -18,6 +18,7 @@ VM_UNREACHABLE_IPS=''
 
 reset_vm_onboarding_probe_state() {
   VM_UNREACHABLE_IPS=''
+  VM_IP_DISCOVERY_CONFIDENCE=''
 }
 
 ssh_target_ipv4() {
@@ -706,6 +707,7 @@ discover_vm_ip_candidates() {
 
   REPLY=''
   VM_IP_DISCOVERY_CANDIDATES=''
+  VM_IP_DISCOVERY_CONFIDENCE=''
 
   [ -n "$vm_user" ] || return 1
 
@@ -740,6 +742,7 @@ EOF
 
   if [ -n "$VM_IP_DISCOVERY_CANDIDATES" ]; then
     REPLY="$VM_IP_DISCOVERY_CANDIDATES"
+    VM_IP_DISCOVERY_CONFIDENCE='selected-vm'
     return 0
   fi
 
@@ -843,6 +846,9 @@ EOF
   fi
 
   REPLY="$VM_IP_DISCOVERY_CANDIDATES"
+  if [ -n "$REPLY" ]; then
+    VM_IP_DISCOVERY_CONFIDENCE='generic'
+  fi
   [ -n "$REPLY" ]
 }
 

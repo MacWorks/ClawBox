@@ -1743,6 +1743,7 @@ test_fresh_setup_uses_single_discovered_vm_ip_without_manual_prompt() {
       return 0
     }
     discover_vm_ip_candidates() {
+      VM_IP_DISCOVERY_CONFIDENCE='selected-vm'
       REPLY='192.168.64.6'
       return 0
     }
@@ -1828,6 +1829,7 @@ test_fresh_setup_retries_ip_discovery_until_new_vm_network_is_ready() {
       fi
       DISCOVERY_CALLS=2
       printf 'EVENT:ip-discovery-found\n'
+      VM_IP_DISCOVERY_CONFIDENCE='selected-vm'
       REPLY='192.168.64.6'
       return 0
     }
@@ -3630,7 +3632,17 @@ test_vm_ip_discovery_recovery_flow() {
       return 0
     }
 
+    probe_vm_network_endpoint() {
+      if [ "$VM_HOST" = 'repair-user@192.168.64.6' ]; then
+        REPLY='ssh-refused'
+        return 0
+      fi
+      REPLY='unreachable'
+      return 1
+    }
+
     discover_vm_ip_candidates() {
+      VM_IP_DISCOVERY_CONFIDENCE='selected-vm'
       REPLY='192.168.64.6'
       return 0
     }

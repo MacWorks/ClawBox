@@ -46,6 +46,54 @@ update_vm_ip_selection() {
   return 0
 }
 
+vm_ip_recovery_current_address_is_usable() {
+  local probe_state=''
+  local target_ip=''
+
+  probe_vm_network_endpoint
+  probe_state="$REPLY"
+
+  case "$probe_state" in
+    ready|ssh-refused|ssh-auth-required|ssh-hostkey-unknown|ssh-hostkey-changed|ssh-hostkey-strict|ssh-remote-command-failed)
+      REPLY="$probe_state"
+      return 0
+      ;;
+  esac
+
+  if ssh_target_ipv4 "${VM_HOST:-}"; then
+    target_ip="$REPLY"
+    record_unreachable_vm_ip "$target_ip" >/dev/null 2>&1 || true
+  fi
+
+  REPLY="$probe_state"
+  return 1
+}
+
+accept_vm_ip_recovery_selection() {
+  local ip_value="$1"
+  local source_label="$2"
+  local probe_state=''
+
+  update_vm_ip_selection "$ip_value" || return 1
+
+  case "$source_label" in
+    detected)
+      success "Using detected VM address: $ip_value"
+      ;;
+    *)
+      success "Using entered VM address: $ip_value"
+      ;;
+  esac
+
+  if vm_ip_recovery_current_address_is_usable; then
+    return 0
+  fi
+
+  probe_state="$REPLY"
+  print_vm_ssh_probe_guidance 'running-no-ssh' 'exact' "$probe_state"
+  return 1
+}
+
 offer_vm_ip_recovery() {
   local discovered_candidates=''
   local candidate_count=0
@@ -54,8 +102,6 @@ offer_vm_ip_recovery() {
   local retry_option_number=0
   local abort_option_number=0
   local selected_option=''
-  local recovery_attempts=0
-  local max_recovery_attempts="${CLAWBOX_VM_IP_RECOVERY_MAX_ATTEMPTS:-3}"
 
   if configured_vm_ip_is_network_reachable; then
     warn "The configured VM address (${VM_IP:-}) is reachable; keeping it."
@@ -63,8 +109,7 @@ offer_vm_ip_recovery() {
     return 1
   fi
 
-  while [ "$recovery_attempts" -lt "$max_recovery_attempts" ]; do
-    recovery_attempts=$((recovery_attempts + 1))
+  while true; do
     candidate_count=0
     option_number=1
     retry_option_number=0
@@ -93,9 +138,10 @@ offer_vm_ip_recovery() {
             ;;
           2)
             prompt_with_default 'Enter VM IP address' "${VM_IP:-}"
-            update_vm_ip_selection "$REPLY" || return 1
-            success "Using entered VM address: $REPLY"
-            return 0
+            if accept_vm_ip_recovery_selection "$REPLY" 'manual'; then
+              return 0
+            fi
+            break
             ;;
           3)
             REPLY='abort'
@@ -121,16 +167,16 @@ offer_vm_ip_recovery() {
 $discovered_candidates
 EOF
 
-    if [ "$candidate_count" -eq 1 ]; then
+    if [ "$candidate_count" -eq 1 ] && [ "${VM_IP_DISCOVERY_CONFIDENCE:-}" = 'selected-vm' ]; then
       candidate_ip="$discovered_candidates"
       warn "The current VM IP address (${VM_IP:-}) was unreachable."
       out "Detected likely VM address: $candidate_ip"
       prompt_yes_no 'Use this address?' 'y'
 
       if [ "$REPLY" = 'true' ]; then
-        update_vm_ip_selection "$candidate_ip" || return 1
-        success "Using detected VM address: $candidate_ip"
-        return 0
+        if accept_vm_ip_recovery_selection "$candidate_ip" 'detected'; then
+          return 0
+        fi
       fi
     else
       warn "The current VM IP address (${VM_IP:-}) was unreachable."
@@ -172,9 +218,10 @@ EOF
         while IFS= read -r candidate_ip; do
           [ -n "$candidate_ip" ] || continue
           if [ "$option_number" -eq "$selected_option" ]; then
-            update_vm_ip_selection "$candidate_ip" || return 1
-            success "Using detected VM address: $candidate_ip"
-            return 0
+            if accept_vm_ip_recovery_selection "$candidate_ip" 'detected'; then
+              return 0
+            fi
+            break
           fi
           option_number=$((option_number + 1))
         done <<EOF
@@ -189,14 +236,10 @@ EOF
     fi
 
     prompt_with_default 'Enter VM IP address' "${VM_IP:-}"
-    update_vm_ip_selection "$REPLY" || return 1
-    success "Using entered VM address: $REPLY"
-    return 0
+    if accept_vm_ip_recovery_selection "$REPLY" 'manual'; then
+      return 0
+    fi
   done
-
-  warn 'VM address recovery reached the retry limit.'
-  REPLY='network-timeout'
-  return 1
 }
 
 prompt_for_vm_ip_replacement() {
