@@ -671,6 +671,23 @@ $ip_value"
   return 0
 }
 
+vm_generic_candidate_has_current_evidence() {
+  local candidate_ip="$1"
+  local candidate_state="$2"
+
+  case "$candidate_state" in
+    ready|ssh-refused|ssh-auth-required)
+      return 0
+      ;;
+    invalid-target|unreachable|ssh-timeout|unknown)
+      record_unreachable_vm_ip "$candidate_ip" >/dev/null 2>&1 || true
+      return 1
+      ;;
+  esac
+
+  return 1
+}
+
 vm_generate_likely_subnet_ips() {
   local subnet_value="$1"
   local subnet_prefix=''
@@ -767,11 +784,9 @@ EOF
     probe_ssh_target_endpoint "$candidate_target"
     candidate_state="$REPLY"
 
-    case "$candidate_state" in
-      invalid-target|unreachable)
-        continue
-        ;;
-    esac
+    if ! vm_generic_candidate_has_current_evidence "$candidate_ip" "$candidate_state"; then
+      continue
+    fi
 
     vm_append_candidate_ip "$candidate_ip"
     status_tick
@@ -795,11 +810,9 @@ EOF
     probe_ssh_target_endpoint "$candidate_target"
     candidate_state="$REPLY"
 
-    case "$candidate_state" in
-      invalid-target|unreachable)
-        continue
-        ;;
-    esac
+    if ! vm_generic_candidate_has_current_evidence "$candidate_ip" "$candidate_state"; then
+      continue
+    fi
 
     vm_append_candidate_ip "$candidate_ip"
     discovered_count=$((discovered_count + 1))
@@ -828,11 +841,9 @@ EOF
       probe_ssh_target_endpoint "$candidate_target"
       candidate_state="$REPLY"
 
-      case "$candidate_state" in
-        invalid-target|unreachable)
-          continue
-          ;;
-      esac
+      if ! vm_generic_candidate_has_current_evidence "$candidate_ip" "$candidate_state"; then
+        continue
+      fi
 
       vm_append_candidate_ip "$candidate_ip"
       discovered_count=$((discovered_count + 1))

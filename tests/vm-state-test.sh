@@ -1819,6 +1819,82 @@ test_discover_vm_ip_candidates_excludes_ips_already_proven_unreachable() {
   assert_equals 'vm ip discovery does not re-add the previously unreachable vm ip address' "$REPLY" '192.168.64.8'
 }
 
+test_discover_vm_ip_candidates_rejects_stale_arp_entries_without_current_evidence() {
+  prepare_vm_state_mocks
+
+  load_setup_functions
+
+  VM_MACHINE_NAME='Shared VM'
+  VM_USER='vm-user'
+  VM_IP='192.168.64.7'
+  VM_HOST='vm-user@192.168.64.7'
+  FIREWALL_SHARED_SUBNET='192.168.64.0/24'
+  printf '? (192.168.64.6) at aa:bb:cc:dd:ee:06 on bridge100 ifscope [ethernet]\n? (192.168.64.8) at aa:bb:cc:dd:ee:08 on bridge100 ifscope [ethernet]\n? (192.168.64.248) at (incomplete) on bridge100 ifscope [ethernet]\n? (192.168.64.249) at aa:bb:cc:dd:ee:f9 on bridge100 ifscope [ethernet]\n? (192.168.64.250) at aa:bb:cc:dd:ee:fa on bridge100 ifscope [ethernet]\n' > "$CLAWBOX_TEST_ARP_OUTPUT_FILE"
+
+  probe_ssh_target_endpoint() {
+    case "$1" in
+      vm-user@192.168.64.6|vm-user@192.168.64.8)
+        REPLY='ssh-refused'
+        ;;
+      vm-user@192.168.64.248|vm-user@192.168.64.249|vm-user@192.168.64.250)
+        REPLY='ssh-timeout'
+        ;;
+      *)
+        REPLY='unreachable'
+        ;;
+    esac
+    return 0
+  }
+
+  if discover_vm_ip_candidates; then
+    pass 'vm ip discovery keeps live generic candidates with current evidence'
+  else
+    fail 'vm ip discovery should keep live generic candidates with current evidence'
+  fi
+
+  assert_contains 'vm ip discovery retains the first legitimate live neighbor' "$REPLY" '192.168.64.6'
+  assert_contains 'vm ip discovery retains the second legitimate live neighbor' "$REPLY" '192.168.64.8'
+  assert_not_contains 'vm ip discovery rejects stale arp timeout candidate .248' "$REPLY" '192.168.64.248'
+  assert_not_contains 'vm ip discovery rejects stale arp timeout candidate .249' "$REPLY" '192.168.64.249'
+  assert_not_contains 'vm ip discovery rejects stale arp timeout candidate .250' "$REPLY" '192.168.64.250'
+}
+
+test_discover_vm_ip_candidates_requires_generated_guess_current_evidence() {
+  prepare_vm_state_mocks
+
+  load_setup_functions
+
+  VM_MACHINE_NAME='Shared VM'
+  VM_USER='vm-user'
+  VM_IP='192.168.64.7'
+  VM_HOST='vm-user@192.168.64.7'
+  FIREWALL_SHARED_SUBNET='192.168.64.0/24'
+  : > "$CLAWBOX_TEST_ARP_OUTPUT_FILE"
+
+  probe_ssh_target_endpoint() {
+    case "$1" in
+      vm-user@192.168.64.6)
+        REPLY='ssh-refused'
+        ;;
+      vm-user@192.168.64.2|vm-user@192.168.64.3|vm-user@192.168.64.4|vm-user@192.168.64.5|vm-user@192.168.64.8|vm-user@192.168.64.9|vm-user@192.168.64.10)
+        REPLY='ssh-timeout'
+        ;;
+      *)
+        REPLY='unreachable'
+        ;;
+    esac
+    return 0
+  }
+
+  if discover_vm_ip_candidates; then
+    pass 'vm ip discovery can use a generated subnet candidate with current evidence'
+  else
+    fail 'vm ip discovery should keep a generated subnet candidate with current evidence'
+  fi
+
+  assert_equals 'vm ip discovery excludes generated guesses without current evidence' "$REPLY" '192.168.64.6'
+}
+
 test_wait_for_vm_network_succeeds_within_network_specific_budget() {
   local probe_attempts=0
 
@@ -2897,6 +2973,8 @@ test_discover_vm_ip_candidates_prefers_utmctl_guest_ip_metadata
 test_discover_vm_ip_candidates_excludes_host_api_address
 test_discover_vm_ip_candidates_excludes_local_interface_addresses
 test_discover_vm_ip_candidates_excludes_ips_already_proven_unreachable
+test_discover_vm_ip_candidates_rejects_stale_arp_entries_without_current_evidence
+test_discover_vm_ip_candidates_requires_generated_guess_current_evidence
 
 if [ "$FAILURES" -eq 0 ]; then
   printf 'PASS: test suite succeeded\n'
