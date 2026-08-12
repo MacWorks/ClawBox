@@ -586,7 +586,7 @@ discover_vm_ip_before_manual_prompt() {
   max_attempts="${CLAWBOX_FRESH_VM_IP_DISCOVERY_ATTEMPTS:-8}"
   interval="${CLAWBOX_FRESH_VM_IP_DISCOVERY_INTERVAL:-2}"
 
-  status_begin 'Detecting VM IP address...'
+  status_begin 'Discovering VM IP address...'
   VM_IP="$vm_ip_default"
   if [ -z "${VM_USER:-}" ]; then
     VM_USER='clawbox'
@@ -605,7 +605,7 @@ discover_vm_ip_before_manual_prompt() {
     fi
 
     if [ "$attempts" -lt "$max_attempts" ]; then
-      status_tick 'Detecting VM IP address...'
+      status_tick
       if [ -n "${CLAWBOX_SLEEP_BIN:-}" ]; then
         "$CLAWBOX_SLEEP_BIN" "$interval"
       else
@@ -619,8 +619,7 @@ discover_vm_ip_before_manual_prompt() {
   VM_IP="$saved_vm_ip"
   VM_USER="$saved_vm_user"
 
-  status_end 'VM IP discovery did not find a candidate.' 'warning'
-  out 'ClawBox could not automatically determine the VM IP address.'
+  status_end 'ClawBox could not automatically determine the VM IP address.' 'warning'
   prompt_with_default 'Enter VM IP address' "$vm_ip_default"
   return 0
 }

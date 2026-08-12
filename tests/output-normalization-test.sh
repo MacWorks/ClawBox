@@ -1759,6 +1759,7 @@ test_fresh_setup_uses_single_discovered_vm_ip_without_manual_prompt() {
 
   status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
 
+  assert_contains 'fresh single IP flow reports discovery progress' "$output" 'Discovering VM IP address...'
   assert_contains 'fresh single IP flow detects VM IP' "$output" 'Detected VM IP: 192.168.64.6'
   assert_contains 'fresh single IP flow uses discovered VM host' "$output" 'FINAL_VM_HOST:tester@192.168.64.6'
   assert_contains 'fresh single IP flow reaches connectivity with discovered VM host' "$output" 'EVENT:connectivity-after:tester@192.168.64.6'
@@ -1847,6 +1848,7 @@ test_fresh_setup_retries_ip_discovery_until_new_vm_network_is_ready() {
   status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
 
   assert_contains 'fresh retry IP flow observes initially missing guest IP' "$output" 'EVENT:ip-discovery-empty'
+  assert_contains 'fresh retry IP flow reports discovery progress' "$output" 'Discovering VM IP address...'
   assert_contains 'fresh retry IP flow retries discovery after initial miss' "$output" 'EVENT:ip-discovery-found'
   assert_contains 'fresh retry IP flow records two discovery attempts' "$output" 'DISCOVERY_CALLS:2'
   assert_contains 'fresh retry IP flow uses discovered VM host' "$output" 'FINAL_VM_HOST:tester@192.168.64.6'
@@ -2089,6 +2091,8 @@ test_fresh_setup_bad_ip_uses_guided_recovery_without_manual_ssh_dead_end() {
 
   assert_contains 'fresh bad-ip flow reports configured address unreachable' "$output" 'configured VM address is not reachable'
   assert_contains 'fresh bad-ip flow attempts discovery' "$output" 'EVENT:discovery-no-candidates'
+  assert_contains 'fresh bad-ip failed discovery reports clean fallback status' "$output" 'ClawBox could not automatically determine the VM IP address.'
+  assert_not_contains 'fresh bad-ip failed discovery does not print stale no-candidate status' "$output" 'VM IP discovery did not find a candidate.'
   assert_contains 'fresh bad-ip no-candidate path offers discovery retry' "$output" '1) Retry VM address discovery'
   assert_contains 'fresh bad-ip no-candidate path offers manual IP entry' "$output" '2) Enter VM IP address manually'
   assert_contains 'fresh bad-ip manual correction updates VM host' "$output" 'FINAL_VM_HOST:tester@192.168.64.6'
@@ -2965,6 +2969,7 @@ test_vm_running_without_ssh_flow() {
   assert_contains 'running vm flow shows booting cause' "$output" '- VM is still booting'
   assert_contains 'running vm flow shows remote login cause' "$output" '- Remote Login is disabled'
   assert_contains 'running vm flow shows networking cause' "$output" '- Networking is not ready yet'
+  assert_contains 'running vm flow shows incorrect ip cause' "$output" '- The selected VM IP address is incorrect or unreachable'
 }
 
 test_vm_connection_setup_reports_vm_settings_completion_without_progress_spinner() {
@@ -3650,12 +3655,13 @@ test_vm_ip_discovery_recovery_flow() {
     write_env_from_template() { :; }
     source_env_file() { :; }
 
-    offer_vm_ip_recovery || true
+  offer_vm_ip_recovery || true
   } 2>&1)"
 
   assert_contains 'vm ip recovery flow reports unreachable current vm ip address' "$output" 'The current VM IP address (192.168.64.7) was unreachable.'
-  assert_contains 'vm ip recovery flow reports discovery progress' "$output" 'Attempting VM IP discovery...'
+  assert_contains 'vm ip recovery flow reports discovery progress' "$output" 'Discovering VM IP address...'
   assert_contains 'vm ip recovery flow reports discovery completion' "$output" 'VM IP discovery completed.'
+  assert_equals 'vm ip recovery flow emits one discovery completion line' "$(printf '%s\n' "$output" | grep -F 'VM IP discovery completed.' | wc -l | tr -d '[:space:]')" '1'
   assert_contains 'vm ip recovery flow reports the detected likely vm address' "$output" 'Detected likely VM address: 192.168.64.6'
 }
 

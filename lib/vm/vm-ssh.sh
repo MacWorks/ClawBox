@@ -734,7 +734,7 @@ discover_vm_ip_candidates() {
       esac
 
       vm_append_candidate_ip "$candidate_ip"
-      status_tick 'Attempting VM IP discovery...'
+      status_tick
     done <<EOF
 $utmctl_ips
 EOF
@@ -774,7 +774,7 @@ EOF
     esac
 
     vm_append_candidate_ip "$candidate_ip"
-    status_tick 'Attempting VM IP discovery...'
+    status_tick
   done <<EOF
 $current_neighbors
 EOF
@@ -803,7 +803,7 @@ EOF
 
     vm_append_candidate_ip "$candidate_ip"
     discovered_count=$((discovered_count + 1))
-    status_tick 'Attempting VM IP discovery...'
+    status_tick
     if [ "$discovered_count" -ge 5 ]; then
       break
     fi
@@ -836,7 +836,7 @@ EOF
 
       vm_append_candidate_ip "$candidate_ip"
       discovered_count=$((discovered_count + 1))
-      status_tick 'Attempting VM IP discovery...'
+      status_tick
       if [ "$discovered_count" -ge 5 ]; then
         break
       fi

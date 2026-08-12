@@ -116,10 +116,10 @@ offer_vm_ip_recovery() {
     abort_option_number=0
     selected_option=''
 
-    status_begin 'Attempting VM IP discovery...'
+    status_begin 'Discovering VM IP address...'
 
     if ! discover_vm_ip_candidates; then
-      status_end 'VM IP discovery did not find a candidate.' 'warning'
+      status_end 'ClawBox could not automatically determine the VM IP address.' 'warning'
       warn 'No likely VM IP addresses were discovered on the expected subnet.'
       blank_line
       out '1) Retry VM address discovery'
@@ -294,7 +294,8 @@ print_vm_ssh_probe_guidance() {
     network-timeout)
       print_possible_causes \
         'VM is still booting' \
-        'Networking is not ready yet'
+        'Networking is not ready yet' \
+        'The selected VM IP address is incorrect or unreachable'
       return 0
       ;;
     invalid-target)
@@ -351,7 +352,8 @@ print_vm_ssh_probe_guidance() {
       fi
       print_possible_causes \
         'VM is still booting' \
-        'Networking is not ready yet'
+        'Networking is not ready yet' \
+        'The selected VM IP address is incorrect or unreachable'
       return 0
       ;;
     ssh-auth-required)
@@ -402,6 +404,7 @@ print_vm_ssh_probe_guidance() {
         'VM is still booting' \
         'Remote Login is disabled' \
         'Networking is not ready yet' \
+        'The selected VM IP address is incorrect or unreachable' \
         'SSH keys are not configured'
       return 0
       ;;

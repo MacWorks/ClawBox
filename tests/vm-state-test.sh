@@ -1012,6 +1012,7 @@ test_ensure_vm_connectivity_distinguishes_ssh_timeout_for_running_vm() {
 
   assert_contains 'timeout flow reports ssh timeout for a running vm' "$output" 'VM is booting or running, but SSH timed out.'
   assert_contains 'timeout flow explains that the vm may still be booting' "$output" '- VM is still booting'
+  assert_contains 'timeout flow explains that the vm ip may be wrong' "$output" '- The selected VM IP address is incorrect or unreachable'
   assert_not_contains 'timeout flow does not offer automatic ssh bootstrap while the host is timing out' "$output" 'Attempt to configure SSH access automatically? [Y/n]:'
 }
 
@@ -1778,7 +1779,7 @@ test_ensure_vm_connectivity_recovers_vm_ip_after_startup() {
 
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
-  assert_contains 'vm ip recovery reports discovery progress' "$output" 'Attempting VM IP discovery...'
+  assert_contains 'vm ip recovery reports discovery progress' "$output" 'Discovering VM IP address...'
   assert_contains 'vm ip recovery reports the detected generic address as a menu option' "$output" '1) 192.168.64.6'
 }
 
