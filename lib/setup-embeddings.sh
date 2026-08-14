@@ -104,28 +104,62 @@ restart_existing_embeddings_service() {
 }
 
 setup_existing_embeddings_service_phase() {
-  local choice='' label='' mode='' endpoint=''
-  endpoint="${EMBEDDINGS_LLAMA_BASE_URL:-http://${HOST_IP}:${EMBEDDINGS_LLAMA_PORT:-11435}/v1}"
+  local choice='' label='' mode='' owner='' endpoint='' display_port='' local_endpoint='' healthy=false
+  local installed_mode='' installed_port='' installed_host='' installed_bin='' installed_model='' installed_args='' installed_ctx=''
+  local configured_enabled="${EMBEDDINGS_ENABLED:-false}"
+  endpoint="$(embeddings_llama_configured_base_url)"
   label="$(embeddings_llama_label 2>/dev/null || printf '%s' 'com.clawbox.llama.embeddings')"
-  mode='ClawBox-managed LaunchAgent'
+  owner='configured but not currently running'
   if command -v embeddings_llama_service_loaded >/dev/null 2>&1; then
     if embeddings_llama_service_loaded system; then
-      mode='ClawBox-managed LaunchDaemon'
-    elif ! embeddings_llama_service_loaded user && ! llama_port_in_use "${EMBEDDINGS_LLAMA_PORT:-}"; then
-      mode='configured but not currently running'
+      installed_mode='system'
+      owner='ClawBox-managed LaunchDaemon'
+    elif embeddings_llama_service_loaded user; then
+      installed_mode='user'
+      owner='ClawBox-managed LaunchAgent'
     fi
   fi
 
-  outf 'embeddings llama-server detected at %s' "$endpoint"
+  if [ -n "$installed_mode" ]; then
+    embeddings_llama_mode_env_get "$installed_mode" EMBEDDINGS_LLAMA_PORT >/dev/null 2>&1 && installed_port="$REPLY"
+    embeddings_llama_mode_env_get "$installed_mode" EMBEDDINGS_LLAMA_HOST >/dev/null 2>&1 && installed_host="$REPLY"
+    embeddings_llama_mode_env_get "$installed_mode" EMBEDDINGS_LLAMA_BIN >/dev/null 2>&1 && installed_bin="$REPLY"
+    embeddings_llama_mode_env_get "$installed_mode" EMBEDDINGS_MODEL_PATH >/dev/null 2>&1 && installed_model="$REPLY"
+    embeddings_llama_mode_env_get "$installed_mode" EMBEDDINGS_LLAMA_CTX >/dev/null 2>&1 && installed_ctx="$REPLY"
+    embeddings_llama_mode_env_get "$installed_mode" EMBEDDINGS_LLAMA_EXTRA_ARGS >/dev/null 2>&1 && installed_args="$REPLY"
+  fi
+
+  display_port="${installed_port:-${EMBEDDINGS_LLAMA_PORT:-11435}}"
+  local_endpoint="http://$(llama_local_readiness_host "${installed_host:-${EMBEDDINGS_LLAMA_HOST:-0.0.0.0}}"):$display_port/v1"
+  endpoint="http://${HOST_IP:-127.0.0.1}:$display_port/v1"
+  if embeddings_llama_endpoint_responding "$local_endpoint"; then
+    healthy=true
+  fi
+
+  if [ "$healthy" = true ]; then
+    outf 'embeddings llama-server detected at %s' "$endpoint"
+  else
+    outf 'embeddings llama-server configured at %s' "$endpoint"
+  fi
   blank_line
-  outf 'Port: %s' "${EMBEDDINGS_LLAMA_PORT:-11435}"
+  outf 'Port: %s' "$display_port"
   outf 'Launch label: %s' "$label"
-  outf 'Binary: %s' "${LLAMA_BIN:-unknown}"
-  outf 'Owner: %s' "$mode"
+  outf 'Binary: %s' "${installed_bin:-${LLAMA_BIN:-unknown}}"
+  outf 'Owner: %s' "$owner"
+  if [ "$configured_enabled" = false ] && [ -n "$installed_mode" ]; then
+    warn 'Embeddings are disabled in .env, but a ClawBox-managed embeddings service is installed.'
+  fi
+  if [ -n "$installed_port" ] && [ -n "${EMBEDDINGS_LLAMA_PORT:-}" ] && [ "$installed_port" != "$EMBEDDINGS_LLAMA_PORT" ]; then
+    warn "Embeddings .env port (${EMBEDDINGS_LLAMA_PORT:-}) differs from the installed managed service port ($installed_port)."
+  fi
   out 'This instance is managed separately from the primary llama-server.'
   menu_begin 'Options:'
-  outf '1) Use the existing running embeddings llama-server on port %s (recommended)' "${EMBEDDINGS_LLAMA_PORT:-11435}"
-  outf '2) Restart/update the existing embeddings llama-server on port %s' "${EMBEDDINGS_LLAMA_PORT:-11435}"
+  if [ "$healthy" = true ]; then
+    outf '1) Use the existing running embeddings llama-server on port %s (recommended)' "$display_port"
+  else
+    outf '1) Use the existing embeddings llama-server on port %s' "$display_port"
+  fi
+  outf '2) Restart/update the existing embeddings llama-server on port %s' "$display_port"
   out '3) Reconfigure embeddings model/port'
   out '4) Disable embeddings'
   out '5) Skip embeddings management during setup'
@@ -136,11 +170,31 @@ setup_existing_embeddings_service_phase() {
     choice="${REPLY:-1}"
     case "$choice" in
       1)
-        if embeddings_llama_verify_configured_endpoint; then
+        if [ "$healthy" = true ]; then
           local local_endpoint=''
           local configured_endpoint=''
 
           EMBEDDINGS_ENABLED=true
+          if [ -n "$installed_port" ]; then
+            [ -z "$installed_bin" ] || LLAMA_BIN="$installed_bin"
+            [ -z "$installed_model" ] || EMBEDDINGS_MODEL_PATH="$installed_model"
+            [ -z "$installed_host" ] || EMBEDDINGS_LLAMA_HOST="$installed_host"
+            [ -z "$installed_port" ] || EMBEDDINGS_LLAMA_PORT="$installed_port"
+            [ -z "$installed_ctx" ] || EMBEDDINGS_LLAMA_CTX="$installed_ctx"
+            EMBEDDINGS_LLAMA_EXTRA_ARGS="$installed_args"
+            EMBEDDINGS_LLAMA_BASE_URL="http://${HOST_IP:-127.0.0.1}:${EMBEDDINGS_LLAMA_PORT:-$display_port}/v1"
+          fi
+
+          if ! embeddings_llama_verify_configured_endpoint; then
+            warn 'Existing embeddings llama-server is not healthy at the configured endpoint.'
+            out 'Choose restart/update or reconfigure embeddings to repair it.'
+            continue
+          fi
+
+          if [ -n "$installed_port" ]; then
+            write_env_from_template
+            source_env_file || return $?
+          fi
           out 'Using existing embeddings llama-server.'
           local_endpoint="$(embeddings_llama_local_base_url)"
           configured_endpoint="$(embeddings_llama_configured_base_url)"

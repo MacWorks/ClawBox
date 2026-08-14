@@ -123,6 +123,11 @@ run_provisioning_and_deployment() {
     return "$connectivity_status"
   fi
 
+  section "Deployment"
+  step "Deploying to VM..."
+
+  ensure_vm_provision_script
+
   section "OpenClaw Configuration"
   status_begin_compact "Preparing OpenClaw configuration..."
 
@@ -131,6 +136,12 @@ run_provisioning_and_deployment() {
   else
     status_end "Preparing OpenClaw configuration failed." 'error'
     return 1
+  fi
+
+  if [ "${NEEDS_PROVISIONING:-false}" = true ]; then
+    openclaw_config_preparation_status_success
+    ensure_openclaw_provisioned || return $?
+    status_begin_compact "Preparing OpenClaw configuration..."
   fi
 
   # Existing VM config is user/OpenClaw-owned. Normal setup makes only
@@ -142,13 +153,6 @@ run_provisioning_and_deployment() {
   openclaw_config_preparation_status_success
 
   offer_targeted_openclaw_config_restart || return $?
-
-  section "Deployment"
-  step "Deploying to VM..."
-
-  ensure_vm_provision_script
-
-  ensure_openclaw_provisioned || return $?
 
   section "Runtime"
   step "Configuring runtime services..."

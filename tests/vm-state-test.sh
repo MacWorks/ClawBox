@@ -155,6 +155,10 @@ test_selected_detected_vm_name_reaches_startup_path() {
     return 1
   }
 
+  offer_vm_startup_readiness_recovery() {
+    return 1
+  }
+
   wait_for_vm_running() {
     fail 'selected-vm startup path should not enter the long runtime wait after failed start'
     return 1
@@ -918,6 +922,11 @@ test_non_tcc_startup_failure_does_not_offer_manual_continuation() {
 
   load_setup_functions
   install_prompt_stubs
+
+  vm_startup_readiness_can_prompt() {
+    return 1
+  }
+
   queue_prompt_answers 'y'
 
   detect_vm_state() {
@@ -2357,6 +2366,11 @@ test_ensure_vm_connectivity_classifies_network_stage_failure_once() {
 
   wait_for_vm_running() {
     return 0
+  }
+
+  offer_vm_startup_readiness_recovery() {
+    REPLY="$3"
+    return "$LLAMA_EXIT_GRACEFUL"
   }
 
   CLAWBOX_VM_NETWORK_WAIT_MAX_ATTEMPTS=2

@@ -106,6 +106,8 @@ test_vm_openclaw_restart_requires_runtime_verification() {
     VM_RUNTIME_PATH='/Users/jimmy/ClawBox'
     prompt_yes_no() { REPLY='true'; }
     ssh() { return 0; }
+    sleep() { :; }
+    openclaw_runtime_has_manual_process() { return 1; }
     openclaw_runtime_has_launchd_gateway() { return 0; }
     offer_vm_openclaw_gateway_restart
   } 2>&1)"
@@ -184,6 +186,13 @@ test_primary_model_subcommand_preserves_embeddings_state() {
       offer_vm_openclaw_alias_sync_if_drift() { :; }
       prompt_yes_no() { REPLY=true; }
       setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
+      offer_qualification_after_primary_model_switch() { :; }
+
+      resolve_primary_model_switch_runtime_settings() {
+        LLAMA_CTX='32768'
+        return 0
+      }
+
       write_env_from_template() { printf 'WRITE_PRIMARY:%s:%s:%s\n' "$MODEL_PATH" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_ENABLED"; }
       detect_model_llama_mode() { REPLY=user; }
       setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE:%s\n' "$1"; }
@@ -220,6 +229,7 @@ test_primary_model_switch_resolves_model_dependent_runtime_before_restart() {
     offer_openclaw_alias_migration() { :; }
     offer_vm_openclaw_alias_sync_if_drift() { :; }
     prompt_yes_no() { REPLY=true; }
+    model_command_is_interactive() { return 1; }
     setup_configure_model_selection() {
       MODEL_PATH='/models/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf'
       OPENCLAW_MODEL_SUPPORTS_VISION='false'
@@ -325,6 +335,7 @@ test_primary_model_switch_can_configure_vision_model_before_restart() {
     offer_openclaw_alias_migration() { :; }
     offer_vm_openclaw_alias_sync_if_drift() { :; }
     prompt_yes_no() { REPLY=true; }
+    model_command_is_interactive() { return 1; }
     setup_configure_model_selection() {
       MODEL_PATH='/models/Ternary-Bonsai-27B-Q2_g64.gguf'
       OPENCLAW_MODEL_SUPPORTS_VISION='true'
@@ -370,6 +381,11 @@ test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure() {
       offer_vm_openclaw_alias_sync_if_drift() { :; }
       prompt_yes_no() { REPLY=true; }
       setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
+      resolve_primary_model_switch_runtime_settings() {
+        LLAMA_CTX='32768'
+        return 0
+      }
+      offer_qualification_after_primary_model_switch() { :; }
       write_env_from_template() { printf 'WRITE_PRIMARY:%s\n' "$MODEL_PATH"; }
       detect_model_llama_mode() { REPLY=user; }
       setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE:%s\n' "$1"; }
@@ -407,6 +423,12 @@ test_primary_model_subcommand_reports_no_openclaw_changes_when_sync_has_no_drift
       offer_vm_openclaw_alias_sync_if_drift() { :; }
       prompt_yes_no() { REPLY=true; }
       setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
+
+      resolve_primary_model_switch_runtime_settings() {
+        LLAMA_CTX='32768'
+        return 0
+      }
+
       write_env_from_template() { :; }
       detect_model_llama_mode() { REPLY=user; }
       setup_llama_service_for_mode() { :; }
@@ -434,6 +456,12 @@ test_primary_model_subcommand_reports_actual_openclaw_sync_when_updated() {
       offer_vm_openclaw_alias_sync_if_drift() { :; }
       prompt_yes_no() { REPLY=true; }
       setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
+
+      resolve_primary_model_switch_runtime_settings() {
+        LLAMA_CTX='32768'
+        return 0
+      }
+
       write_env_from_template() { :; }
       detect_model_llama_mode() { REPLY=user; }
       setup_llama_service_for_mode() { :; }
@@ -471,6 +499,12 @@ test_primary_model_switch_offers_qualification_after_successful_match() {
         REPLY='3'
       }
       setup_configure_model_selection() { MODEL_PATH='/models/primary-new.gguf'; }
+
+      resolve_primary_model_switch_runtime_settings() {
+        LLAMA_CTX='32768'
+        return 0
+      }
+
       write_env_from_template() { :; }
       detect_model_llama_mode() { REPLY=user; }
       setup_llama_service_for_mode() { printf 'PRIMARY_SERVICE:%s\n' "$1"; }
@@ -736,6 +770,12 @@ test_primary_model_noop_or_failed_switch_does_not_offer_qualification() {
       write_env_from_template() { :; }
       detect_model_llama_mode() { REPLY=user; }
       setup_llama_service_for_mode() { return 1; }
+
+      resolve_primary_model_switch_runtime_settings() {
+        LLAMA_CTX='32768'
+        return 0
+      }
+
       run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       main primary
     }

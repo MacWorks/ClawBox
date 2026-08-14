@@ -2288,7 +2288,7 @@ test_setup_deployment_flow_stops_on_openclaw_sync_failure() {
     out 'OpenClaw config was not replaced.'
     return 1
   }
-  ensure_vm_provision_script() { printf 'UNEXPECTED_DEPLOYMENT\n'; return 0; }
+  ensure_vm_provision_script() { printf 'DEPLOYMENT_STAGED\n'; return 0; }
   ensure_openclaw_provisioned() { printf 'UNEXPECTED_PROVISIONING\n'; return 0; }
   setup_launchagent() { printf 'UNEXPECTED_RUNTIME\n'; return 0; }
   handle_openclaw_runtime_state() { printf 'UNEXPECTED_RUNTIME_HANDLER\n'; return 0; }
@@ -2307,8 +2307,9 @@ test_setup_deployment_flow_stops_on_openclaw_sync_failure() {
 
   if [ "$status" -ne 0 ] \
     && grep -Fq 'OpenClaw config verification failed for models.providers.clawbox.models.' "$output_file" \
+    && grep -Fq 'DEPLOYMENT_STAGED' "$output_file" \
     && ! grep -Fq 'UNEXPECTED_SETUP_COMPLETE' "$output_file" \
-    && ! grep -Fq 'UNEXPECTED_DEPLOYMENT' "$output_file" \
+    && ! grep -Fq 'UNEXPECTED_PROVISIONING' "$output_file" \
     && ! grep -Fq 'UNEXPECTED_RUNTIME' "$output_file"; then
     pass "setup deployment flow stops when OpenClaw targeted sync fails verification"
   else

@@ -3565,6 +3565,12 @@ test_vm_startup_network_recovery_flow() {
       return 0
     }
 
+    setup_selected_vm_runtime_state() {
+      REPLY='running'
+      VM_RUNNING_STATE_CONFIDENCE='exact'
+      return 0
+    }
+
     setup_selected_vm_is_running() {
       runtime_checks=$((runtime_checks + 1))
       return 0
@@ -3866,12 +3872,13 @@ text = sys.argv[1]
 updated = text.find("Targeted ClawBox OpenClaw settings updated.")
 prompt = text.find("Restart the VM OpenClaw gateway now to apply targeted config changes?")
 deployment = text.find(" > Deployment")
-raise SystemExit(0 if -1 not in (updated, prompt, deployment) and updated < prompt < deployment else 1)
+runtime = text.find(" > Runtime")
+raise SystemExit(0 if -1 not in (updated, prompt, deployment, runtime) and deployment < updated < prompt < runtime else 1)
 PY
   then
-    pass "targeted OpenClaw restart prompt appears before Deployment"
+    pass "targeted OpenClaw restart prompt appears after Deployment staging and before Runtime"
   else
-    fail "targeted OpenClaw restart prompt should appear before Deployment"
+    fail "targeted OpenClaw restart prompt should appear after Deployment staging and before Runtime"
   fi
 }
 
@@ -4032,12 +4039,13 @@ text = sys.argv[1]
 matched = text.find("OpenClaw config already matched; no OpenClaw changes were made.")
 auth = text.find("Checking OpenClaw gateway authentication... ✓")
 deployment = text.find(" > Deployment")
-raise SystemExit(0 if -1 not in (matched, auth, deployment) and matched < auth < deployment else 1)
+runtime = text.find(" > Runtime")
+raise SystemExit(0 if -1 not in (matched, auth, deployment, runtime) and deployment < matched < auth < runtime else 1)
 PY
   then
-    pass "OpenClaw gateway auth status completes before Deployment"
+    pass "OpenClaw gateway auth status completes after Deployment staging and before Runtime"
   else
-    fail "OpenClaw gateway auth status should complete before Deployment"
+    fail "OpenClaw gateway auth status should complete after Deployment staging and before Runtime"
   fi
 
   assert_contains 'OpenClaw gateway auth status visibly repaints during remote token reads' "$output" 'Checking OpenClaw gateway authentication /'
@@ -4255,6 +4263,98 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
   assert_not_contains 'provisioning fallback flow does not offer remote provisioning prompt' "$output" 'Proceed with VM provisioning? [Y/n]:'
   assert_not_contains 'provisioning fallback flow does not execute remote provisioning output' "$output" 'OpenClaw ready: /opt/homebrew/bin/openclaw'
   assert_not_contains 'provisioning handoff does not require a second setup run after confirmation' "$output" 'Then re-run ./clawbox setup on the host.'
+}
+
+test_openclaw_config_present_without_executable_uses_provisioning_flow() {
+  local output
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers 'n'
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    detect_openclaw_runtime_state() {
+      NEEDS_PROVISIONING=true
+      IS_RUNNING=false
+      return 0
+    }
+    ensure_vm_provision_script() { out 'Finalizing...'; }
+    sync_openclaw_config() {
+      printf 'UNEXPECTED_TARGETED_SYNC\n'
+      return 1
+    }
+    setup_launchagent() { printf 'UNEXPECTED_RUNTIME\n'; return 0; }
+    handle_openclaw_runtime_state() { printf 'UNEXPECTED_RUNTIME\n'; return 0; }
+    offer_targeted_openclaw_config_restart() { printf 'UNEXPECTED_RESTART_PROMPT\n'; return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { printf 'UNEXPECTED_SETUP_COMPLETE\n'; return 0; }
+
+    VM_RUNTIME_PATH='/Users/tester/ClawBox'
+    VM_HOST='tester@192.168.64.2'
+    REMOTE_CONFIG_PATH='~/.openclaw/openclaw.json'
+
+    run_provisioning_and_deployment || true
+  } 2>&1)"
+
+  assert_contains 'config-present executable-absent flow deploys vm payload before provisioning prompt' "$output" 'Finalizing...'
+  assert_contains 'config-present executable-absent flow explains OpenClaw is missing' "$output" 'OpenClaw is not yet installed in the VM.'
+  assert_not_contains 'config-present executable-absent flow does not offer targeted config update' "$output" 'Apply targeted OpenClaw config updates?'
+  assert_not_contains 'config-present executable-absent flow does not run targeted sync' "$output" 'UNEXPECTED_TARGETED_SYNC'
+  assert_not_contains 'config-present executable-absent flow does not continue to runtime' "$output" 'UNEXPECTED_RUNTIME'
+  assert_not_contains 'config-present executable-absent flow does not complete setup' "$output" 'UNEXPECTED_SETUP_COMPLETE'
+}
+
+test_openclaw_provisioning_confirmation_still_requires_executable_before_sync() {
+  local output detect_counter="$TEMP_DIR/openclaw-still-absent-detect-count"
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers 'y'
+    printf '0\n' > "$detect_counter"
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+    detect_openclaw_runtime_state() {
+      local calls=0
+      IFS= read -r calls < "$detect_counter" || calls=0
+      calls=$((calls + 1))
+      printf '%s\n' "$calls" > "$detect_counter"
+      NEEDS_PROVISIONING=true
+      IS_RUNNING=false
+      return 0
+    }
+    ensure_vm_provision_script() { out 'Finalizing...'; }
+    sync_openclaw_config() {
+      printf 'UNEXPECTED_TARGETED_SYNC\n'
+      return 1
+    }
+    setup_launchagent() { printf 'UNEXPECTED_RUNTIME\n'; return 0; }
+    handle_openclaw_runtime_state() { printf 'UNEXPECTED_RUNTIME\n'; return 0; }
+    offer_targeted_openclaw_config_restart() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { printf 'UNEXPECTED_SETUP_COMPLETE\n'; return 0; }
+
+    VM_RUNTIME_PATH='/Users/tester/ClawBox'
+    VM_HOST='tester@192.168.64.2'
+
+    run_provisioning_and_deployment || true
+    printf 'DETECT_CALLS:%s\n' "$(cat "$detect_counter")"
+  } 2>&1)"
+
+  assert_contains 'post-provisioning confirmation rechecks OpenClaw executable' "$output" 'DETECT_CALLS:2'
+  assert_contains 'post-provisioning executable absence is reported' "$output" 'OpenClaw is still not detected in the VM.'
+  assert_not_contains 'post-provisioning executable absence does not run targeted sync' "$output" 'UNEXPECTED_TARGETED_SYNC'
+  assert_not_contains 'post-provisioning executable absence does not continue to runtime' "$output" 'UNEXPECTED_RUNTIME'
+  assert_not_contains 'post-provisioning executable absence does not complete setup' "$output" 'UNEXPECTED_SETUP_COMPLETE'
 }
 
 test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete() {
@@ -4498,6 +4598,123 @@ test_optional_embeddings_setup_is_host_only() {
   assert_contains 'accepting embeddings writes independent embeddings config' "$enabled_output" 'EMBEDDINGS_ENV:true:/tmp/embeddings.gguf:11435'
   assert_contains 'accepting embeddings starts the user service with a separate profile' "$enabled_output" 'EMBEDDINGS_SERVICE:user'
   assert_not_contains 'embeddings setup does not invoke VM deployment' "$enabled_output" 'Deploying to VM'
+}
+
+test_embeddings_placeholder_url_is_never_probed() {
+  local output curl_log="$TEMP_DIR/embeddings-placeholder-curl.log"
+
+  output="$({
+    setup_mock_bin_dir
+    write_mock_command curl '#!/bin/bash
+printf "%s\n" "$*" >> "$CLAWBOX_TEST_CURL_LOG"
+exit 0'
+    export CLAWBOX_TEST_CURL_LOG="$curl_log"
+    load_setup_functions
+
+    if embeddings_llama_endpoint_responding 'http://<host-ip>:11435/v1'; then
+      printf 'STATUS:unexpected-success\n'
+    else
+      printf 'STATUS:blocked-placeholder\n'
+    fi
+  } 2>&1)"
+
+  assert_contains 'embeddings placeholder endpoint is rejected before probing' "$output" 'STATUS:blocked-placeholder'
+  if [ ! -s "$curl_log" ]; then
+    pass 'embeddings placeholder endpoint never reaches curl'
+  else
+    fail 'embeddings placeholder endpoint should never reach curl'
+  fi
+}
+
+test_existing_embeddings_menu_uses_installed_managed_port_over_stale_env() {
+  local output env_file="$TEMP_DIR/clawbox-embeddings.env" write_log="$TEMP_DIR/embeddings-write.log"
+
+  cat > "$env_file" <<'EOF'
+CLAWBOX_LLAMA_INSTANCE="embeddings"
+EMBEDDINGS_LLAMA_BIN="/opt/homebrew/bin/llama-server"
+EMBEDDINGS_MODEL_PATH="/models/embed.gguf"
+EMBEDDINGS_LLAMA_HOST="0.0.0.0"
+EMBEDDINGS_LLAMA_PORT="11436"
+EMBEDDINGS_LLAMA_CTX="8192"
+EMBEDDINGS_LLAMA_EXTRA_ARGS="--embedding"
+EOF
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers '1' '5'
+
+    HOST_IP='192.168.64.1'
+    LLAMA_BIN='/opt/homebrew/bin/llama-server'
+    EMBEDDINGS_ENABLED=false
+    EMBEDDINGS_LLAMA_PORT='11435'
+    EMBEDDINGS_LLAMA_BASE_URL='http://<host-ip>:11435/v1'
+
+    embeddings_llama_user_env_dest() { printf '%s\n' "$env_file"; }
+    embeddings_llama_service_loaded() { [ "${1:-}" = user ]; }
+    embeddings_llama_endpoint_responding() {
+      if [ "${1:-}" = 'http://127.0.0.1:11436/v1' ] \
+        || [ "${1:-}" = 'http://192.168.64.1:11436/v1' ]; then
+        return 0
+      fi
+      if [[ "${1:-}" == *"<host-ip>"* ]]; then
+        printf 'UNEXPECTED_PLACEHOLDER_PROBE:%s\n' "${1:-}"
+      else
+        printf 'PROBED:%s\n' "${1:-}"
+      fi
+      return 1
+    }
+    write_env_from_template() {
+      printf 'ENV:%s:%s:%s\n' "$EMBEDDINGS_ENABLED" "$EMBEDDINGS_LLAMA_PORT" "$EMBEDDINGS_LLAMA_BASE_URL" >> "$write_log"
+      return 0
+    }
+    source_env_file() { return 0; }
+
+    setup_existing_embeddings_service_phase
+    cat "$write_log" 2>/dev/null || true
+  } 2>&1)"
+
+  assert_contains 'existing embeddings menu reports actual managed port' "$output" 'Port: 11436'
+  assert_contains 'existing embeddings menu reports actual managed endpoint' "$output" 'embeddings llama-server detected at http://192.168.64.1:11436/v1'
+  assert_not_contains 'existing embeddings menu does not call stale env port running' "$output" 'running embeddings llama-server on port 11435'
+  assert_contains 'disabled env plus installed embeddings service reports drift' "$output" 'Embeddings are disabled in .env, but a ClawBox-managed embeddings service is installed.'
+  assert_contains 'stale env embeddings port drift is reported' "$output" 'Embeddings .env port (11435) differs from the installed managed service port (11436).'
+  assert_contains 'adopting existing embeddings service persists actual managed port' "$output" 'ENV:true:11436:http://192.168.64.1:11436/v1'
+  assert_not_contains 'embeddings setup never probes template placeholder' "$output" 'UNEXPECTED_PLACEHOLDER_PROBE'
+}
+
+test_existing_embeddings_menu_does_not_call_stopped_managed_service_running() {
+  local output env_file="$TEMP_DIR/stopped-embeddings.env"
+
+  cat > "$env_file" <<'EOF'
+CLAWBOX_LLAMA_INSTANCE="embeddings"
+EMBEDDINGS_LLAMA_BIN="/opt/homebrew/bin/llama-server"
+EMBEDDINGS_MODEL_PATH="/models/embed.gguf"
+EMBEDDINGS_LLAMA_HOST="0.0.0.0"
+EMBEDDINGS_LLAMA_PORT="11436"
+EMBEDDINGS_LLAMA_CTX="8192"
+EMBEDDINGS_LLAMA_EXTRA_ARGS="--embedding"
+EOF
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers '5'
+
+    HOST_IP='192.168.64.1'
+    EMBEDDINGS_ENABLED=true
+    EMBEDDINGS_LLAMA_PORT='11435'
+
+    embeddings_llama_user_env_dest() { printf '%s\n' "$env_file"; }
+    embeddings_llama_service_loaded() { [ "${1:-}" = user ]; }
+    embeddings_llama_endpoint_responding() { return 1; }
+
+    setup_existing_embeddings_service_phase
+  } 2>&1)"
+
+  assert_contains 'stopped managed embeddings service is described as configured' "$output" 'embeddings llama-server configured at http://192.168.64.1:11436/v1'
+  assert_not_contains 'stopped managed embeddings service is not called detected' "$output" 'embeddings llama-server detected at'
+  assert_not_contains 'stopped managed embeddings service is not called existing running' "$output" 'Use the existing running embeddings llama-server'
 }
 
 test_dev_forced_vm_inference_failure_is_limited_to_recovery_probe() {
@@ -4810,10 +5027,15 @@ run_test test_openclaw_preparation_status_covers_remote_drift_detection
 run_test test_openclaw_gateway_auth_status_covers_post_comparison_remote_work
 run_test test_targeted_openclaw_restart_prompt_skips_decline_and_noop_sync
 run_test test_provisioning_and_deployment_continues_after_vm_local_provisioning
+run_test test_openclaw_config_present_without_executable_uses_provisioning_flow
+run_test test_openclaw_provisioning_confirmation_still_requires_executable_before_sync
 run_test test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete
 run_test test_runtime_service_existing_menu_wording
 run_test test_host_llama_restart_uses_install_mode_without_hidden_health_wait
 run_test test_optional_embeddings_setup_is_host_only
+run_test test_embeddings_placeholder_url_is_never_probed
+run_test test_existing_embeddings_menu_uses_installed_managed_port_over_stale_env
+run_test test_existing_embeddings_menu_does_not_call_stopped_managed_service_running
 run_test test_dev_forced_vm_inference_failure_is_limited_to_recovery_probe
 run_test test_openclaw_restart_recovery_is_limited_to_failed_post_update_inference
 run_test test_openclaw_restart_recovery_prompts_only_after_failed_inference

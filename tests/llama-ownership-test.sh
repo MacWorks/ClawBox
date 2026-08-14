@@ -1004,6 +1004,13 @@ test_prestart_existing_service_reuse_menu_reports_loopback_health_without_repair
     install_prompt_stubs
     queue_prompt_answers '1'
 
+    llama_read_choice() {
+      prompt "$1"
+      take_prompt_answer
+      REPLY="$PROMPT_ANSWER"
+      printf '%s\n' "$REPLY"
+    }
+
     LLAMA_HOST='0.0.0.0'
     LLAMA_EXTERNAL=false
 

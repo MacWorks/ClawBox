@@ -204,12 +204,19 @@ openclaw_runtime_is_active() {
 }
 
 detect_openclaw_runtime_state() {
+  local resolution_command=''
+
   NEEDS_PROVISIONING=false
   IS_RUNNING=false
 
-  if ! openclaw_runtime_zsh_check \
-    'command -v openclaw >/dev/null 2>&1 && openclaw --version >/dev/null 2>&1'
-  then
+  if command -v vm_openclaw_resolution_command >/dev/null 2>&1; then
+    vm_openclaw_resolution_command
+    resolution_command="$REPLY"
+  else
+    resolution_command='clawbox_vm_openclaw_bin="$(command -v openclaw 2>/dev/null || true)"; [ -n "$clawbox_vm_openclaw_bin" ] && [ -x "$clawbox_vm_openclaw_bin" ]'
+  fi
+
+  if ! openclaw_runtime_zsh_check "$resolution_command && \"\$clawbox_vm_openclaw_bin\" --version >/dev/null 2>&1"; then
     NEEDS_PROVISIONING=true
   fi
 

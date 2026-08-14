@@ -362,6 +362,9 @@ test_ui_opens_browser_without_gateway_token() {
     BASE_DIR="$TEMP_DIR"
     ENV_FILE="$TEMP_DIR/.env"
     install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
+    openclaw_webui_offer_persistence_prompt() {
+      return 0
+    }
     main
   } 2>&1)"
 
@@ -712,6 +715,7 @@ test_ui_entrypoint_loads_shared_persistence_prompt_helpers() {
     CLAWBOX_UI_DEBUG=true
     install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
     openclaw_webui_can_prompt() { return 0; }
+    openclaw_webui_prompt_input_source() { printf 'stdin\n'; }
     command -v prompt_yes_no >/dev/null 2>&1 && printf 'HELPER:prompt_yes_no\n'
     command -v is_yes >/dev/null 2>&1 && printf 'HELPER:is_yes\n'
     main
@@ -733,6 +737,7 @@ test_ui_entrypoint_loads_shared_persistence_prompt_helpers() {
     CLAWBOX_OPENCLAW_WEBUI_WRAPPER_SRC="$ROOT_DIR/host/scripts/openclaw-ui-tunnel.sh"
     install_successful_ui_stubs "$ssh_log" "$open_log" "$tunnel_marker"
     openclaw_webui_can_prompt() { return 0; }
+    openclaw_webui_prompt_input_source() { printf 'stdin\n'; }
     launchctl() {
       printf '%s\n' "$*" >> "$launchctl_log"
       if [ "${1:-}" = 'print' ]; then

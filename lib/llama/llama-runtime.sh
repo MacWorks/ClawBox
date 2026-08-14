@@ -448,8 +448,50 @@ EOF
 
 embeddings_llama_service_loaded() { launchctl print "$(embeddings_llama_mode_target "$1")" >/dev/null 2>&1; }
 
+embeddings_llama_url_has_placeholder() {
+  case "${1:-}" in
+    *'<'*'>'*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+embeddings_llama_mode_env_get() {
+  local mode="$1"
+  local key="$2"
+  local env_dest=''
+
+  REPLY=''
+  env_dest="$(embeddings_llama_mode_env_dest "$mode")"
+  [ -f "$env_dest" ] || return 1
+
+  REPLY="$(CLAWBOX_ENV_KEY="$key" bash -c '
+set -a
+. "$1" >/dev/null 2>&1 || exit 1
+set +a
+case "$CLAWBOX_ENV_KEY" in
+  EMBEDDINGS_LLAMA_BIN|EMBEDDINGS_MODEL_PATH|EMBEDDINGS_LLAMA_HOST|EMBEDDINGS_LLAMA_PORT|EMBEDDINGS_LLAMA_CTX|EMBEDDINGS_LLAMA_EXTRA_ARGS)
+    eval "printf %s \"\${$CLAWBOX_ENV_KEY:-}\""
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+' _ "$env_dest" 2>/dev/null)" || return 1
+
+  [ -n "$REPLY" ]
+}
+
 embeddings_llama_configured_base_url() {
-  printf '%s\n' "${EMBEDDINGS_LLAMA_BASE_URL:-http://${HOST_IP}:${EMBEDDINGS_LLAMA_PORT:-11435}/v1}"
+  if [ -n "${EMBEDDINGS_LLAMA_BASE_URL:-}" ] \
+    && ! embeddings_llama_url_has_placeholder "$EMBEDDINGS_LLAMA_BASE_URL"; then
+    printf '%s\n' "$EMBEDDINGS_LLAMA_BASE_URL"
+    return 0
+  fi
+
+  printf 'http://%s:%s/v1\n' "${HOST_IP:-127.0.0.1}" "${EMBEDDINGS_LLAMA_PORT:-11435}"
 }
 
 embeddings_llama_loopback_base_url() {
@@ -464,6 +506,8 @@ embeddings_llama_models_url_for_base() {
 embeddings_llama_endpoint_responding() {
   local base_url="$1"
   local models_url=''
+
+  embeddings_llama_url_has_placeholder "$base_url" && return 1
 
   models_url="$(embeddings_llama_models_url_for_base "$base_url")"
   curl -sS --fail --connect-timeout 1 --max-time 2 "$models_url" >/dev/null 2>&1

@@ -374,7 +374,8 @@ test_setup_rerun_preserves_existing_embeddings_service() {
     EMBEDDINGS_MODEL_PATH="$TEST_EMBED_MODEL"
     EMBEDDINGS_LLAMA_PORT=11435
     EMBEDDINGS_LLAMA_BASE_URL=http://127.0.0.1:11435/v1
-    embeddings_llama_service_loaded() { [ "$1" = user ]; }
+    embeddings_llama_service_loaded() { [ "${1:-}" = user ]; }
+    embeddings_llama_endpoint_responding() { return 0; }
     embeddings_llama_verify_configured_endpoint() { return 0; }
     llama_port_in_use() { return 0; }
     write_env_from_template() { printf 'WRITE_ENV_UNEXPECTED\n'; }
@@ -414,7 +415,7 @@ test_setup_rerun_reuses_embeddings_when_loopback_healthy_and_vm_interface_absent
     EMBEDDINGS_LLAMA_HOST=0.0.0.0
     EMBEDDINGS_LLAMA_PORT=11435
     EMBEDDINGS_LLAMA_BASE_URL=http://192.168.64.1:11435/v1
-    embeddings_llama_service_loaded() { [ "$1" = user ]; }
+    embeddings_llama_service_loaded() { [ "${1:-}" = user ]; }
     llama_port_in_use() { return 0; }
     curl() {
       printf '%s\n' "$*" >> "$CLAWBOX_EMBEDDINGS_CURL_LOG"
@@ -470,11 +471,12 @@ test_setup_rerun_stopped_embeddings_offers_repair_not_fresh_enable() {
     EMBEDDINGS_LLAMA_PORT=11435
     EMBEDDINGS_LLAMA_BASE_URL=http://127.0.0.1:11435/v1
     embeddings_llama_service_loaded() { return 1; }
+    embeddings_llama_endpoint_responding() { return 1; }
     embeddings_llama_verify_configured_endpoint() { return 1; }
     llama_port_in_use() { return 1; }
     setup_embeddings_service_phase
   } 2>&1)"
-  assert_contains 'stopped configured embeddings rerun still detects embeddings config' "$output" 'embeddings llama-server detected at http://127.0.0.1:11435/v1'
+  assert_contains 'stopped configured embeddings rerun still detects embeddings config' "$output" 'embeddings llama-server configured at http://127.0.0.1:11435/v1'
   assert_contains 'stopped configured embeddings rerun offers restart repair path' "$output" 'Restart/update the existing embeddings llama-server on port 11435'
   assert_contains 'stopped configured embeddings rerun offers skip path' "$output" 'Skip embeddings management during setup'
   assert_not_contains 'stopped configured embeddings rerun avoids fresh enable prompt' "$output" 'Configure a separate host llama-server for embeddings?'
