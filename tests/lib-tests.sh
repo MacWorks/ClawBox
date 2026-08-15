@@ -2447,6 +2447,8 @@ test_openclaw_webui_module() {
   local token_value='secret-token-for-test'
 
   BASE_DIR="$state_root"
+  CLAWBOX_OPENCLAW_WEBUI_APP_SUPPORT_DIR="$state_root/app-support"
+  export CLAWBOX_OPENCLAW_WEBUI_APP_SUPPORT_DIR
   VM_HOST='tester@192.168.64.8'
   OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by VM launchd'
 
@@ -2478,6 +2480,10 @@ test_openclaw_webui_module() {
         return 0
         ;;
     esac
+    return 1
+  }
+
+  openclaw_webui_loopback_port_accepts_connections() {
     return 1
   }
 

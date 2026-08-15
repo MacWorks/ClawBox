@@ -2607,7 +2607,7 @@ EOF
 
   assert_equals 'status configured-base-url path stays healthy when probes succeed' "$status" '0'
   assert_contains 'status configured-base-url path uses the configured base url for the vm api probe' "$([ -f "$ssh_log" ] && cat "$ssh_log")" "curl -s --connect-timeout 1 --max-time 2 $configured_base_url/models"
-  assert_contains 'status configured-base-url path passes the inference url and bounded timeouts as remote script args' "$([ -f "$ssh_log" ] && cat "$ssh_log")" "sh -s -- http://host.internal:19090/custom/completion 1 10"
+  assert_contains 'status configured-base-url path passes the inference url and bounded timeouts as remote script args' "$([ -f "$ssh_log" ] && cat "$ssh_log")" "sh -s -- http://host.internal:19090/custom/completion 5 10"
   assert_contains 'status configured-base-url path sends the inference probe to direct llama completion' "$([ -f "$ssh_log" ] && cat "$ssh_log")" "http://host.internal:19090/custom/completion"
   assert_not_contains 'status configured-base-url path does not use persistent responses inference' "$([ -f "$ssh_log" ] && cat "$ssh_log")" "$configured_base_url/responses"
   assert_not_contains 'status configured-base-url path does not reconstruct the vm api probe from host ip and port' "$([ -f "$ssh_log" ] && cat "$ssh_log")" 'curl -s --connect-timeout 1 --max-time 2 http://127.0.0.1:18080/v1/models'
@@ -2627,6 +2627,7 @@ test_status_applies_overridden_curl_timeouts_to_all_http_probes() {
   export CLAWBOX_TEST_STATUS_CURL_LOG="$curl_log"
   export CLAWBOX_TEST_SSH_LOG="$ssh_log"
   export CLAWBOX_STATUS_CURL_CONNECT_TIMEOUT=4
+  export CLAWBOX_STATUS_INFERENCE_CURL_CONNECT_TIMEOUT=6
   export CLAWBOX_STATUS_CURL_MAX_TIME=9
   export CLAWBOX_TEST_STATUS_PORT_OPEN_EXIT_CODE=0
   export CLAWBOX_TEST_STATUS_PROCESS_EXIT_CODE=0
@@ -2646,12 +2647,12 @@ test_status_applies_overridden_curl_timeouts_to_all_http_probes() {
   status=$?
   set -e
 
-  unset CLAWBOX_STATUS_CURL_CONNECT_TIMEOUT CLAWBOX_STATUS_CURL_MAX_TIME
+  unset CLAWBOX_STATUS_CURL_CONNECT_TIMEOUT CLAWBOX_STATUS_INFERENCE_CURL_CONNECT_TIMEOUT CLAWBOX_STATUS_CURL_MAX_TIME
 
   assert_equals 'status overridden curl timeouts path exits healthy' "$status" '0'
   assert_contains 'status overridden curl timeouts path applies the overridden timeouts to the local host probe' "$([ -f "$curl_log" ] && cat "$curl_log")" '--connect-timeout 4 --max-time 9 http://127.0.0.1:18080/v1/models'
   assert_contains 'status overridden curl timeouts path applies the overridden timeouts to the vm api probe' "$([ -f "$ssh_log" ] && cat "$ssh_log")" 'curl -s --connect-timeout 4 --max-time 9 http://127.0.0.1:18080/v1/models'
-  assert_contains 'status overridden curl timeouts path applies the overridden timeouts to the vm inference probe' "$([ -f "$ssh_log" ] && cat "$ssh_log")" 'sh -s -- http://127.0.0.1:18080/completion 4 9'
+  assert_contains 'status overridden curl timeouts path applies the overridden timeouts to the vm inference probe' "$([ -f "$ssh_log" ] && cat "$ssh_log")" 'sh -s -- http://127.0.0.1:18080/completion 6 9'
   assert_contains 'status overridden curl timeouts path uses direct llama completion for inference' "$([ -f "$ssh_log" ] && cat "$ssh_log")" 'http://127.0.0.1:18080/completion'
   assert_contains 'status overridden curl timeouts path reports a healthy summary' "$output" 'RESULT: HEALTHY'
 }
@@ -2696,7 +2697,7 @@ EOF
 
   assert_equals 'status minimal direct llama completion path stays healthy when probes succeed' "$status" '0'
   assert_contains 'status minimal direct llama completion path uses the direct completion endpoint' "$([ -f "$ssh_log" ] && cat "$ssh_log")" 'http://127.0.0.1:18080/completion'
-  assert_contains 'status minimal direct llama completion path uses the safer default inference max time' "$([ -f "$ssh_log" ] && cat "$ssh_log")" 'sh -s -- http://127.0.0.1:18080/completion 1 10'
+  assert_contains 'status minimal direct llama completion path uses the safer default inference timeouts' "$([ -f "$ssh_log" ] && cat "$ssh_log")" 'sh -s -- http://127.0.0.1:18080/completion 5 10'
   assert_contains 'status minimal direct llama completion path sends a tiny prompt' "$([ -f "$ssh_log" ] && cat "$ssh_log")" '"prompt":"ping"'
   assert_contains 'status minimal direct llama completion path requests one token' "$([ -f "$ssh_log" ] && cat "$ssh_log")" '"n_predict":1'
   assert_contains 'status minimal direct llama completion path preserves cache bypass' "$([ -f "$ssh_log" ] && cat "$ssh_log")" '"cache_prompt":false'

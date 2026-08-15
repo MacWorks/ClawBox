@@ -40,6 +40,10 @@ install_successful_ui_stubs() {
     return 1
   }
 
+  openclaw_webui_loopback_port_accepts_connections() {
+    return 1
+  }
+
   pgrep() {
     [ -f "$tunnel_marker" ] || return 1
     printf '%s\n' '4242'
