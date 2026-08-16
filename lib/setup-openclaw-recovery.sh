@@ -60,8 +60,8 @@ openclaw_gateway_local_http_ready() {
 
   ssh_exec_zsh "gateway_port=$(printf '%q' "$gateway_port")
 if command -v curl >/dev/null 2>&1; then
-  status=\$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 \"http://127.0.0.1:\$gateway_port/\" 2>/dev/null || true)
-  case \"\$status\" in
+  http_status=\$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 \"http://127.0.0.1:\$gateway_port/\" 2>/dev/null || true)
+  case \"\$http_status\" in
     2??|3??|401|403|404) exit 0 ;;
   esac
 fi

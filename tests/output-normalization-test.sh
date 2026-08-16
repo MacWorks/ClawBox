@@ -4926,6 +4926,22 @@ test_openclaw_restart_recovery_prompts_only_after_failed_inference() {
   assert_contains 'recovery restart uses the ClawBox launchd label' "$restart_helper_output" 'com.clawbox.openclaw'
   assert_contains 'recovery restart verifies the managed launchd service' "$restart_helper_output" 'MANAGED_SERVICE_VERIFIED'
 
+  gateway_http_script="$(
+    {
+      load_setup_functions
+      ssh_exec_zsh() { printf '%s\n' "$1"; return 0; }
+      openclaw_gateway_local_http_ready
+    } 2>&1
+  )"
+
+  assert_contains 'gateway http readiness uses a zsh-safe status variable' "$gateway_http_script" 'http_status=$(curl'
+
+  if grep -Eq '(^|[[:space:]])status=\$\(curl' <<<"$gateway_http_script"; then
+    fail 'gateway http readiness avoids reserved zsh status variable'
+  else
+    pass 'gateway http readiness avoids reserved zsh status variable'
+  fi
+
   set +e
   {
     load_setup_functions
