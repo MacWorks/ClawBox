@@ -116,7 +116,7 @@ exit 0'
 
   VM_MACHINE_NAME='macOS'
 
-  if start_vm_with_utm; then
+  if start_vm_with_utm > "$TEMP_DIR/start-vm-with-utm-success.out" 2>&1; then
     pass 'vm startup succeeds when utmctl accepts the selected vm name'
   else
     fail 'vm startup should succeed when utmctl accepts the selected vm name'
@@ -165,7 +165,7 @@ test_selected_detected_vm_name_reaches_startup_path() {
   }
 
   ensure_vm_platform_ready
-  ensure_vm_connectivity_or_repair || true
+  ensure_vm_connectivity_or_repair > "$TEMP_DIR/selected-vm-startup-path.out" 2>&1 || true
 
   assert_equals 'selected detected vm name is preserved into the startup path' "$started_vm_name" 'macOS'
   if [ -n "$started_vm_name" ]; then
@@ -1724,7 +1724,7 @@ test_copy_ssh_key_to_vm_treats_all_keys_skipped_as_success_when_auth_works() {
     return 0
   }
 
-  if copy_ssh_key_to_vm; then
+  if copy_ssh_key_to_vm > "$TEMP_DIR/copy-ssh-key-skipped-success.out" 2>&1; then
     pass 'copy ssh key treats all-keys-skipped as success when key auth already works'
   else
     fail 'copy ssh key should treat all-keys-skipped as success when key auth already works'
@@ -1750,7 +1750,7 @@ test_copy_ssh_key_to_vm_keeps_failure_when_all_keys_skipped_but_auth_fails() {
     return 1
   }
 
-  if copy_ssh_key_to_vm; then
+  if copy_ssh_key_to_vm > "$TEMP_DIR/copy-ssh-key-skipped-failure.out" 2>&1; then
     fail 'copy ssh key should fail when all keys are skipped but batch auth still fails'
   else
     pass 'copy ssh key fails when all keys are skipped but batch auth still fails'
@@ -2002,7 +2002,7 @@ test_wait_for_vm_network_succeeds_within_network_specific_budget() {
     return 0
   }
 
-  if wait_for_vm_network; then
+  if wait_for_vm_network > "$TEMP_DIR/wait-vm-network-delayed-success.out" 2>&1; then
     pass 'wait_for_vm_network succeeds when readiness appears within the dedicated network budget'
   else
     fail 'wait_for_vm_network should succeed when readiness appears within the dedicated network budget'
@@ -2041,7 +2041,7 @@ exit "${CLAWBOX_TEST_NETWORK_PROBE_EXIT_CODE:-1}"'
   CLAWBOX_VM_NETWORK_CONNECT_TIMEOUT='0.05'
   export CLAWBOX_VM_NETWORK_WAIT_MAX_ATTEMPTS CLAWBOX_VM_NETWORK_WAIT_INTERVAL_SECONDS CLAWBOX_VM_NETWORK_CONNECT_TIMEOUT
 
-  if time_command_ms elapsed_ms wait_for_vm_network; then
+  if time_command_ms elapsed_ms wait_for_vm_network > "$TEMP_DIR/wait-vm-network-timeout.out" 2>&1; then
     fail 'wait_for_vm_network should time out when the bounded TCP probe never connects'
   else
     pass 'wait_for_vm_network fails when the bounded TCP probe never connects'
@@ -2146,7 +2146,7 @@ test_ensure_vm_connectivity_does_not_repeat_boot_wait_after_failed_startup_readi
     return 0
   }
 
-  ensure_vm_connectivity_or_repair || true
+  ensure_vm_connectivity_or_repair > "$TEMP_DIR/connectivity-no-repeat-boot-wait.out" 2>&1 || true
 
   assert_equals 'connectivity repair does not repeat the boot readiness wait after a failed startup wait' "$readiness_wait_calls" '1'
 }

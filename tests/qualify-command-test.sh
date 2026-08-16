@@ -310,7 +310,7 @@ PY
 test_qualify_runner_default_json_runs_real_scenarios_with_fake_openclaw() {
   local output status=0
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='test-run' CLAWBOX_QUALIFY_STARTED_AT='2026-07-15T13:03:52Z' CLAWBOX_QUALIFY_START_EPOCH=100 CLAWBOX_QUALIFY_COMPLETED_AT='2026-07-15T13:24:17Z' CLAWBOX_QUALIFY_COMPLETED_EPOCH=1325 CLAWBOX_QUALIFY_SUITE_CHECKSUM='suite-checksum' CLAWBOX_QUALIFY_CLAWBOX_COMMIT='abc123' CLAWBOX_QUALIFY_CLAWBOX_DIRTY=false CLAWBOX_QUALIFY_MODEL_ALIAS='clawbox/local' CLAWBOX_QUALIFY_MODEL_CONFIGURED='Configured.gguf' CLAWBOX_QUALIFY_MODEL_RUNNING='Running.gguf' CLAWBOX_QUALIFY_MODEL_WARNING='configured and running differ' CLAWBOX_QUALIFY_NATIVE_CONTEXT=131072 CLAWBOX_QUALIFY_CONFIGURED_CONTEXT=65536 CLAWBOX_QUALIFY_RUNTIME_CONTEXT=32768 CLAWBOX_QUALIFY_TOTAL_SLOTS=1 CLAWBOX_QUALIFY_SLOT_CONTEXT=32768 CLAWBOX_QUALIFY_OPENCLAW_CONTEXT_WINDOW=32768 CLAWBOX_QUALIFY_OPENCLAW_MAX_TOKENS=8192 CLAWBOX_QUALIFY_RESERVE_TOKENS=8192 CLAWBOX_QUALIFY_RESERVE_TOKENS_FLOOR=8192 CLAWBOX_QUALIFY_PROMPT_BUDGET_BEFORE_RESERVE=24576 CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='test-run' CLAWBOX_QUALIFY_STARTED_AT='2026-07-15T13:03:52Z' CLAWBOX_QUALIFY_START_EPOCH=100 CLAWBOX_QUALIFY_COMPLETED_AT='2026-07-15T13:24:17Z' CLAWBOX_QUALIFY_COMPLETED_EPOCH=1325 CLAWBOX_QUALIFY_SUITE_CHECKSUM='suite-checksum' CLAWBOX_QUALIFY_CLAWBOX_COMMIT='abc123' CLAWBOX_QUALIFY_CLAWBOX_DIRTY=false CLAWBOX_QUALIFY_MODEL_ALIAS='clawbox/local' CLAWBOX_QUALIFY_MODEL_CONFIGURED='Configured.gguf' CLAWBOX_QUALIFY_MODEL_RUNNING='Running.gguf' CLAWBOX_QUALIFY_MODEL_WARNING='configured and running differ' CLAWBOX_QUALIFY_NATIVE_CONTEXT=131072 CLAWBOX_QUALIFY_CONFIGURED_CONTEXT=65536 CLAWBOX_QUALIFY_RUNTIME_CONTEXT=32768 CLAWBOX_QUALIFY_TOTAL_SLOTS=1 CLAWBOX_QUALIFY_SLOT_CONTEXT=32768 CLAWBOX_QUALIFY_OPENCLAW_CONTEXT_WINDOW=32768 CLAWBOX_QUALIFY_OPENCLAW_MAX_TOKENS=8192 CLAWBOX_QUALIFY_RESERVE_TOKENS=8192 CLAWBOX_QUALIFY_RESERVE_TOKENS_FLOOR=8192 CLAWBOX_QUALIFY_PROMPT_BUDGET_BEFORE_RESERVE=24576 CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'runner exits success when fake model passes all scenarios' "$status" '0'
   python3 - "$output" <<'PY'
 import json, sys
@@ -357,7 +357,7 @@ PY
 test_qualify_profiles_select_expected_coverage() {
   local fast_output full_output fast_workflow full_workflow fast_repair scenario_default status=0
   install_fake_openclaw
-  set +e; fast_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-reliability' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; fast_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-reliability' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'fast reliability exits success' "$status" '0'
   python3 - "$fast_output" <<'PY'
 import json, sys
@@ -372,7 +372,7 @@ PY
   pass 'fast profile reliability uses three iterations'
 
   install_fake_openclaw
-  set +e; full_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='full-reliability' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile full --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; full_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='full-reliability' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile full --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'full reliability exits success' "$status" '0'
   python3 - "$full_output" <<'PY'
 import json, sys
@@ -384,7 +384,7 @@ PY
   pass 'full profile reliability uses ten iterations'
 
   install_fake_openclaw
-  set +e; fast_workflow="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-workflow' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 02-tool-workflows --json)"; status=$?; set -e
+  set +e; fast_workflow="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-workflow' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 02-tool-workflows --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'fast workflow exits success' "$status" '0'
   python3 - "$fast_workflow" <<'PY'
 import json, sys
@@ -399,7 +399,7 @@ PY
   assert_not_contains 'fast workflow omits transform case' "$fast_workflow" 'transform'
 
   install_fake_openclaw
-  set +e; full_workflow="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='full-workflow' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile full --scenario 02-tool-workflows --json)"; status=$?; set -e
+  set +e; full_workflow="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='full-workflow' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile full --scenario 02-tool-workflows --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'full workflow exits success' "$status" '0'
   python3 - "$full_workflow" <<'PY'
 import json, sys
@@ -411,12 +411,12 @@ PY
   pass 'full profile runs all workflow cases'
 
   install_fake_openclaw
-  set +e; fast_repair="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-repair' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 03-code-repair --json)"; status=$?; set -e
+  set +e; fast_repair="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-repair' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 03-code-repair --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'fast code repair still runs full code repair scenario' "$status" '0'
   assert_contains 'fast code repair includes code repair scenario' "$fast_repair" '03-code-repair'
 
   install_fake_openclaw
-  set +e; scenario_default="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='scenario-default-full' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; scenario_default="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='scenario-default-full' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'scenario without profile exits success' "$status" '0'
   python3 - "$scenario_default" <<'PY'
 import json, sys
@@ -430,7 +430,7 @@ PY
 test_qualify_fast_profile_aggregate_includes_all_scenarios() {
   local output status=0
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-suite' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fast-suite' bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'fast aggregate exits success' "$status" '0'
   python3 - "$output" <<'PY'
 import json, sys
@@ -536,7 +536,7 @@ exit 0
   create_aggregate_fixture_suite "$suite"
 
   set +e
-  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-pass' ./runner.sh --profile fast --json)"
+  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-pass' ./runner.sh --profile fast --json 2>"$TEMP_DIR/qualify-runner-stderr")"
   status=$?
   set -e
   assert_equals 'fixture fast PASS aggregate exits success' "$status" '0'
@@ -555,7 +555,7 @@ PY
   pass 'fixture fast PASS aggregate preserves numeric and multiline fields'
 
   set +e
-  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-warning' CLAWBOX_FIXTURE_01_STATUS=WARNING ./runner.sh --profile fast --json)"
+  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-warning' CLAWBOX_FIXTURE_01_STATUS=WARNING ./runner.sh --profile fast --json 2>"$TEMP_DIR/qualify-runner-stderr")"
   status=$?
   set -e
   assert_equals 'fixture fast WARNING aggregate exits success' "$status" '0'
@@ -569,7 +569,7 @@ PY
   pass 'fixture fast WARNING aggregate keeps valid warning JSON'
 
   set +e
-  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-fail' CLAWBOX_FIXTURE_01_STATUS=FAIL CLAWBOX_FIXTURE_01_EXIT=1 ./runner.sh --profile fast --json)"
+  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-fail' CLAWBOX_FIXTURE_01_STATUS=FAIL CLAWBOX_FIXTURE_01_EXIT=1 ./runner.sh --profile fast --json 2>"$TEMP_DIR/qualify-runner-stderr")"
   status=$?
   set -e
   assert_equals 'fixture fast valid FAIL aggregate returns model failure' "$status" '1'
@@ -586,7 +586,7 @@ PY
   pass 'fixture fast valid FAIL aggregates despite scenario process exit 1'
 
   set +e
-  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-error' CLAWBOX_FIXTURE_01_STATUS=ERROR CLAWBOX_FIXTURE_01_EXIT=2 ./runner.sh --profile fast --json)"
+  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-fast-error' CLAWBOX_FIXTURE_01_STATUS=ERROR CLAWBOX_FIXTURE_01_EXIT=2 ./runner.sh --profile fast --json 2>"$TEMP_DIR/qualify-runner-stderr")"
   status=$?
   set -e
   assert_equals 'fixture fast ERROR aggregate returns infrastructure error' "$status" '2'
@@ -604,7 +604,7 @@ PY
   pass 'fixture fast ERROR aggregate is unrated while preserving configured coverage'
 
   set +e
-  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-full-pass' ./runner.sh --profile full --json)"
+  output="$(cd "$suite" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUNS_DIR="$runs" CLAWBOX_QUALIFY_RUN_ID='fixture-full-pass' ./runner.sh --profile full --json 2>"$TEMP_DIR/qualify-runner-stderr")"
   status=$?
   set -e
   assert_equals 'fixture full PASS aggregate exits success' "$status" '0'
@@ -731,7 +731,7 @@ test_tool_reliability_model_failures_continue_all_iterations() {
     CLAWBOX_FAKE_OPENCLAW_TRAJECTORY_PRELUDE=true \
     CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 \
     CLAWBOX_FAKE_OPENCLAW_FABRICATE=true \
-    bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 01-tool-reliability --json)"
+    bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"
   status=$?
   set -e
   assert_equals 'fast reliability model failures return model failure' "$status" '1'
@@ -759,7 +759,7 @@ test_qualify_runner_records_null_git_provenance_outside_checkout() {
   install_fake_openclaw
   mkdir -p "$suite_copy"
   cp -R "$ROOT_DIR/vm/qualification"/. "$suite_copy"/
-  set +e; output="$(cd "$suite_copy" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='outside-git' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 ./runner.sh --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; output="$(cd "$suite_copy" && PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='outside-git' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 ./runner.sh --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'qualification runner works outside a Git checkout' "$status" '0'
   python3 - "$output" <<'PY'
 import json, sys
@@ -1354,7 +1354,7 @@ PY
 test_tool_reliability_extra_calls_warn_but_do_not_fail() {
   local output status=0
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='warning-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='warning-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'extra verification calls warning exits success' "$status" '0'
   assert_contains 'extra tool calls produce warning result' "$output" '"overallStatus": "WARNING"'
   assert_contains 'tool reliability reports efficient rate separately' "$output" '"efficientCallRate"'
@@ -1364,7 +1364,7 @@ test_tool_reliability_reply_mismatch_is_precise_failure() {
   local output status=0 warning_output fabricated_output
   install_fake_openclaw
   set +e
-  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='reply-mismatch-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_REPLY='Done.' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='reply-mismatch-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_REPLY='Done.' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"
   status=$?
   set -e
   assert_equals 'reply mismatch exits model failure' "$status" '1'
@@ -1389,9 +1389,9 @@ PY
   pass 'reply mismatch preserves tool and state pass evidence'
 
   install_fake_openclaw
-  warning_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='warning-severity-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"
+  warning_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='warning-severity-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=2 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"
   install_fake_openclaw
-  fabricated_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fabricated-severity-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 CLAWBOX_FAKE_OPENCLAW_FABRICATE=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json || true)"
+  fabricated_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fabricated-severity-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 CLAWBOX_FAKE_OPENCLAW_FABRICATE=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr" || true)"
   python3 - "$warning_output" "$output" "$fabricated_output" <<'PY'
 import json, sys
 warning=json.loads(sys.argv[1])['scenarios'][0]['score']
@@ -1405,7 +1405,7 @@ PY
 test_tool_reliability_fabricated_success_fails() {
   local output status=0
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fabricated-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 CLAWBOX_FAKE_OPENCLAW_FABRICATE=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='fabricated-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 CLAWBOX_FAKE_OPENCLAW_FABRICATE=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'fabricated success exits model failure' "$status" '1'
   assert_contains 'fabricated success reports FAIL' "$output" '"overallStatus": "FAIL"'
 }
@@ -1414,7 +1414,7 @@ test_workflow_required_tool_omission_fails() {
   local output status=0 scenario_output artifact_dir
   install_fake_openclaw
   set +e
-  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='workflow-zero-tools' CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 02-tool-workflows --json)"
+  output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='workflow-zero-tools' CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=0 bash "$ROOT_DIR/vm/qualification/runner.sh" --profile fast --scenario 02-tool-workflows --json 2>"$TEMP_DIR/qualify-runner-stderr")"
   status=$?
   set -e
   assert_equals 'zero-call workflow exits model failure' "$status" '1'
@@ -1435,7 +1435,7 @@ PY
   install_fake_openclaw
   artifact_dir="$TEMP_DIR/two-step-shortfall"
   set +e
-  scenario_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_WORKFLOW_CASES='two-step' CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=1 "$ROOT_DIR/vm/qualification/scenarios/02-tool-workflows.sh" 'two-step-shortfall' "$artifact_dir")"
+  scenario_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_WORKFLOW_CASES='two-step' CLAWBOX_FAKE_OPENCLAW_TOOL_COUNT=1 "$ROOT_DIR/vm/qualification/scenarios/02-tool-workflows.sh" 'two-step-shortfall' "$artifact_dir" 2>"$TEMP_DIR/qualify-scenario-stderr")"
   status=$?
   set -e
   assert_equals 'two-step shortfall scenario process completes with result JSON' "$status" '0'
@@ -1457,23 +1457,23 @@ PY
 test_evidence_failures_are_errors() {
   local output status=0
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='missing-traj' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_NO_TRAJECTORY=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='missing-traj' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_NO_TRAJECTORY=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'missing trajectory exits infrastructure error' "$status" '2'
   assert_contains 'missing trajectory is ERROR' "$output" '"overallStatus": "ERROR"'
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='multiple-traj' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_MULTIPLE_TRAJECTORIES=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='multiple-traj' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_MULTIPLE_TRAJECTORIES=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'multiple trajectories exits infrastructure error' "$status" '2'
   assert_contains 'multiple trajectories are reported' "$output" 'multiple trajectories found'
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='missing-transcript' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_NO_TRANSCRIPT=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='missing-transcript' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_NO_TRANSCRIPT=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'missing transcript exits infrastructure error' "$status" '2'
   assert_contains 'missing transcript is reported' "$output" 'transcript missing'
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='malformed-traj' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_MALFORMED_TRAJECTORY=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='malformed-traj' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_MALFORMED_TRAJECTORY=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'malformed trajectory exits infrastructure error' "$status" '2'
   assert_contains 'malformed trajectory is reported' "$output" 'malformed trajectory'
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='malformed-transcript' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_MALFORMED_TRANSCRIPT=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='malformed-transcript' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 CLAWBOX_FAKE_OPENCLAW_MALFORMED_TRANSCRIPT=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'malformed transcript exits infrastructure error' "$status" '2'
   assert_contains 'malformed transcript is reported' "$output" 'malformed transcript'
 }
@@ -1492,7 +1492,7 @@ test_tool_reliability_captures_agent_error_evidence_and_classifies_it() {
     CLAWBOX_FAKE_OPENCLAW_ERROR_TYPE=timeout \
     CLAWBOX_FAKE_OPENCLAW_ERROR_MESSAGE='model did not complete before timeout' \
     CLAWBOX_FAKE_OPENCLAW_TIMEOUT=true \
-    bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"
+    bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"
   status=$?
   set -e
   assert_equals 'model timeout evidence exits model failure' "$status" '1'
@@ -1522,7 +1522,7 @@ PY
     CLAWBOX_FAKE_OPENCLAW_EXIT_STATUS=1 \
     CLAWBOX_FAKE_OPENCLAW_ERROR_TYPE=gateway \
     CLAWBOX_FAKE_OPENCLAW_ERROR_MESSAGE='gateway unavailable' \
-    bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"
+    bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"
   status=$?
   set -e
   assert_equals 'infrastructure-attributable agent error exits infrastructure error' "$status" '2'
@@ -1540,20 +1540,20 @@ PY
 test_workflow_cases_and_code_repair_objective_behavior() {
   local workflow_output repair_output status=0
   install_fake_openclaw
-  set +e; workflow_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='workflow-run' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 02-tool-workflows --json)"; status=$?; set -e
+  set +e; workflow_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='workflow-run' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 02-tool-workflows --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'workflow scenarios pass with fake openclaw' "$status" '0'
   for case_name in exact-output grounded-read absence-check two-step transform; do assert_contains "workflow output includes $case_name" "$workflow_output" "$case_name"; done
   install_fake_openclaw
-  set +e; repair_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='repair-run' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json)"; status=$?; set -e
+  set +e; repair_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='repair-run' bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'code repair passes when only calculator is fixed' "$status" '0'
   assert_contains 'code repair records changed file scope' "$repair_output" ' M calculator.sh'
   assert_contains 'code repair perfect objective pass scores 100' "$repair_output" '"score": 100'
   install_fake_openclaw
-  set +e; repair_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='repair-bad-scope' CLAWBOX_FAKE_OPENCLAW_UNRELATED_CHANGE=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json)"; status=$?; set -e
+  set +e; repair_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='repair-bad-scope' CLAWBOX_FAKE_OPENCLAW_UNRELATED_CHANGE=true bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'code repair unrelated change exits model failure' "$status" '1'
   assert_contains 'code repair unrelated change reports FAIL' "$repair_output" 'changed files were outside the intended scope'
   install_fake_openclaw
-  set +e; repair_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='repair-agent-nonzero' CLAWBOX_FAKE_OPENCLAW_EXIT_STATUS=7 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json)"; status=$?; set -e
+  set +e; repair_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='repair-agent-nonzero' CLAWBOX_FAKE_OPENCLAW_EXIT_STATUS=7 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 03-code-repair --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'code repair nonzero agent exit with evidence is warning-only' "$status" '0'
   assert_contains 'code repair records openclaw exit status' "$repair_output" '"openclawExitStatus": 7'
   assert_contains 'code repair nonzero agent exit is visible' "$repair_output" 'openclaw agent exited 7'
@@ -1564,7 +1564,7 @@ test_run_directories_are_isolated() {
   mkdir -p "$(dirname "$sentinel")"
   printf 'keep\n' > "$sentinel"
   install_fake_openclaw
-  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='isolation-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='isolation-run' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'isolated run exits success' "$status" '0'
   if [ -f "$sentinel" ]; then pass 'one run cannot delete another run artifact'; else fail 'one run cannot delete another run artifact'; fi
   assert_contains 'isolated run records its own artifact directory' "$output" 'isolation-run'
@@ -1573,7 +1573,7 @@ test_run_directories_are_isolated() {
 test_runner_distinct_runs_preserve_previous_artifacts() {
   local first_output second_output status=0 first_dir='' second_dir='' sentinel=''
   install_fake_openclaw
-  set +e; first_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='distinct-run-one' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; first_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='distinct-run-one' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'first distinct run exits success' "$status" '0'
   first_dir="$(python3 - "$first_output" <<'PY'
 import json, sys
@@ -1583,7 +1583,7 @@ PY
   sentinel="$first_dir/sentinel.txt"
   printf 'keep\n' > "$sentinel"
   install_fake_openclaw
-  set +e; second_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='distinct-run-two' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json)"; status=$?; set -e
+  set +e; second_output="$(PATH="$MOCK_BIN_DIR:$PATH" CLAWBOX_QUALIFY_RUN_ID='distinct-run-two' CLAWBOX_QUALIFY_TOOL_RELIABILITY_TOTAL=1 bash "$ROOT_DIR/vm/qualification/runner.sh" --scenario 01-tool-reliability --json 2>"$TEMP_DIR/qualify-runner-stderr")"; status=$?; set -e
   assert_equals 'second distinct run exits success' "$status" '0'
   second_dir="$(python3 - "$second_output" <<'PY'
 import json, sys

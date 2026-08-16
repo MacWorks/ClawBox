@@ -171,9 +171,9 @@ test_model_help_lists_instance_subcommands() {
 }
 
 test_primary_model_subcommand_preserves_embeddings_state() {
-  local output
-  output="$(
-    {
+  local output output_file
+  output_file="$TEMP_DIR/model-primary-preserve-embeddings.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
       MODEL_PATH='/models/primary-old.gguf'
@@ -201,8 +201,8 @@ test_primary_model_subcommand_preserves_embeddings_state() {
       ssh() { printf 'SSH_UNEXPECTED\n'; }
       main primary
       printf 'FINAL:%s:%s:%s\n' "$MODEL_PATH" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_ENABLED"
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  output="$(cat "$output_file")"
   assert_contains 'primary subcommand updates only primary model path' "$output" 'FINAL:/models/primary-new.gguf:/models/embeddings.gguf:true'
   assert_contains 'primary subcommand restarts primary service' "$output" 'PRIMARY_SERVICE:user'
   assert_contains 'primary subcommand invokes targeted primary OpenClaw sync' "$output" 'TARGETED_SYNC:primary'
@@ -365,9 +365,9 @@ PY
 }
 
 test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure() {
-  local output
-  output="$(
-    {
+  local output output_file
+  output_file="$TEMP_DIR/model-primary-optional-sync-failure.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
       MODEL_PATH='/models/primary-old.gguf'
@@ -398,8 +398,8 @@ test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure() {
       offer_targeted_openclaw_config_restart() { printf 'RESTART_PROMPT_UNEXPECTED\n'; }
       main primary
       printf 'FINAL:%s\n' "$MODEL_PATH"
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  output="$(cat "$output_file")"
   assert_contains 'primary subcommand attempts optional targeted sync' "$output" 'OPTIONAL_SYNC_ATTEMPT:primary'
   assert_contains 'primary subcommand still reports switched host model' "$output" 'Host llama-server now uses primary-new.gguf.'
   assert_contains 'primary subcommand leaves host model switched after optional sync failure' "$output" 'FINAL:/models/primary-new.gguf'
@@ -409,9 +409,9 @@ test_primary_model_subcommand_tolerates_optional_openclaw_sync_failure() {
 }
 
 test_primary_model_subcommand_reports_no_openclaw_changes_when_sync_has_no_drift() {
-  local output
-  output="$(
-    {
+  local output output_file
+  output_file="$TEMP_DIR/model-primary-no-openclaw-drift.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
       MODEL_PATH='/models/primary-old.gguf'
@@ -434,17 +434,17 @@ test_primary_model_subcommand_reports_no_openclaw_changes_when_sync_has_no_drift
       setup_llama_service_for_mode() { :; }
       sync_model_openclaw_config_scope() { CONFIG_TARGETED_NO_CHANGE=true; CONFIG_TARGETED_UPDATED=false; }
       main primary
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  output="$(cat "$output_file")"
   assert_contains 'primary no-drift sync reports no OpenClaw changes' "$output" 'OpenClaw config already matched; no OpenClaw changes were made.'
   assert_not_contains 'primary no-drift sync does not imply possible changes' "$output" 'may have been synced'
   assert_not_contains 'primary no-drift sync does not claim targeted keys were synced' "$output" 'primary keys were synced'
 }
 
 test_primary_model_subcommand_reports_actual_openclaw_sync_when_updated() {
-  local output
-  output="$(
-    {
+  local output output_file
+  output_file="$TEMP_DIR/model-primary-openclaw-updated.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
       MODEL_PATH='/models/primary-old.gguf'
@@ -467,16 +467,16 @@ test_primary_model_subcommand_reports_actual_openclaw_sync_when_updated() {
       setup_llama_service_for_mode() { :; }
       sync_model_openclaw_config_scope() { CONFIG_TARGETED_UPDATED=true; CONFIG_TARGETED_NO_CHANGE=false; }
       main primary
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  output="$(cat "$output_file")"
   assert_contains 'primary actual sync reports managed primary keys changed' "$output" 'OpenClaw config was not replaced; only ClawBox-managed primary keys were synced.'
   assert_not_contains 'primary actual sync does not report no-change message' "$output" 'no OpenClaw changes were made'
 }
 
 test_primary_model_switch_offers_qualification_after_successful_match() {
-  local output
-  output="$(
-    {
+  local output output_file
+  output_file="$TEMP_DIR/model-primary-qualification-offer.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
       MODEL_PATH='/models/primary-old.gguf'
@@ -513,8 +513,8 @@ test_primary_model_switch_offers_qualification_after_successful_match() {
       run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       main primary
       printf 'PROMPT_COUNT:%s\n' "$prompt_count"
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  output="$(cat "$output_file")"
   assert_contains 'successful primary switch offers qualification menu' "$output" 'Choose qualification:'
   assert_contains 'qualification prompt is visually separated after switch output' "$output" $'Check status with: ./clawbox status\n\nChoose qualification:'
   assert_contains 'qualification menu offers fast profile' "$output" '1) Fast (reduced test set)'
@@ -526,9 +526,9 @@ test_primary_model_switch_offers_qualification_after_successful_match() {
 }
 
 test_primary_model_qualification_prompt_enter_or_no_declines() {
-  local enter_output no_output
-  enter_output="$(
-    {
+  local enter_output no_output output_file
+  output_file="$TEMP_DIR/model-qualification-enter.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       MODEL_PATH='/models/primary-new.gguf'
       LLAMA_PORT=11434
@@ -537,14 +537,14 @@ test_primary_model_qualification_prompt_enter_or_no_declines() {
       prompt_with_suffix() { printf 'PROMPT:%s %s\n' "$1" "$2"; REPLY=''; }
       run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       offer_qualification_after_primary_model_switch
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  enter_output="$(cat "$output_file")"
   assert_contains 'qualification prompt uses default-skip suffix' "$enter_output" 'PROMPT:Selection [1-3, default 3]'
   assert_contains 'enter declines qualification' "$enter_output" 'Qualification skipped. The selected model remains active.'
   assert_not_contains 'enter decline does not run qualification' "$enter_output" 'QUALIFY_UNEXPECTED'
 
-  no_output="$(
-    {
+  output_file="$TEMP_DIR/model-qualification-skip.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       MODEL_PATH='/models/primary-new.gguf'
       LLAMA_PORT=11434
@@ -553,13 +553,13 @@ test_primary_model_qualification_prompt_enter_or_no_declines() {
       prompt_with_suffix() { printf 'PROMPT:%s %s\n' "$1" "$2"; REPLY='3'; }
       run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       offer_qualification_after_primary_model_switch
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  no_output="$(cat "$output_file")"
   assert_contains 'explicit skip declines qualification' "$no_output" 'Qualification skipped. The selected model remains active.'
   assert_not_contains 'explicit skip does not run qualification' "$no_output" 'QUALIFY_UNEXPECTED'
 
-  no_output="$(
-    {
+  output_file="$TEMP_DIR/model-qualification-invalid-then-skip.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       MODEL_PATH='/models/primary-new.gguf'
       LLAMA_PORT=11434
@@ -573,8 +573,8 @@ test_primary_model_qualification_prompt_enter_or_no_declines() {
       run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       offer_qualification_after_primary_model_switch
       printf 'PROMPT_COUNT:%s\n' "$prompt_count"
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  no_output="$(cat "$output_file")"
   assert_contains 'invalid qualification menu input reprompts' "$no_output" 'PROMPT_COUNT:2'
   assert_not_contains 'invalid then skip does not run qualification' "$no_output" 'QUALIFY_UNEXPECTED'
 }
@@ -682,10 +682,10 @@ test_primary_model_qualification_exit_status_composition() {
 }
 
 test_primary_model_qualification_offer_is_suppressed_when_unsafe_or_unavailable() {
-  local mismatch_output noninteractive_output unavailable_output
+  local mismatch_output noninteractive_output unavailable_output output_file
 
-  mismatch_output="$(
-    {
+  output_file="$TEMP_DIR/model-qualification-mismatch.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       MODEL_PATH='/models/primary-new.gguf'
       LLAMA_PORT=11434
@@ -694,14 +694,14 @@ test_primary_model_qualification_offer_is_suppressed_when_unsafe_or_unavailable(
       prompt_yes_no() { printf 'PROMPT_UNEXPECTED\n'; REPLY=true; }
       run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       offer_qualification_after_primary_model_switch
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  mismatch_output="$(cat "$output_file")"
   assert_contains 'model mismatch suppresses qualification with guidance' "$mismatch_output" 'Run ./clawbox status and resolve the model inconsistency before qualifying this model.'
   assert_not_contains 'model mismatch does not prompt qualification' "$mismatch_output" 'PROMPT_UNEXPECTED'
   assert_not_contains 'model mismatch does not run qualification' "$mismatch_output" 'QUALIFY_UNEXPECTED'
 
-  noninteractive_output="$(
-    {
+  output_file="$TEMP_DIR/model-qualification-noninteractive.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       MODEL_PATH='/models/primary-new.gguf'
       LLAMA_PORT=11434
@@ -710,14 +710,14 @@ test_primary_model_qualification_offer_is_suppressed_when_unsafe_or_unavailable(
       prompt_yes_no() { printf 'PROMPT_UNEXPECTED\n'; REPLY=true; }
       run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       offer_qualification_after_primary_model_switch
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  noninteractive_output="$(cat "$output_file")"
   assert_not_contains 'noninteractive model switch does not check match solely for prompt' "$noninteractive_output" 'MATCH_UNEXPECTED'
   assert_not_contains 'noninteractive model switch does not prompt qualification' "$noninteractive_output" 'PROMPT_UNEXPECTED'
   assert_not_contains 'noninteractive model switch does not run qualification' "$noninteractive_output" 'QUALIFY_UNEXPECTED'
 
-  unavailable_output="$(
-    {
+  output_file="$TEMP_DIR/model-qualification-unavailable.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       MODEL_PATH='/models/primary-new.gguf'
       LLAMA_PORT=11434
@@ -727,17 +727,17 @@ test_primary_model_qualification_offer_is_suppressed_when_unsafe_or_unavailable(
       prompt_yes_no() { printf 'PROMPT_UNEXPECTED\n'; REPLY=true; }
       run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       offer_qualification_after_primary_model_switch
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  unavailable_output="$(cat "$output_file")"
   assert_not_contains 'unavailable qualification does not check match solely for prompt' "$unavailable_output" 'MATCH_UNEXPECTED'
   assert_not_contains 'unavailable qualification does not prompt' "$unavailable_output" 'PROMPT_UNEXPECTED'
   assert_not_contains 'unavailable qualification does not run' "$unavailable_output" 'QUALIFY_UNEXPECTED'
 }
 
 test_primary_model_noop_or_failed_switch_does_not_offer_qualification() {
-  local cancel_output failure_output
-  cancel_output="$(
-    {
+  local cancel_output failure_output output_file
+  output_file="$TEMP_DIR/model-primary-cancel.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
       MODEL_PATH='/models/primary-old.gguf'
@@ -749,14 +749,14 @@ test_primary_model_noop_or_failed_switch_does_not_offer_qualification() {
       prompt_yes_no() { REPLY=false; }
       run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       main primary
-    }
-  2>&1)"
+  ) > "$output_file" 2>&1
+  cancel_output="$(cat "$output_file")"
   assert_contains 'canceled primary switch remains no-op' "$cancel_output" 'Model switch cancelled; host model is unchanged.'
   assert_not_contains 'canceled primary switch does not offer qualification' "$cancel_output" 'Choose qualification:'
   assert_not_contains 'canceled primary switch does not run qualification' "$cancel_output" 'QUALIFY_UNEXPECTED'
 
-  failure_output="$(
-    {
+  output_file="$TEMP_DIR/model-primary-service-failure.out"
+  (
       CLAWBOX_MODEL_LIB_ONLY=true source "$ROOT_DIR/scripts/model.sh"
       ENV_FILE="$TEMP_DIR/model.env"; : > "$ENV_FILE"
       MODEL_PATH='/models/primary-old.gguf'
@@ -778,8 +778,8 @@ test_primary_model_noop_or_failed_switch_does_not_offer_qualification() {
 
       run_qualification_suite_after_model_switch() { printf 'QUALIFY_UNEXPECTED\n'; }
       main primary
-    }
-  2>&1 || true)"
+  ) > "$output_file" 2>&1 || true
+  failure_output="$(cat "$output_file")"
   assert_contains 'failed service restart reports recovery guidance' "$failure_output" 'Review the llama-server logs, correct the host service, then run ./clawbox model again.'
   assert_not_contains 'failed service restart does not offer qualification' "$failure_output" 'Choose qualification:'
   assert_not_contains 'failed service restart does not run qualification' "$failure_output" 'QUALIFY_UNEXPECTED'

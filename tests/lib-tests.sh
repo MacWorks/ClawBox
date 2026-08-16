@@ -123,7 +123,7 @@ run_llama_capture() {
     status=$?
     printf '%s' "${REPLY:-}" > "$reply_file"
     exit "$status"
-  ) 2>"$stderr_file"
+  ) >"$stderr_file" 2>&1
   status=$?
   set -e
 
@@ -1782,7 +1782,7 @@ PY
     esac
   }
 
-  sync_openclaw_config
+  sync_openclaw_config > "$TEMP_DIR/deploy-sync-matched.out" 2>&1
   if [ -f "$mkdir_marker" ] && [ ! -f "$prompt_marker" ] && [ ! -f "$upload_marker" ] && [ -z "$set_log" ] && [ "$CONFIG_OVERWRITTEN" = false ]; then
     pass "deploy logic skips config mutation when managed settings match"
   else
@@ -1817,7 +1817,7 @@ PY
     esac
   }
 
-  sync_openclaw_config
+  sync_openclaw_config > "$TEMP_DIR/deploy-sync-semantic-match.out" 2>&1
   if [ ! -f "$prompt_marker" ] && [ ! -f "$upload_marker" ] && [ -z "$set_log" ] && [ "$CONFIG_OVERWRITTEN" = false ]; then
     pass "deploy logic treats redacted secrets and semantic model arrays as no drift"
   else
@@ -1848,7 +1848,7 @@ PY
   last_scp_target=''
   set_log=''
 
-  sync_openclaw_config
+  sync_openclaw_config > "$TEMP_DIR/deploy-sync-managed-drift.out" 2>&1
   if [ -f "$prompt_marker" ] && [ ! -f "$upload_marker" ] && [[ "$set_log" == *'agents.defaults.model.primary=clawbox/local'* ]] && [ "$CONFIG_OVERWRITTEN" = false ]; then
     pass "deploy logic applies targeted updates when managed settings differ"
   else
@@ -1899,7 +1899,7 @@ PY
     esac
   }
 
-  sync_openclaw_config
+  sync_openclaw_config > "$TEMP_DIR/deploy-sync-model-refresh.out" 2>&1
   if [ -f "$prompt_marker" ] \
     && [[ "$set_log" == *'models.providers.clawbox.models='* ]] \
     && python3 - "$wrong_max_tokens_model" <<'PY'
@@ -2010,7 +2010,7 @@ PY
   rm -f "$upload_marker"
   remote_exists=false
   generate_openclaw_config() { : > "$CONFIG_PATH"; }
-  sync_openclaw_config
+  sync_openclaw_config > "$TEMP_DIR/deploy-sync-bootstrap.out" 2>&1
   if [ -f "$upload_marker" ] && [ "$last_scp_target" = 'test-vm:~/.openclaw/openclaw.json' ]; then
     pass "deploy logic bootstraps missing VM config"
   else
@@ -2020,7 +2020,7 @@ PY
   rm -f "$upload_marker" "$prompt_marker" "$mkdir_marker"
   remote_exists=false
   set_log=''
-  sync_openclaw_config_targeted_only primary
+  sync_openclaw_config_targeted_only primary > "$TEMP_DIR/deploy-sync-targeted-missing.out" 2>&1
   if [ ! -f "$upload_marker" ] && [ ! -f "$prompt_marker" ] && [ -z "$set_log" ]; then
     pass "targeted-only deploy sync does not bootstrap or replace missing VM config"
   else
@@ -3780,7 +3780,7 @@ test_llama_install_mode_selection() {
     return 0
   }
 
-  llama_capture_status select_llama_install_mode
+  llama_capture_status select_llama_install_mode > "$TEMP_DIR/llama-install-mode-detected.out" 2>&1
   if [ "$LLAMA_LAST_STATUS" -eq 0 ] && [ "$REPLY" = 'user' ]; then
     pass "llama install mode selection reuses detected installs"
   else
@@ -3796,7 +3796,7 @@ test_llama_install_mode_selection() {
   }
 
   simulated_input=''
-  llama_capture_status select_llama_install_mode
+  llama_capture_status select_llama_install_mode > "$TEMP_DIR/llama-install-mode-system.out" 2>&1
   result="$REPLY"
   if [ "$result" = 'system' ]; then
     pass "llama install mode selection defaults to system when sudo is available"
@@ -3809,7 +3809,7 @@ test_llama_install_mode_selection() {
   }
 
   simulated_input=''
-  llama_capture_status select_llama_install_mode
+  llama_capture_status select_llama_install_mode > "$TEMP_DIR/llama-install-mode-user.out" 2>&1
   result="$REPLY"
   if [ "$result" = 'user' ]; then
     pass "llama install mode selection defaults to user when sudo is unavailable"
