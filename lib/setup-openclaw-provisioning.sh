@@ -23,13 +23,14 @@ ensure_vm_provision_script() {
   if ssh_exec "test -f \"$VM_RUNTIME_PATH/vm-provision.sh\""; then
     :
   else
-    scp -q "$PROVISION_SCRIPT" "$VM_HOST:$VM_RUNTIME_PATH/vm-provision.sh" </dev/null
-    ssh_run_quiet "chmod +x \"$VM_RUNTIME_PATH/vm-provision.sh\""
-    ssh_exec "test -f \"$VM_RUNTIME_PATH/vm-provision.sh\""
+    ssh_ensure_dir "$VM_RUNTIME_PATH" || return $?
+    scp -q "$PROVISION_SCRIPT" "$VM_HOST:$VM_RUNTIME_PATH/vm-provision.sh" </dev/null || return $?
+    ssh_run_quiet "chmod +x \"$VM_RUNTIME_PATH/vm-provision.sh\"" || return $?
+    ssh_exec "test -f \"$VM_RUNTIME_PATH/vm-provision.sh\"" || return $?
   fi
 
   if command -v qualify_publish_suite_to_vm_runtime >/dev/null 2>&1; then
-    qualify_publish_suite_to_vm_runtime
+    qualify_publish_suite_to_vm_runtime || return $?
   fi
 }
 

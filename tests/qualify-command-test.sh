@@ -1610,6 +1610,115 @@ test_setup_payload_publication_includes_qualification_suite() {
   assert_contains 'setup payload publication calls qualification publisher' "$output" 'QUALIFY_PUBLISH'
 }
 
+run_vm_provision_staging_case() (
+  local scenario="$1"
+  local calls_file="$TEMP_DIR/provision-staging-$scenario.calls"
+  local runtime_dir_file="$TEMP_DIR/provision-staging-$scenario.runtime-dir"
+  local remote_script_file="$TEMP_DIR/provision-staging-$scenario.remote-script"
+  local test_count_file="$TEMP_DIR/provision-staging-$scenario.test-count"
+  local status=0
+
+  : > "$calls_file"
+  printf '0\n' > "$test_count_file"
+
+  source "$ROOT_DIR/lib/output.sh"
+  source "$ROOT_DIR/lib/setup-openclaw-provisioning.sh"
+  VM_HOST='tester@vm'
+  VM_RUNTIME_PATH='/Users/tester/ClawBox'
+  PROVISION_SCRIPT="$ROOT_DIR/vm/vm-provision.sh"
+
+  if [ "$scenario" = existing ]; then
+    : > "$remote_script_file"
+  fi
+
+  record_call() { printf '%s ' "$1" >> "$calls_file"; }
+
+  ssh_ensure_dir() {
+    [ "$1" = "$VM_RUNTIME_PATH" ] || return 1
+    record_call mkdir
+    : > "$runtime_dir_file"
+    return 0
+  }
+
+  scp() {
+    record_call scp
+    case "$scenario" in
+      scp-fail) return 73 ;;
+    esac
+    [ -f "$runtime_dir_file" ] || return 64
+    : > "$remote_script_file"
+    return 0
+  }
+
+  ssh_exec() {
+    case "$1" in
+      "mkdir -p \"$VM_RUNTIME_PATH\"")
+        record_call mkdir
+        : > "$runtime_dir_file"
+        return 0
+        ;;
+      "test -f \"$VM_RUNTIME_PATH/vm-provision.sh\"")
+        record_call test
+        if [ "$scenario" = verify-fail ]; then
+          local count
+          count="$(cat "$test_count_file")"
+          count=$((count + 1))
+          printf '%s\n' "$count" > "$test_count_file"
+          [ "$count" -eq 1 ] && return 1
+          return 75
+        fi
+        [ -f "$remote_script_file" ]
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+
+  ssh_run_quiet() {
+    record_call chmod
+    [ "$scenario" = chmod-fail ] && return 74
+    return 0
+  }
+
+  qualify_publish_suite_to_vm_runtime() { record_call publish; }
+
+  set +e
+  ensure_vm_provision_script >/dev/null
+  status=$?
+  set -e
+
+  printf 'STATUS:%s\n' "$status"
+  printf 'CALLS:%s\n' "$(cat "$calls_file")"
+)
+
+test_vm_provision_script_staging_orders_and_propagates_failures() {
+  local output
+
+  output="$(run_vm_provision_staging_case success 2>&1)"
+  assert_contains 'provision script staging creates VM runtime directory before scp' "$output" 'CALLS:test mkdir scp chmod test publish'
+  assert_contains 'successful provision script staging returns success' "$output" 'STATUS:0'
+
+  output="$(run_vm_provision_staging_case scp-fail 2>&1)"
+  assert_contains 'provision script scp failure propagates exact status' "$output" 'STATUS:73'
+  assert_contains 'provision script scp failure stops before publish' "$output" 'CALLS:test mkdir scp '
+  assert_not_contains 'provision script scp failure does not publish qualification suite' "$output" 'publish'
+
+  output="$(run_vm_provision_staging_case chmod-fail 2>&1)"
+  assert_contains 'provision script chmod failure propagates exact status' "$output" 'STATUS:74'
+  assert_contains 'provision script chmod failure stops before final verification and publish' "$output" 'CALLS:test mkdir scp chmod '
+  assert_not_contains 'provision script chmod failure does not publish qualification suite' "$output" 'publish'
+
+  output="$(run_vm_provision_staging_case verify-fail 2>&1)"
+  assert_contains 'provision script final verification failure propagates exact status' "$output" 'STATUS:75'
+  assert_contains 'provision script final verification failure happens after chmod' "$output" 'CALLS:test mkdir scp chmod test '
+  assert_not_contains 'provision script final verification failure does not publish qualification suite' "$output" 'publish'
+
+  output="$(run_vm_provision_staging_case existing 2>&1)"
+  assert_contains 'existing provision script still publishes qualification suite' "$output" 'CALLS:test publish'
+  assert_contains 'existing provision script path returns success' "$output" 'STATUS:0'
+}
+
 test_payload_excludes_prototypes_and_tests() {
   local payload
   payload="$(tar -C "$ROOT_DIR/vm" -cf - qualification | tar -tf -)"
@@ -1680,6 +1789,7 @@ run_test test_run_directories_are_isolated
 run_test test_runner_distinct_runs_preserve_previous_artifacts
 run_test test_qualify_suite_manifest_drives_self_healing
 run_test test_setup_payload_publication_includes_qualification_suite
+run_test test_vm_provision_script_staging_orders_and_propagates_failures
 run_test test_payload_excludes_prototypes_and_tests
 run_test test_qualify_sources_avoid_openclaw_config_replacement
 run_test test_qualify_host_history_fixtures_are_isolated
