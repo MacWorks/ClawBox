@@ -126,7 +126,7 @@ run_provisioning_and_deployment() {
   section "Deployment"
   step "Deploying to VM..."
 
-  ensure_vm_provision_script
+  ensure_vm_provision_script || return $?
 
   section "OpenClaw Configuration"
   status_begin_compact "Preparing OpenClaw configuration..."

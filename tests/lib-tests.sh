@@ -2317,6 +2317,64 @@ test_setup_deployment_flow_stops_on_openclaw_sync_failure() {
   fi
 }
 
+test_setup_deployment_flow_stops_on_vm_provision_staging_failure() {
+  (
+    local output_file="$TEMP_DIR/setup-deployment-staging-failure.out"
+    local status=0
+
+    setup_host_inference_service_phase() { return 0; }
+    setup_embeddings_service_phase() { return 0; }
+    llama_refresh_openclaw_effective_context_window() { return 0; }
+    ensure_vm_connectivity_or_repair() { return 0; }
+
+    ensure_vm_provision_script() {
+      printf 'DEPLOYMENT_STAGING_FAILED\n'
+      return 73
+    }
+
+    detect_openclaw_runtime_state() {
+      printf 'UNEXPECTED_OPENCLAW_DETECTION\n'
+      NEEDS_PROVISIONING=false
+      IS_RUNNING=false
+      return 0
+    }
+
+    sync_openclaw_config() { printf 'UNEXPECTED_OPENCLAW_SYNC\n'; return 0; }
+    setup_launchagent() { printf 'UNEXPECTED_RUNTIME_SETUP\n'; return 0; }
+    handle_openclaw_runtime_state() { printf 'UNEXPECTED_RUNTIME_HANDLER\n'; return 0; }
+    offer_targeted_openclaw_config_restart() { return 0; }
+    offer_openclaw_restart_after_llama_update() { return 0; }
+    offer_openclaw_webui() { return 0; }
+    print_setup_completion_summary() { printf 'UNEXPECTED_SETUP_COMPLETE\n'; return 0; }
+
+    status_begin_compact() { :; }
+    status_end() { :; }
+    status_wait_for_pid_active() {
+      wait "$1"
+    }
+    openclaw_config_preparation_status_success() { :; }
+    openclaw_config_preparation_status_failure() { :; }
+
+    . "$ROOT_DIR/lib/setup-deployment-flow.sh"
+
+    set +e
+    run_provisioning_and_deployment > "$output_file" 2>&1
+    status=$?
+    set -e
+
+    if [ "$status" -eq 73 ] \
+      && grep -Fq 'DEPLOYMENT_STAGING_FAILED' "$output_file" \
+      && ! grep -Fq 'UNEXPECTED_OPENCLAW_DETECTION' "$output_file" \
+      && ! grep -Fq 'UNEXPECTED_OPENCLAW_SYNC' "$output_file" \
+      && ! grep -Fq 'UNEXPECTED_RUNTIME_SETUP' "$output_file" \
+      && ! grep -Fq 'UNEXPECTED_SETUP_COMPLETE' "$output_file"; then
+      pass "setup deployment flow stops when VM provisioning script staging fails"
+    else
+      fail "setup deployment flow should stop when VM provisioning script staging fails"
+    fi
+  )
+}
+
 test_prompt_module() {
   local simulated_input=''
   local prompt_index=0
@@ -6651,6 +6709,7 @@ run_test test_llama_port_availability_does_not_depend_on_lsof_visibility
 run_test test_deploy_module
 run_test test_setup_deployment_flow_updates_active_openclaw_config
 run_test test_setup_deployment_flow_stops_on_openclaw_sync_failure
+run_test test_setup_deployment_flow_stops_on_vm_provision_staging_failure
 run_test test_openclaw_webui_module
 run_test test_prompt_module
 run_test test_launchagent_module
