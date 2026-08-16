@@ -558,7 +558,7 @@ vm_autostart_log_latest_state_for_file() {
   [ -f "$log_path" ] || return 1
   awk '
     /ClawBox VM auto-start wrapper launched/ { state = "started" }
-    /VM is already reachable via SSH/ { state = "success" }
+    /VM (is )?already reachable via SSH/ { state = "success" }
     /VM is already running/ { state = "success" }
     /VM is reachable via SSH after startup/ { state = "success" }
     /VM is running after startup/ { state = "success" }

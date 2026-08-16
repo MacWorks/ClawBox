@@ -881,7 +881,7 @@ test_status_ignores_stale_vm_autostart_failure_after_new_success() {
 EOF
   cat > "$stdout_log" <<'EOF'
 [INFO] ClawBox VM auto-start wrapper launched for VM: macOS
-[INFO] VM is reachable via SSH after startup attempt.
+[INFO] VM already reachable via SSH: user@192.168.64.6
 EOF
   touch -t 202001010000 "$stderr_log"
   touch -t 202001010001 "$stdout_log"
