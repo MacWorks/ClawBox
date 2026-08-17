@@ -24,8 +24,11 @@ EOF
     selected="$default_dir/${models[0]}"
     out "Using embeddings model: ${models[0]}"
   else
-    out 'Available embeddings models:'
-    for model in "${models[@]}"; do outf '  %s) %s' "$index" "$model"; index=$((index + 1)); done
+    out_bold 'Available embeddings models:'
+    for model in "${models[@]}"; do
+      out_numbered_option "$index" "${#models[@]}" "$model"
+      index=$((index + 1))
+    done
     prompt_model_selection "${#models[@]}" '1'
     selected="$default_dir/${models[$((REPLY - 1))]}"
   fi
@@ -103,6 +106,7 @@ restart_existing_embeddings_service() {
 
 setup_existing_embeddings_service_phase() {
   local choice='' label='' mode='' owner='' endpoint='' display_port='' local_endpoint='' healthy=false
+  local recommended_reuse=false
   local installed_mode='' installed_port='' installed_host='' installed_bin='' installed_model='' installed_args='' installed_ctx=''
   local configured_enabled="${EMBEDDINGS_ENABLED:-false}"
   endpoint="$(embeddings_llama_configured_base_url)"
@@ -133,6 +137,12 @@ setup_existing_embeddings_service_phase() {
   if embeddings_llama_endpoint_responding "$local_endpoint"; then
     healthy=true
   fi
+  if [ "$healthy" = true ] \
+    && [ -n "$installed_mode" ] \
+    && [ -n "$installed_port" ] \
+    && [ -n "$installed_model" ]; then
+    recommended_reuse=true
+  fi
 
   if [ "$healthy" = true ]; then
     outf 'embeddings llama-server detected at %s' "$endpoint"
@@ -150,17 +160,22 @@ setup_existing_embeddings_service_phase() {
   if [ -n "$installed_port" ] && [ -n "${EMBEDDINGS_LLAMA_PORT:-}" ] && [ "$installed_port" != "$EMBEDDINGS_LLAMA_PORT" ]; then
     warn "Embeddings .env port (${EMBEDDINGS_LLAMA_PORT:-}) differs from the installed managed service port ($installed_port)."
   fi
+  if [ "$healthy" = true ] && [ "$recommended_reuse" != true ]; then
+    warn 'A responding embeddings endpoint was found, but ClawBox could not verify complete managed embeddings metadata for this account.'
+  fi
   out 'This instance is managed separately from the primary llama-server.'
   menu_begin 'Options:'
-  if [ "$healthy" = true ]; then
+  if [ "$recommended_reuse" = true ]; then
     outf '1) Use the existing running embeddings llama-server on port %s (recommended)' "$display_port"
+  elif [ "$healthy" = true ]; then
+    outf '1) Use the existing running embeddings llama-server on port %s' "$display_port"
   else
     outf '1) Use the existing embeddings llama-server on port %s' "$display_port"
   fi
   outf '2) Restart/update the existing embeddings llama-server on port %s' "$display_port"
   out '3) Reconfigure embeddings model/port'
-  out '4) Disable embeddings'
-  out '5) Skip embeddings management during setup'
+  out '4) Disable embeddings in .env; leave any existing service running'
+  out '5) Skip embeddings management during setup; leave config and service unchanged'
   menu_end
 
   while true; do

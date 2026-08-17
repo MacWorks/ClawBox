@@ -338,20 +338,35 @@ setup_llama_service_for_mode() {
       llama_maybe_sudo "$mode" mkdir -p "$(dirname "$wrapper_dest")" "$(dirname "$env_dest")" "$(dirname "$plist_dest")"
 
       if [ "$wrapper_matches" = false ]; then
-        step "Installing llama-server wrapper"
-        llama_maybe_sudo "$mode" install -m 755 "$wrapper_src" "$wrapper_dest"
+        status_begin 'Installing llama-server wrapper...'
+        if llama_maybe_sudo "$mode" install -m 755 "$wrapper_src" "$wrapper_dest"; then
+          status_end 'Installing llama-server wrapper ... ✓' 'progress'
+        else
+          status_end 'Installing llama-server wrapper failed.' 'error'
+          return 1
+        fi
       fi
 
       if [ "$env_matches" = false ]; then
-        step "Installing llama-server runtime environment"
-        llama_maybe_sudo "$mode" install -m 644 "$env_temp" "$env_dest"
+        status_begin 'Installing llama-server runtime environment...'
+        if llama_maybe_sudo "$mode" install -m 644 "$env_temp" "$env_dest"; then
+          status_end 'Installing llama-server runtime environment ... ✓' 'progress'
+        else
+          status_end 'Installing llama-server runtime environment failed.' 'error'
+          return 1
+        fi
       fi
 
       if [ "$plist_matches" = false ]; then
-        step "Installing llama-server $service_name"
-        llama_maybe_sudo "$mode" install -m 644 "$plist_temp" "$plist_dest"
+        status_begin "Installing llama-server $service_name..."
+        if llama_maybe_sudo "$mode" install -m 644 "$plist_temp" "$plist_dest"; then
+          status_end "Installing llama-server $service_name ... ✓" 'progress'
+        else
+          status_end "Installing llama-server $service_name failed." 'error'
+          return 1
+        fi
         if [ "$mode" = 'system' ]; then
-          llama_maybe_sudo "$mode" chown root:wheel "$plist_dest"
+          llama_maybe_sudo "$mode" chown root:wheel "$plist_dest" || return 1
         fi
       fi
     fi
@@ -360,12 +375,17 @@ setup_llama_service_for_mode() {
 
     if [ "$wrapper_matches" = false ] || [ "$env_matches" = false ] || [ "$plist_matches" = false ] || [ "$service_loaded" = false ] || [ "$force_restart" = true ]; then
       LLAMA_SERVICE_CHANGED=true
-      step "Starting llama-server $service_name"
+      status_begin "Starting llama-server $service_name..."
       if [ "$service_loaded" = true ]; then
         llama_maybe_sudo "$mode" launchctl bootout "$(llama_mode_domain "$mode")" "$plist_dest" >/dev/null 2>&1 || true
       fi
-      llama_maybe_sudo "$mode" launchctl bootstrap "$(llama_mode_domain "$mode")" "$plist_dest"
-      llama_maybe_sudo "$mode" launchctl kickstart -k "$service_target" >/dev/null 2>&1 || true
+      if llama_maybe_sudo "$mode" launchctl bootstrap "$(llama_mode_domain "$mode")" "$plist_dest"; then
+        llama_maybe_sudo "$mode" launchctl kickstart -k "$service_target" >/dev/null 2>&1 || true
+        status_end "Starting llama-server $service_name ... ✓" 'progress'
+      else
+        status_end "Starting llama-server $service_name failed." 'error'
+        return 1
+      fi
     fi
 
     if ! llama_service_loaded "$mode"; then

@@ -268,19 +268,6 @@ ensure_env_bootstrap() {
 
   configured_or_default 'LLAMA_HOST' "${LLAMA_HOST:-}" '0.0.0.0'
   llama_host_value="$REPLY"
-  if [ "$llama_section_needed" = true ]; then
-    prompt_resolved_value 'Port for llama-server' 'LLAMA_PORT' "${LLAMA_PORT:-}" '11434'
-    llama_port_value="$REPLY"
-    if [ "${PROMPT_USED_DEFAULT:-false}" = true ]; then
-      llama_port_discovery_mode='discover'
-    else
-      llama_port_discovery_mode='selected'
-    fi
-  else
-    configured_or_default 'LLAMA_PORT' "${LLAMA_PORT:-}" '11434'
-    llama_port_value="$REPLY"
-    llama_port_discovery_mode='selected'
-  fi
   parse_host_ip_from_base_url "${LLAMA_BASE_URL:-}"
   parsed_host_ip="$REPLY"
   derive_host_ip_from_vm_ip "${VM_IP:-}"
@@ -295,6 +282,19 @@ ensure_env_bootstrap() {
     host_ip_value="$REPLY"
   else
     host_ip_value="$host_ip_default"
+  fi
+  if [ "$llama_section_needed" = true ]; then
+    prompt_resolved_value 'Port for llama-server' 'LLAMA_PORT' "${LLAMA_PORT:-}" '11434'
+    llama_port_value="$REPLY"
+    if [ "${PROMPT_USED_DEFAULT:-false}" = true ]; then
+      llama_port_discovery_mode='discover'
+    else
+      llama_port_discovery_mode='selected'
+    fi
+  else
+    configured_or_default 'LLAMA_PORT' "${LLAMA_PORT:-}" '11434'
+    llama_port_value="$REPLY"
+    llama_port_discovery_mode='selected'
   fi
 
   while true; do
@@ -456,37 +456,6 @@ ensure_env_bootstrap() {
   write_env_from_template
 
   source_env_file
-
-  section "Configuration Summary"
-
-  print_summary_value "HOST_IP" "${HOST_IP:-}"
-  print_summary_value "VM_IP" "${VM_IP:-}"
-  print_summary_value "VM_USER" "${VM_USER:-}"
-  print_summary_value "VM_USER_PATH" "${VM_USER_PATH:-}"
-  print_summary_value "VM_HOST" "${VM_HOST:-}"
-  print_summary_value "VM_RUNTIME_PATH" "${VM_RUNTIME_PATH:-}"
-  print_summary_value "VM_MACHINE_NAME" "${VM_MACHINE_NAME:-}"
-  print_summary_value "LLAMA_BIN" "${LLAMA_BIN:-}"
-  print_summary_value "LLAMA_HOST" "${LLAMA_HOST:-}"
-  print_summary_value "LLAMA_PORT" "${LLAMA_PORT:-}"
-  print_summary_value "LLAMA_CTX" "${LLAMA_CTX:-}"
-  print_summary_value "LLAMA_PARALLEL" "${LLAMA_PARALLEL:-}"
-  print_summary_value "LLAMA_GPU_LAYERS" "${LLAMA_GPU_LAYERS:-}"
-  print_summary_value "LLAMA_FLASH_ATTENTION" "${LLAMA_FLASH_ATTENTION:-}"
-  print_summary_value "LLAMA_JINJA" "${LLAMA_JINJA:-}"
-  print_summary_value "LLAMA_MLOCK" "${LLAMA_MLOCK:-}"
-  print_summary_value "OPENCLAW_MODEL_SUPPORTS_VISION" "${OPENCLAW_MODEL_SUPPORTS_VISION:-}"
-  print_summary_value "MMPROJ_PATH" "${MMPROJ_PATH:-}"
-  print_summary_value "LLAMA_BASE_URL" "${LLAMA_BASE_URL:-}"
-  print_summary_value "OPENCLAW_MAX_TOKENS" "${OPENCLAW_MAX_TOKENS:-}"
-  print_summary_value "MODEL_PATH" "${MODEL_PATH:-}"
-  print_summary_value "OPENCLAW_PROVIDER_NAME" "${OPENCLAW_PROVIDER_NAME:-}"
-  print_summary_value "OPENCLAW_DEFAULT_MODEL" "${OPENCLAW_DEFAULT_MODEL:-}"
-  print_summary_value "OPENCLAW_AUTOSTART" "${OPENCLAW_AUTOSTART:-}"
-  print_summary_value "OPENCLAW_PROVIDER_TIMEOUT_SECONDS" "${OPENCLAW_PROVIDER_TIMEOUT_SECONDS:-}"
-  print_summary_value "OPENCLAW_STUCK_SESSION_WARN_MS" "${OPENCLAW_STUCK_SESSION_WARN_MS:-}"
-  print_summary_value "OPENCLAW_STUCK_SESSION_ABORT_MS" "${OPENCLAW_STUCK_SESSION_ABORT_MS:-}"
-  blank_line
 
   ENV_BOOTSTRAPPED=true
 }

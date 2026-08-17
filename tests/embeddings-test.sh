@@ -387,7 +387,8 @@ test_setup_rerun_preserves_existing_embeddings_service() {
     printf 'FINAL:%s:%s:%s:%s\n' "$EMBEDDINGS_ENABLED" "$EMBEDDINGS_MODEL_PATH" "$EMBEDDINGS_LLAMA_PORT" "$EMBEDDINGS_LLAMA_BASE_URL"
   } 2>&1)"
   assert_contains 'existing embeddings rerun detects configured endpoint' "$output" 'embeddings llama-server detected at http://127.0.0.1:11435/v1'
-  assert_contains 'existing embeddings rerun offers reuse path' "$output" 'Use the existing running embeddings llama-server on port 11435 (recommended)'
+  assert_contains 'existing embeddings rerun offers reuse path' "$output" 'Use the existing running embeddings llama-server on port 11435'
+  assert_not_contains 'existing embeddings rerun does not recommend reuse without managed metadata' "$output" 'Use the existing running embeddings llama-server on port 11435 (recommended)'
   assert_contains 'existing embeddings rerun preserves enabled config on reuse' "$output" "FINAL:true:$embed_model:11435:http://127.0.0.1:11435/v1"
   assert_not_contains 'existing embeddings rerun does not show fresh configure prompt' "$output" 'Configure a separate host llama-server for embeddings?'
   assert_not_contains 'existing embeddings rerun does not claim embeddings are unconfigured' "$output" 'Embeddings server is not configured.'
@@ -480,7 +481,7 @@ test_setup_rerun_stopped_embeddings_offers_repair_not_fresh_enable() {
   } 2>&1)"
   assert_contains 'stopped configured embeddings rerun still detects embeddings config' "$output" 'embeddings llama-server configured at http://127.0.0.1:11435/v1'
   assert_contains 'stopped configured embeddings rerun offers restart repair path' "$output" 'Restart/update the existing embeddings llama-server on port 11435'
-  assert_contains 'stopped configured embeddings rerun offers skip path' "$output" 'Skip embeddings management during setup'
+  assert_contains 'stopped configured embeddings rerun offers skip path' "$output" 'Skip embeddings management during setup; leave config and service unchanged'
   assert_not_contains 'stopped configured embeddings rerun avoids fresh enable prompt' "$output" 'Configure a separate host llama-server for embeddings?'
   assert_not_contains 'stopped configured embeddings rerun avoids unconfigured message' "$output" 'Embeddings server is not configured.'
 }

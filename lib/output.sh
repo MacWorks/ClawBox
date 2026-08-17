@@ -236,6 +236,16 @@ out() {
   _print_line "$1"
 }
 
+out_bold() {
+  if [ -z "$1" ]; then
+    _print_blank
+    return
+  fi
+  _prepare_normal_output
+  printf '%b%s%b\n' "${COLOR_BOLD:-}" "$1" "${COLOR_RESET:-}"
+  _set_output_state "normal"
+}
+
 err() {
   if [ -z "$1" ]; then
     _print_blank
@@ -248,6 +258,21 @@ outf() {
   local format="$1"; shift
   _prepare_normal_output
   printf "$format\n" "$@"
+  _set_output_state "normal"
+}
+
+out_numbered_option() {
+  local number="$1"
+  local max_number="$2"
+  local label="$3"
+  local width=1
+
+  if [ -n "$max_number" ]; then
+    width="${#max_number}"
+  fi
+
+  _prepare_normal_output
+  printf '%b%*s)%b %s\n' "${COLOR_BOLD:-}" "$width" "$number" "${COLOR_RESET:-}" "$label"
   _set_output_state "normal"
 }
 

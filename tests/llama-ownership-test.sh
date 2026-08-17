@@ -627,7 +627,7 @@ test_dedicated_port_prompt_skips_busy_sequential_ports() {
     printf 'REPLY:%s\n' "$REPLY"
   } 2>&1)"
 
-  assert_contains 'dedicated alternate-port prompt reports skipped busy port' "$output" 'llama-server port 11435 is unavailable.'
+  assert_not_contains 'dedicated alternate-port prompt silently skips automatic busy port' "$output" 'llama-server port 11435 is unavailable.'
   assert_not_contains 'dedicated alternate-port prompt does not warn for original existing-instance port' "$output" 'llama-server port 11434 is unavailable.'
   assert_contains 'dedicated alternate-port prompt skips the next busy port' "$output" 'PROMPT:Port for llama-server [11436]'
   assert_contains 'dedicated alternate-port prompt returns the next available sequential port' "$output" 'REPLY:11436'

@@ -244,11 +244,11 @@ EOF
     fi
 
     blank_line
-    out 'Available Models:'
+    out_bold 'Available Models:'
 
     model_number=1
     for model_name in "${model_files[@]}"; do
-      outf '  %s) %s' "$model_number" "$model_name"
+      out_numbered_option "$model_number" "${#model_files[@]}" "$model_name"
       model_qualification_summary_for_menu "$models_dir_value/$model_name"
       model_number=$((model_number + 1))
     done

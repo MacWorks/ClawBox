@@ -532,7 +532,8 @@ wait_for_vm_ssh_service() {
     case "$probe_state" in
       ready|ssh-auth-required)
         REPLY="$probe_state"
-        status_end 'SSH readiness detected.' 'success'
+        status_end 'SSH connectivity is ready. ✓' 'success'
+        VM_SSH_CONNECTIVITY_READY_REPORTED=true
         return 0
         ;;
       ssh-refused|unreachable)
@@ -540,13 +541,13 @@ wait_for_vm_ssh_service() {
           :
         else
           REPLY="$probe_state"
-          status_end 'SSH readiness check stopped.' 'warning'
+          status_end '' 'info'
           return 1
         fi
         ;;
       invalid-target)
         REPLY="$probe_state"
-        status_end 'SSH readiness check stopped.' 'warning'
+        status_end 'SSH readiness stopped because the VM SSH target is invalid.' 'warning'
         return 1
         ;;
     esac
@@ -559,7 +560,7 @@ wait_for_vm_ssh_service() {
   if [ "${VM_RECENTLY_STARTED:-false}" = true ]; then
     status_end 'VM was started but did not become SSH-ready before the timeout.' 'warning'
   else
-    status_end 'SSH readiness was not detected.' 'warning'
+    status_end '' 'info'
   fi
   return 1
 }

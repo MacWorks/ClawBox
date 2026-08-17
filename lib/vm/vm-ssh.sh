@@ -912,6 +912,10 @@ ensure_host_ssh_key() {
   ssh-keygen -t ed25519 -f "$key_path" -N ''
 }
 
+ssh_copy_id_should_own_terminal() {
+  [ -t 0 ] && [ -t 1 ] && [ -t 2 ]
+}
+
 copy_ssh_key_to_vm() {
   local key_path="$HOME/.ssh/id_ed25519.pub"
   local remote_key_path='~/.ssh/clawbox_id_ed25519.pub'
@@ -924,18 +928,31 @@ copy_ssh_key_to_vm() {
   VM_SSH_COPY_ID_STATUS=0
 
   if command -v ssh-copy-id >/dev/null 2>&1; then
-    out 'Copying SSH key to VM with ssh-copy-id...'
-    set +e
-    copy_output="$(ssh-copy-id -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 -o ServerAliveInterval=1 -o ServerAliveCountMax=1 "$VM_HOST" 2>&1)"
-    copy_status=$?
-    set -e
+    if ssh_copy_id_should_own_terminal; then
+      out 'Copying SSH key to VM...'
+      blank_line
+      set +e
+      ssh-copy-id -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 -o ServerAliveInterval=1 -o ServerAliveCountMax=1 "$VM_HOST"
+      copy_status=$?
+      set -e
+      copy_output=''
+    else
+      status_begin 'Copying SSH key to VM with ssh-copy-id...'
+      set +e
+      copy_output="$(ssh-copy-id -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 -o ServerAliveInterval=1 -o ServerAliveCountMax=1 "$VM_HOST" 2>&1)"
+      copy_status=$?
+      set -e
+    fi
 
     VM_SSH_COPY_ID_OUTPUT="$copy_output"
     VM_SSH_COPY_ID_STATUS=$copy_status
 
     if [ "$copy_status" -eq 0 ]; then
+      status_end 'SSH key copied to VM. ✓' 'success'
       return 0
     fi
+
+    status_end 'SSH key copy failed.' 'warning'
 
     case "$copy_output" in
       *'All keys were skipped because they already exist on the remote system.'*|*'Number of key(s) added: 0'*)
@@ -946,15 +963,21 @@ copy_ssh_key_to_vm() {
         ;;
     esac
 
+    [ -z "$copy_output" ] || err "$copy_output"
     return 1
   fi
 
-  out 'ssh-copy-id not found. Using fallback key copy method...'
-  scp -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 -q "$key_path" "$VM_HOST:$remote_key_path" </dev/null || return 1
-  ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" 'mkdir -p ~/.ssh' </dev/null || return 1
-  ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" 'chmod 700 ~/.ssh' </dev/null || return 1
-  ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" 'touch ~/.ssh/authorized_keys' </dev/null || return 1
-  ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" 'chmod 600 ~/.ssh/authorized_keys' </dev/null || return 1
-  ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" "awk 'NF && !seen[\$0]++' ~/.ssh/authorized_keys $remote_key_path > ~/.ssh/authorized_keys.clawbox && mv ~/.ssh/authorized_keys.clawbox ~/.ssh/authorized_keys && rm -f $remote_key_path" </dev/null || return 1
+  status_begin 'Copying SSH key to VM...'
+  if ! scp -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 -q "$key_path" "$VM_HOST:$remote_key_path" </dev/null \
+    || ! ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" 'mkdir -p ~/.ssh' </dev/null \
+    || ! ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" 'chmod 700 ~/.ssh' </dev/null \
+    || ! ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" 'touch ~/.ssh/authorized_keys' </dev/null \
+    || ! ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" 'chmod 600 ~/.ssh/authorized_keys' </dev/null \
+    || ! ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" "awk 'NF && !seen[\$0]++' ~/.ssh/authorized_keys $remote_key_path > ~/.ssh/authorized_keys.clawbox && mv ~/.ssh/authorized_keys.clawbox ~/.ssh/authorized_keys && rm -f $remote_key_path" </dev/null
+  then
+    status_end 'SSH key copy failed.' 'warning'
+    return 1
+  fi
+  status_end 'SSH key copied to VM. ✓' 'success'
   return 0
 }

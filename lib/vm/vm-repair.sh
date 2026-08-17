@@ -282,7 +282,10 @@ print_possible_causes() {
 }
 
 print_ssh_auth_status() {
-  out 'SSH connectivity is working.'
+  if [ "${VM_SSH_CONNECTIVITY_READY_REPORTED:-false}" != true ]; then
+    success 'SSH connectivity is ready. ✓'
+    VM_SSH_CONNECTIVITY_READY_REPORTED=true
+  fi
   out 'Passwordless SSH authentication could not be confirmed yet.'
 }
 
@@ -660,7 +663,8 @@ check_manual_vm_start_readiness() {
 
   case "$probe_state" in
     ready)
-      success 'SSH readiness detected.'
+      success 'SSH connectivity is ready. ✓'
+      VM_SSH_CONNECTIVITY_READY_REPORTED=true
       REPLY='ready'
       return 0
       ;;
@@ -1063,6 +1067,7 @@ ensure_vm_connectivity_or_repair() {
   local manual_vm_start_verified=false
 
   VM_RECENTLY_STARTED=false
+  VM_SSH_CONNECTIVITY_READY_REPORTED=false
   reset_vm_onboarding_probe_state >/dev/null 2>&1 || true
 
   status_begin 'Checking VM state...'

@@ -200,6 +200,7 @@ EOF
       prompt_yes_no 'Use this VM?' 'y'
 
       if [ "$REPLY" = 'true' ]; then
+        VM_EXPLICITLY_SELECTED_THIS_RUN=true
         select_utm_vm_identity "${detected_vm_names[0]}"
         VM_MACHINE_NAME="$REPLY"
         return 0
@@ -237,6 +238,7 @@ EOF
           continue
         fi
 
+        VM_EXPLICITLY_SELECTED_THIS_RUN=true
         select_utm_vm_identity "${detected_vm_names[$((selected_index - 1))]}"
         VM_MACHINE_NAME="$REPLY"
         return 0
@@ -368,7 +370,9 @@ ensure_selected_vm_started_before_network_setup() {
   [ -n "${VM_MACHINE_NAME:-}" ] || return 0
 
   if command -v launchagent_start_selected_vm_for_setup >/dev/null 2>&1; then
-    out "Starting selected VM: ${VM_MACHINE_NAME:-configured VM}"
+    if [ "${VM_EXPLICITLY_SELECTED_THIS_RUN:-false}" != true ]; then
+      out "Starting selected VM: ${VM_MACHINE_NAME:-configured VM}"
+    fi
     if start_selected_vm_for_setup; then
       return 0
     fi
@@ -386,7 +390,9 @@ ensure_selected_vm_started_before_network_setup() {
     return 0
   fi
 
-  out "Starting selected VM: ${VM_MACHINE_NAME:-configured VM}"
+  if [ "${VM_EXPLICITLY_SELECTED_THIS_RUN:-false}" != true ]; then
+    out "Starting selected VM: ${VM_MACHINE_NAME:-configured VM}"
+  fi
   if start_selected_vm_for_setup; then
     return 0
   fi
@@ -403,6 +409,8 @@ resolve_vm_machine_name_value() {
   local selected_index=''
   local option_number=1
   local prompt_status=0
+
+  VM_EXPLICITLY_SELECTED_THIS_RUN=false
 
   if [ "${VM_SKIP_DETECTED_UTM_FLOW:-false}" = true ]; then
     prompt_resolved_value 'Enter VM name' 'VM_MACHINE_NAME' "$current_value" "$fallback_value" || prompt_status=$?
@@ -440,6 +448,7 @@ resolve_vm_machine_name_value() {
   if [ "${#detected_vm_names[@]}" -eq 1 ]; then
     prompt_yes_no "Use detected UTM VM \"${detected_vm_names[0]}\"?" 'y'
     if [ "$REPLY" = 'true' ]; then
+      VM_EXPLICITLY_SELECTED_THIS_RUN=true
       select_utm_vm_identity "${detected_vm_names[0]}"
       return 0
     fi
@@ -478,6 +487,7 @@ resolve_vm_machine_name_value() {
     fi
 
     select_utm_vm_identity "${detected_vm_names[$((selected_index - 1))]}"
+    VM_EXPLICITLY_SELECTED_THIS_RUN=true
     return 0
   done
 }

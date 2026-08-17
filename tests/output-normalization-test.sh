@@ -13,6 +13,8 @@ trap cleanup_temp_dir EXIT
 
 test_model_selection_flow() {
   local output
+  local host_prompt_index=0
+  local port_prompt_index=0
 
   output="$({
     load_setup_functions
@@ -94,7 +96,22 @@ test_model_selection_flow() {
   assert_contains 'model flow shows llama section' "$output" ' > LLaMA Server Configuration'
   assert_contains 'model flow shows openclaw section' "$output" ' > OpenClaw Configuration'
   assert_contains 'model flow lists available models' "$output" 'Available Models:'
-  assert_contains 'model flow shows summary section' "$output" ' > Configuration Summary'
+  assert_not_contains 'model flow omits verbose configuration summary' "$output" ' > Configuration Summary'
+  host_prompt_index="$(OUTPUT_TEXT="$output" python3 - <<'PY'
+import os
+print(os.environ["OUTPUT_TEXT"].find("Host IP for llama-server API"))
+PY
+)"
+  port_prompt_index="$(OUTPUT_TEXT="$output" python3 - <<'PY'
+import os
+print(os.environ["OUTPUT_TEXT"].find("Port for llama-server"))
+PY
+)"
+  if [ "$host_prompt_index" -ge 0 ] && [ "$port_prompt_index" -ge 0 ] && [ "$host_prompt_index" -lt "$port_prompt_index" ]; then
+    pass 'model flow prompts for host before port'
+  else
+    fail 'model flow should prompt for host before port'
+  fi
   assert_no_excessive_blank_lines 'model flow avoids excessive blank lines' "$output"
 }
 
@@ -950,6 +967,7 @@ test_first_run_bootstrap_honors_explicit_custom_llama_port() {
     queue_prompt_answers \
       "$models_dir" \
       '' \
+      '' \
       '11801' \
       '' \
       '' \
@@ -1664,6 +1682,7 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
 
   assert_contains 'fresh setup selected vm path prompts for detected VM' "$output" 'Use this VM? [Y/n]:'
   assert_contains 'fresh setup starts selected VM through LaunchAgent before network config' "$output" 'EVENT:start-selected-vm-with-launchagent:macOS'
+  assert_not_contains 'fresh setup suppresses redundant selected VM startup line after explicit confirmation' "$output" 'Starting selected VM: macOS'
   assert_not_contains 'fresh setup does not run direct UTM state check before LaunchAgent' "$output" 'EVENT:unexpected-direct-state-check'
   assert_not_contains 'fresh setup does not bypass LaunchAgent with direct UTM start' "$output" 'EVENT:unexpected-direct-utm-start'
   assert_contains 'fresh setup attempts IP discovery after VM startup' "$output" 'EVENT:ip-discovery-after-start:macOS'
@@ -3542,7 +3561,7 @@ test_vm_startup_progress_flow() {
   assert_contains 'startup flow reports waiting for vm network' "$output" 'Waiting for VM network...'
   assert_contains 'startup flow reports network completion' "$output" 'VM network detected.'
   assert_contains 'startup flow reports waiting for ssh service' "$output" 'Waiting for SSH...'
-  assert_contains 'startup flow reports ssh completion' "$output" 'SSH readiness detected.'
+  assert_contains 'startup flow reports consolidated ssh completion' "$output" 'SSH connectivity is ready. ✓'
   assert_contains 'startup flow reports when it begins configuring ssh access' "$output" 'Configuring SSH access...'
   assert_contains 'startup flow reports ssh configuration completion' "$output" 'SSH access configured.'
 }
@@ -4700,8 +4719,47 @@ EOF
   assert_not_contains 'existing embeddings menu does not call stale env port running' "$output" 'running embeddings llama-server on port 11435'
   assert_contains 'disabled env plus installed embeddings service reports drift' "$output" 'Embeddings are disabled in .env, but a ClawBox-managed embeddings service is installed.'
   assert_contains 'stale env embeddings port drift is reported' "$output" 'Embeddings .env port (11435) differs from the installed managed service port (11436).'
+  assert_contains 'embeddings menu clarifies disable leaves service running' "$output" 'Disable embeddings in .env; leave any existing service running'
+  assert_contains 'embeddings menu clarifies skip leaves state unchanged' "$output" 'Skip embeddings management during setup; leave config and service unchanged'
+  assert_contains 'managed embeddings with metadata remains recommended for reuse' "$output" 'Use the existing running embeddings llama-server on port 11436 (recommended)'
   assert_contains 'adopting existing embeddings service persists actual managed port' "$output" 'ENV:true:11436:http://192.168.64.1:11436/v1'
   assert_not_contains 'embeddings setup never probes template placeholder' "$output" 'UNEXPECTED_PLACEHOLDER_PROBE'
+}
+
+test_existing_embeddings_menu_requires_managed_metadata_before_recommending_reuse() {
+  local output env_file="$TEMP_DIR/incomplete-embeddings.env"
+
+  cat > "$env_file" <<'EOF'
+CLAWBOX_LLAMA_INSTANCE="embeddings"
+EMBEDDINGS_LLAMA_BIN="/opt/homebrew/bin/llama-server"
+EMBEDDINGS_LLAMA_HOST="0.0.0.0"
+EMBEDDINGS_LLAMA_PORT="11437"
+EMBEDDINGS_LLAMA_CTX="8192"
+EMBEDDINGS_LLAMA_EXTRA_ARGS="--embedding"
+EOF
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers '5'
+
+    HOST_IP='192.168.64.1'
+    EMBEDDINGS_ENABLED=false
+    EMBEDDINGS_LLAMA_PORT='11435'
+    embeddings_llama_user_env_dest() { printf '%s\n' "$env_file"; }
+    embeddings_llama_service_loaded() { [ "${1:-}" = user ]; }
+    embeddings_llama_endpoint_responding() { [ "${1:-}" = 'http://127.0.0.1:11437/v1' ]; }
+    write_env_from_template() { printf 'UNEXPECTED_WRITE\n'; }
+    source_env_file() { return 0; }
+
+    setup_existing_embeddings_service_phase
+  } 2>&1)"
+
+  assert_contains 'embeddings incomplete metadata is reported' "$output" 'could not verify complete managed embeddings metadata'
+  assert_contains 'embeddings incomplete metadata can still show responding service' "$output" 'Use the existing running embeddings llama-server on port 11437'
+  assert_not_contains 'embeddings incomplete metadata does not recommend reuse' "$output" 'Use the existing running embeddings llama-server on port 11437 (recommended)'
+  assert_contains 'embeddings incomplete metadata skip leaves state unchanged' "$output" 'Skipping embeddings management during setup.'
+  assert_not_contains 'embeddings incomplete metadata skip does not write env' "$output" 'UNEXPECTED_WRITE'
 }
 
 test_existing_embeddings_menu_does_not_call_stopped_managed_service_running() {
@@ -4995,6 +5053,37 @@ test_openclaw_restart_recovery_prompts_only_after_failed_inference() {
   assert_contains 'recovery restart delayed startup succeeds within bounded wait' "$delayed_restart_output" 'STATUS:0'
 }
 
+test_model_list_numbering_alignment() {
+  local output=''
+  local saved_bold="${COLOR_BOLD:-}"
+  local saved_reset="${COLOR_RESET:-}"
+
+  COLOR_BOLD='<b>'
+  COLOR_RESET='</b>'
+  output="$({
+    out_bold 'Available Models:'
+    out_numbered_option 1 9 'one.gguf'
+    out_numbered_option 2 9 'two.gguf'
+    out_numbered_option 1 10 'one.gguf'
+    out_numbered_option 2 10 'two.gguf'
+    out_numbered_option 10 10 'ten.gguf'
+    out_numbered_option 1 100 'one.gguf'
+    out_numbered_option 10 100 'ten.gguf'
+    out_numbered_option 100 100 'hundred.gguf'
+  } 2>&1)"
+  COLOR_BOLD="$saved_bold"
+  COLOR_RESET="$saved_reset"
+
+  assert_contains 'model list heading is bold' "$output" '<b>Available Models:</b>'
+  assert_contains 'single-digit selector is bold without fixed indentation for short lists' "$output" '<b>1)</b> one.gguf'
+  assert_contains 'two-digit list aligns one-digit selector closing parenthesis' "$output" '<b> 1)</b> one.gguf'
+  assert_contains 'two-digit selector remains bold' "$output" '<b>10)</b> ten.gguf'
+  assert_contains 'three-digit list aligns one-digit selector closing parenthesis' "$output" '<b>  1)</b> one.gguf'
+  assert_contains 'three-digit list aligns two-digit selector closing parenthesis' "$output" '<b> 10)</b> ten.gguf'
+  assert_contains 'three-digit selector remains bold' "$output" '<b>100)</b> hundred.gguf'
+  assert_not_contains 'model filenames are not bolded' "$output" 'one.gguf</b>'
+}
+
 printf 'Running output normalization tests\n'
 
 TEMP_DIR="$(mktemp -d)"
@@ -5049,6 +5138,7 @@ run_test test_status_helper_repaints_while_waiting_for_background_work
 run_test test_status_helper_uses_fast_spinner_cadence
 run_test test_status_helper_applies_semantic_result_styling
 run_test test_status_helper_restores_cursor_after_completion
+run_test test_model_list_numbering_alignment
 run_test test_status_helper_avoids_extra_blank_lines_after_prompt
 run_test test_status_helper_keeps_one_separator_after_empty_spinner_completion
 run_test test_prompt_spacing_surrounds_prompts_with_single_blank_lines
@@ -5072,6 +5162,7 @@ run_test test_host_llama_restart_uses_install_mode_without_hidden_health_wait
 run_test test_optional_embeddings_setup_is_host_only
 run_test test_embeddings_placeholder_url_is_never_probed
 run_test test_existing_embeddings_menu_uses_installed_managed_port_over_stale_env
+run_test test_existing_embeddings_menu_requires_managed_metadata_before_recommending_reuse
 run_test test_existing_embeddings_menu_does_not_call_stopped_managed_service_running
 run_test test_dev_forced_vm_inference_failure_is_limited_to_recovery_probe
 run_test test_openclaw_restart_recovery_is_limited_to_failed_post_update_inference
