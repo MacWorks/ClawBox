@@ -627,9 +627,69 @@ test_dedicated_port_prompt_skips_busy_sequential_ports() {
     printf 'REPLY:%s\n' "$REPLY"
   } 2>&1)"
 
+  assert_contains 'dedicated alternate-port prompt reports skipped busy port' "$output" 'llama-server port 11435 is unavailable.'
+  assert_not_contains 'dedicated alternate-port prompt does not warn for original existing-instance port' "$output" 'llama-server port 11434 is unavailable.'
   assert_contains 'dedicated alternate-port prompt skips the next busy port' "$output" 'PROMPT:Port for llama-server [11436]'
   assert_contains 'dedicated alternate-port prompt returns the next available sequential port' "$output" 'REPLY:11436'
   assert_contains 'dedicated alternate-port prompt succeeds after skipping busy ports' "$output" 'STATUS:0'
+}
+
+test_dedicated_port_prompt_recovers_from_selected_busy_port() {
+  local output=''
+
+  output="$({
+    load_setup_functions
+    install_prompt_stubs
+
+    prompt_calls=0
+
+    prompt_with_default() {
+      local label="$1"
+      local default_value="$2"
+
+      prompt_calls=$((prompt_calls + 1))
+      printf 'PROMPT:%s [%s]\n' "$label" "$default_value"
+      if [ "$prompt_calls" -eq 1 ]; then
+        REPLY='11435'
+      else
+        REPLY="$default_value"
+      fi
+      return 0
+    }
+
+    llama_suggest_available_port() {
+      if [ "${2:-}" = '11434' ]; then
+        REPLY='11435'
+        return 0
+      fi
+
+      if [ "${2:-}" = '11435' ]; then
+        REPLY='11436'
+        return 0
+      fi
+
+      return 1
+    }
+
+    llama_port_in_use() {
+      [ "${1:-}" = '11435' ]
+    }
+
+    llama_api_responding() {
+      return 1
+    }
+
+    llama_prompt_for_available_port '127.0.0.1' '11434' 'dedicated'
+    printf 'STATUS:%s\n' "$?"
+    printf 'REPLY:%s\n' "$REPLY"
+    printf 'PROMPT_CALLS:%s\n' "$prompt_calls"
+  } 2>&1)"
+
+  assert_contains 'dedicated port prompt reports selected busy port as unavailable' "$output" 'llama-server port 11435 is unavailable.'
+  assert_contains 'dedicated port prompt offers the next available alternate after busy selection' "$output" 'PROMPT:Port for llama-server [11436]'
+  assert_contains 'dedicated port prompt returns the alternate after busy selection' "$output" 'REPLY:11436'
+  assert_contains 'dedicated port prompt reprompts after selected busy port' "$output" 'PROMPT_CALLS:2'
+  assert_contains 'dedicated port prompt succeeds after selected busy port' "$output" 'STATUS:0'
 }
 
 test_runtime_health_classification_requires_listener_and_health_endpoint() {
@@ -1225,6 +1285,7 @@ run_test test_prestart_current_user_launchagent_marks_runtime_env_drift_for_rest
 run_test test_dedicated_port_can_restart_existing_current_user_managed_instance
 run_test test_dedicated_port_prompt_defaults_to_next_available_port
 run_test test_dedicated_port_prompt_skips_busy_sequential_ports
+run_test test_dedicated_port_prompt_recovers_from_selected_busy_port
 run_test test_runtime_health_classification_requires_listener_and_health_endpoint
 run_test test_runtime_health_classification_marks_healthy_only_with_listener_and_health
 run_test test_runtime_health_classification_accepts_loopback_when_vm_interface_absent

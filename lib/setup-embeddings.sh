@@ -90,7 +90,6 @@ configure_embeddings_service() {
   detect_embeddings_llama_install_mode >/dev/null 2>&1 || true; mode="${REPLY:-}"
   [ -n "$mode" ] || mode=user
   setup_embeddings_llama_service_for_mode "$mode" || return $?
-  success "Embeddings llama-server is responding at $EMBEDDINGS_LLAMA_BASE_URL"
 }
 
 restart_existing_embeddings_service() {
@@ -100,7 +99,6 @@ restart_existing_embeddings_service() {
   detect_embeddings_llama_install_mode >/dev/null 2>&1 || true; mode="${REPLY:-}"
   [ -n "$mode" ] || mode=user
   setup_embeddings_llama_service_for_mode "$mode" || return $?
-  success "Embeddings llama-server is responding at ${EMBEDDINGS_LLAMA_BASE_URL:-http://${HOST_IP}:${EMBEDDINGS_LLAMA_PORT:-11435}/v1}"
 }
 
 setup_existing_embeddings_service_phase() {

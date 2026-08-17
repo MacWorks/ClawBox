@@ -2805,7 +2805,7 @@ test_offer_vm_ip_recovery_retries_discovery_then_accepts_manual_ip() {
   local output
   local output_file="$TEMP_DIR/ip-recovery-retry-output.txt"
   local status=0
-  local discovery_calls=0
+  local discovery_calls_file="$TEMP_DIR/ip-recovery-retry-discovery-calls.txt"
 
   prepare_vm_state_mocks
 
@@ -2815,6 +2815,7 @@ test_offer_vm_ip_recovery_retries_discovery_then_accepts_manual_ip() {
   . "$ROOT_DIR/lib/vm/vm-repair.sh"
   install_prompt_stubs
   queue_prompt_answers '1' '2' '192.168.64.12'
+  printf '0\n' > "$discovery_calls_file"
 
   VM_IP='192.168.64.7'
   VM_USER='vm-user'
@@ -2831,7 +2832,10 @@ test_offer_vm_ip_recovery_retries_discovery_then_accepts_manual_ip() {
   }
 
   discover_vm_ip_candidates() {
+    local discovery_calls=0
+    discovery_calls="$(cat "$discovery_calls_file")"
     discovery_calls=$((discovery_calls + 1))
+    printf '%s\n' "$discovery_calls" > "$discovery_calls_file"
     REPLY=''
     return 1
   }
@@ -2841,7 +2845,7 @@ test_offer_vm_ip_recovery_retries_discovery_then_accepts_manual_ip() {
   status=$?
   set -e
   {
-    printf 'DISCOVERY_CALLS=%s\n' "$discovery_calls"
+    printf 'DISCOVERY_CALLS=%s\n' "$(cat "$discovery_calls_file")"
     printf 'VM_HOST=%s\n' "$VM_HOST"
   } >> "$output_file"
   output="$(cat "$output_file")"
@@ -2860,7 +2864,7 @@ test_offer_vm_ip_recovery_loops_after_multiple_bad_manual_ips() {
   local output
   local output_file="$TEMP_DIR/ip-recovery-multiple-bad-manual-output.txt"
   local status=0
-  local discovery_calls=0
+  local discovery_calls_file="$TEMP_DIR/ip-recovery-multiple-bad-manual-discovery-calls.txt"
   local probe_log="$TEMP_DIR/ip-recovery-multiple-bad-manual-probes.txt"
 
   prepare_vm_state_mocks
@@ -2874,6 +2878,7 @@ test_offer_vm_ip_recovery_loops_after_multiple_bad_manual_ips() {
     '3' '192.168.64.249' \
     '3' '192.168.64.248' \
     '3' '192.168.64.6'
+  printf '0\n' > "$discovery_calls_file"
 
   VM_IP='192.168.64.250'
   VM_USER='vm-user'
@@ -2890,7 +2895,10 @@ test_offer_vm_ip_recovery_loops_after_multiple_bad_manual_ips() {
   }
 
   discover_vm_ip_candidates() {
+    local discovery_calls=0
+    discovery_calls="$(cat "$discovery_calls_file")"
     discovery_calls=$((discovery_calls + 1))
+    printf '%s\n' "$discovery_calls" > "$discovery_calls_file"
     VM_IP_DISCOVERY_CONFIDENCE='generic'
     REPLY='192.168.64.6
 192.168.64.8'
@@ -2902,7 +2910,7 @@ test_offer_vm_ip_recovery_loops_after_multiple_bad_manual_ips() {
   status=$?
   set -e
   {
-    printf 'DISCOVERY_CALLS=%s\n' "$discovery_calls"
+    printf 'DISCOVERY_CALLS=%s\n' "$(cat "$discovery_calls_file")"
     printf 'FINAL_VM_HOST=%s\n' "$VM_HOST"
     printf 'PROBES:\n'
     cat "$probe_log"
@@ -3022,8 +3030,8 @@ test_fresh_ip_discovery_retains_ready_configured_ip_before_generic_candidates() 
 
 test_fresh_ip_discovery_retries_transient_configured_ip_before_generic_candidates() {
   local output
-  local probe_calls=0
-  local discovery_calls=0
+  local probe_calls_file="$TEMP_DIR/configured-ip-transient-probe-calls.txt"
+  local discovery_calls_file="$TEMP_DIR/configured-ip-transient-discovery-calls.txt"
 
   prepare_vm_state_mocks
 
@@ -3035,9 +3043,14 @@ test_fresh_ip_discovery_retries_transient_configured_ip_before_generic_candidate
   VM_HOST='vm-user@192.168.64.6'
   CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS=3
   CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL=0
+  printf '0\n' > "$probe_calls_file"
+  printf '0\n' > "$discovery_calls_file"
 
   probe_ssh_target_endpoint() {
+    local probe_calls=0
+    probe_calls="$(cat "$probe_calls_file")"
     probe_calls=$((probe_calls + 1))
+    printf '%s\n' "$probe_calls" > "$probe_calls_file"
     if [ "$probe_calls" -lt 3 ]; then
       REPLY='ssh-timeout'
     else
@@ -3047,13 +3060,16 @@ test_fresh_ip_discovery_retries_transient_configured_ip_before_generic_candidate
   }
 
   discover_vm_ip_candidates() {
+    local discovery_calls=0
+    discovery_calls="$(cat "$discovery_calls_file")"
     discovery_calls=$((discovery_calls + 1))
+    printf '%s\n' "$discovery_calls" > "$discovery_calls_file"
     VM_IP_DISCOVERY_CONFIDENCE='generic'
     REPLY='192.168.64.8'
     return 0
   }
 
-  output="$({ discover_vm_ip_before_manual_prompt '192.168.64.6'; printf 'REPLY:%s\n' "$REPLY"; printf 'PROBE_CALLS:%s\n' "$probe_calls"; printf 'DISCOVERY_CALLS:%s\n' "$discovery_calls"; } 2>&1)"
+  output="$({ discover_vm_ip_before_manual_prompt '192.168.64.6'; printf 'REPLY:%s\n' "$REPLY"; printf 'PROBE_CALLS:%s\n' "$(cat "$probe_calls_file")"; printf 'DISCOVERY_CALLS:%s\n' "$(cat "$discovery_calls_file")"; } 2>&1)"
   unset CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL
 
   assert_contains 'transient configured IP is retried before discovery' "$output" 'PROBE_CALLS:3'
@@ -3063,7 +3079,7 @@ test_fresh_ip_discovery_retries_transient_configured_ip_before_generic_candidate
 
 test_fresh_ip_discovery_does_not_silently_switch_from_unavailable_configured_ip_to_generic_candidate() {
   local output
-  local probe_calls=0
+  local probe_calls_file="$TEMP_DIR/configured-ip-unavailable-probe-calls.txt"
 
   prepare_vm_state_mocks
 
@@ -3076,9 +3092,13 @@ test_fresh_ip_discovery_does_not_silently_switch_from_unavailable_configured_ip_
   VM_HOST='vm-user@192.168.64.6'
   CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS=2
   CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL=0
+  printf '0\n' > "$probe_calls_file"
 
   probe_ssh_target_endpoint() {
+    local probe_calls=0
+    probe_calls="$(cat "$probe_calls_file")"
     probe_calls=$((probe_calls + 1))
+    printf '%s\n' "$probe_calls" > "$probe_calls_file"
     REPLY='ssh-timeout'
     return 0
   }
@@ -3089,7 +3109,7 @@ test_fresh_ip_discovery_does_not_silently_switch_from_unavailable_configured_ip_
     return 0
   }
 
-  output="$({ discover_vm_ip_before_manual_prompt '192.168.64.6'; printf 'REPLY:%s\n' "$REPLY"; printf 'PROBE_CALLS:%s\n' "$probe_calls"; } 2>&1)"
+  output="$({ discover_vm_ip_before_manual_prompt '192.168.64.6'; printf 'REPLY:%s\n' "$REPLY"; printf 'PROBE_CALLS:%s\n' "$(cat "$probe_calls_file")"; } 2>&1)"
   unset CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL
 
   assert_contains 'unavailable configured IP receives bounded validation attempts' "$output" 'PROBE_CALLS:2'

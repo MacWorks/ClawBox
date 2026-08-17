@@ -1583,6 +1583,7 @@ test_ensure_env_bootstrap_repair_mode_skips_model_llama_and_openclaw_sections() 
 test_fresh_setup_starts_selected_vm_before_network_prompts() {
   local output
   local env_file="$TEMP_DIR/fresh-selected-vm-start.env"
+  local discovery_event_file="$TEMP_DIR/fresh-selected-vm-start-discovery-events.txt"
   local status=0
   local start_line=0
   local discovery_line=0
@@ -1623,6 +1624,8 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
     OPENCLAW_DEFAULT_MODEL=''
     OPENCLAW_AUTOSTART=''
     CLAWBOX_FRESH_VM_IP_DISCOVERY_ATTEMPTS=1
+    DISCOVERY_EVENT_FILE="$discovery_event_file"
+    : > "$DISCOVERY_EVENT_FILE"
 
     list_detected_utm_vm_names() {
       printf 'macOS\n'
@@ -1640,7 +1643,7 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
       printf 'EVENT:start-selected-vm-with-launchagent:%s\n' "$VM_MACHINE_NAME"
       return 0
     }
-    discover_vm_ip_candidates() {
+    discover_vm_ip_candidates_with_active_status() {
       printf 'EVENT:ip-discovery-after-start:%s\n' "$VM_MACHINE_NAME"
       return 1
     }
@@ -1654,7 +1657,9 @@ test_fresh_setup_starts_selected_vm_before_network_prompts() {
     }
 
     ensure_env_bootstrap < <(printf '')
-    printf 'STATUS:%s\n' "$?"
+    setup_status="$?"
+    cat "$DISCOVERY_EVENT_FILE"
+    printf 'STATUS:%s\n' "$setup_status"
   } 2>&1)"
 
   assert_contains 'fresh setup selected vm path prompts for detected VM' "$output" 'Use this VM? [Y/n]:'
@@ -1742,6 +1747,10 @@ test_fresh_setup_uses_single_discovered_vm_ip_without_manual_prompt() {
       printf 'EVENT:vm-started:%s\n' "$VM_MACHINE_NAME"
       return 0
     }
+    status_wait_for_pid_active() {
+      printf 'EVENT:status-wait:%s\n' "$2"
+      wait "$1"
+    }
     discover_vm_ip_candidates() {
       VM_IP_DISCOVERY_CONFIDENCE='selected-vm'
       REPLY='192.168.64.6'
@@ -1760,6 +1769,7 @@ test_fresh_setup_uses_single_discovered_vm_ip_without_manual_prompt() {
   status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
 
   assert_contains 'fresh single IP flow reports discovery progress' "$output" 'Discovering VM IP address...'
+  assert_contains 'fresh single IP flow keeps discovery status active while candidates are collected' "$output" 'EVENT:status-wait:Discovering VM IP address...'
   assert_contains 'fresh single IP flow detects VM IP' "$output" 'Detected VM IP: 192.168.64.6'
   assert_contains 'fresh single IP flow uses discovered VM host' "$output" 'FINAL_VM_HOST:tester@192.168.64.6'
   assert_contains 'fresh single IP flow reaches connectivity with discovered VM host' "$output" 'EVENT:connectivity-after:tester@192.168.64.6'
@@ -1770,6 +1780,7 @@ test_fresh_setup_uses_single_discovered_vm_ip_without_manual_prompt() {
 test_fresh_setup_retries_ip_discovery_until_new_vm_network_is_ready() {
   local output
   local env_file="$TEMP_DIR/fresh-retry-discovered-ip.env"
+  local discovery_event_file="$TEMP_DIR/fresh-retry-discovery-events.txt"
   local status=0
 
   output="$({
@@ -1807,6 +1818,8 @@ test_fresh_setup_retries_ip_discovery_until_new_vm_network_is_ready() {
     OPENCLAW_AUTOSTART=''
     CLAWBOX_FRESH_VM_IP_DISCOVERY_ATTEMPTS=3
     CLAWBOX_FRESH_VM_IP_DISCOVERY_INTERVAL=0
+    DISCOVERY_EVENT_FILE="$discovery_event_file"
+    : > "$DISCOVERY_EVENT_FILE"
 
     list_detected_utm_vm_names() {
       printf 'macOS\n'
@@ -1822,14 +1835,16 @@ test_fresh_setup_retries_ip_discovery_until_new_vm_network_is_ready() {
     launchagent_start_selected_vm_for_setup() {
       return 0
     }
+    status_wait_for_pid_active() {
+      printf 'EVENT:status-wait:%s\n' "$2"
+      wait "$1"
+    }
     discover_vm_ip_candidates() {
-      if [ "${DISCOVERY_CALLS:-0}" -lt 1 ]; then
-        DISCOVERY_CALLS=1
-        printf 'EVENT:ip-discovery-empty\n'
+      if [ "$(wc -l < "$DISCOVERY_EVENT_FILE" | tr -d '[:space:]')" -lt 1 ]; then
+        printf 'empty\n' >> "$DISCOVERY_EVENT_FILE"
         return 1
       fi
-      DISCOVERY_CALLS=2
-      printf 'EVENT:ip-discovery-found\n'
+      printf 'found\n' >> "$DISCOVERY_EVENT_FILE"
       VM_IP_DISCOVERY_CONFIDENCE='selected-vm'
       REPLY='192.168.64.6'
       return 0
@@ -1841,15 +1856,18 @@ test_fresh_setup_retries_ip_discovery_until_new_vm_network_is_ready() {
 
     ensure_env_bootstrap < <(printf '')
     printf 'STATUS:%s\n' "$?"
-    printf 'DISCOVERY_CALLS:%s\n' "${DISCOVERY_CALLS:-0}"
+    printf 'DISCOVERY_EVENTS:\n'
+    cat "$DISCOVERY_EVENT_FILE"
+    printf 'DISCOVERY_CALLS:%s\n' "$(wc -l < "$DISCOVERY_EVENT_FILE" | tr -d '[:space:]')"
     printf 'FINAL_VM_HOST:%s\n' "$VM_HOST"
   } 2>&1)"
 
   status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
 
-  assert_contains 'fresh retry IP flow observes initially missing guest IP' "$output" 'EVENT:ip-discovery-empty'
+  assert_contains 'fresh retry IP flow observes initially missing guest IP' "$output" 'empty'
   assert_contains 'fresh retry IP flow reports discovery progress' "$output" 'Discovering VM IP address...'
-  assert_contains 'fresh retry IP flow retries discovery after initial miss' "$output" 'EVENT:ip-discovery-found'
+  assert_contains 'fresh retry IP flow keeps discovery status active while candidates are collected' "$output" 'EVENT:status-wait:Discovering VM IP address...'
+  assert_contains 'fresh retry IP flow retries discovery after initial miss' "$output" 'found'
   assert_contains 'fresh retry IP flow records two discovery attempts' "$output" 'DISCOVERY_CALLS:2'
   assert_contains 'fresh retry IP flow uses discovered VM host' "$output" 'FINAL_VM_HOST:tester@192.168.64.6'
   assert_not_contains 'fresh retry IP flow does not fall back to manual entry after retry success' "$output" 'Enter VM IP address'
@@ -2079,6 +2097,9 @@ test_fresh_setup_bad_ip_uses_guided_recovery_without_manual_ssh_dead_end() {
       printf 'EVENT:discovery-no-candidates\n'
       REPLY=''
       return 1
+    }
+    discover_vm_ip_candidates_with_active_status() {
+      discover_vm_ip_candidates
     }
 
     ensure_env_bootstrap < <(printf '')

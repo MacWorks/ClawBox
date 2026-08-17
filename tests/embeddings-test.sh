@@ -267,6 +267,8 @@ test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint() {
   } 2>&1)"
 
   assert_contains 'embeddings service start succeeds from local readiness' "$output" 'STATUS=0'
+  assert_contains 'embeddings service start reports local readiness success' "$output" 'Embeddings llama-server is responding at http://127.0.0.1:11435/v1'
+  assert_contains 'embeddings service start uses readiness progress status' "$output" 'Waiting for embeddings llama-server API readiness...'
   curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
   assert_contains 'embeddings service start probes local readiness' "$curl_output" 'http://127.0.0.1:11435/v1/models'
   assert_contains 'embeddings service start separately probes VM-facing endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'

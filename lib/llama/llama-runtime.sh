@@ -575,6 +575,10 @@ embeddings_llama_verify_configured_endpoint() {
 
 setup_embeddings_llama_service_for_mode() {
   local mode="$1" wrapper_src wrapper_dest env_dest plist_dest stdout_path stderr_path env_temp plist_temp target wrapper_matches=false env_matches=false plist_matches=false service_loaded=false
+  local readiness_message='Waiting for embeddings llama-server API readiness...'
+  local configured_base=''
+  local local_base=''
+  local configured_endpoint_ready=false
   wrapper_src="$(embeddings_llama_wrapper_src)"; wrapper_dest="$(embeddings_llama_mode_wrapper_dest "$mode")"; env_dest="$(embeddings_llama_mode_env_dest "$mode")"; plist_dest="$(embeddings_llama_mode_plist_dest "$mode")"; stdout_path="$(embeddings_llama_mode_stdout_log "$mode")"; stderr_path="$(embeddings_llama_mode_stderr_log "$mode")"; target="$(embeddings_llama_mode_target "$mode")"
   [ -x "${LLAMA_BIN:-}" ] && [ -f "${EMBEDDINGS_MODEL_PATH:-}" ] || { llama_fail 'Embeddings llama-server binary or model is unavailable'; return 1; }
   env_temp="$(mktemp)"; plist_temp="$(mktemp)"
@@ -597,18 +601,30 @@ setup_embeddings_llama_service_for_mode() {
   llama_maybe_sudo "$mode" launchctl kickstart -k "$target" >/dev/null 2>&1 || true
   fi
   local attempt=1
+  status_begin "$readiness_message"
   while [ "$attempt" -le 30 ]; do
     if embeddings_llama_local_endpoint_responding; then
-      if ! embeddings_llama_verify_configured_endpoint >/dev/null 2>&1; then
+      configured_base="$(embeddings_llama_configured_base_url)"
+      local_base="$(embeddings_llama_local_base_url)"
+      configured_endpoint_ready=false
+      if embeddings_llama_endpoint_responding "$configured_base"; then
+        configured_endpoint_ready=true
+      fi
+
+      if [ "$configured_endpoint_ready" = true ]; then
+        status_end "Embeddings llama-server is responding at $configured_base" 'success'
+      else
+        status_end "Embeddings llama-server is responding at $local_base" 'success'
         warn "Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
-        out "Local readiness: $(embeddings_llama_local_base_url)"
-        out "VM-facing endpoint: $(embeddings_llama_configured_base_url)"
+        out "Local readiness: $local_base"
+        out "VM-facing endpoint: $configured_base"
         out 'This usually means the UTM VM interface is not available yet; setup will validate VM reachability separately.'
       fi
       return 0
     fi
-    attempt=$((attempt + 1)); sleep 1
+    attempt=$((attempt + 1)); status_sleep 1 "$readiness_message"
   done
+  status_end 'Embeddings llama-server readiness timed out.' 'warning'
   embeddings_llama_verify_configured_endpoint
   return 1
 }

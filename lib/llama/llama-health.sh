@@ -256,10 +256,36 @@ llama_prompt_for_available_port() {
   local reuse_label='Use this existing instance'
   local alternate_label='Choose a different port'
   local managed_runtime_matches=true
+  local skipped_port=''
 
   while true; do
-    llama_suggest_available_port "$host_ip" "$current_port"
+    llama_suggest_available_port "$host_ip" "$current_port" || {
+      error 'No available llama-server port could be suggested.'
+      return 1
+    }
     prompt_default="$REPLY"
+
+    if [ "$prompt_mode" = 'dedicated' ] \
+      && [[ "$current_port" =~ ^[0-9]+$ ]] \
+      && [[ "$prompt_default" =~ ^[0-9]+$ ]]; then
+      skipped_port=$((current_port + 1))
+      while [ "$skipped_port" -lt "$prompt_default" ]; do
+        if llama_port_in_use "$skipped_port"; then
+          warn "llama-server port $skipped_port is unavailable."
+        fi
+        skipped_port=$((skipped_port + 1))
+      done
+    fi
+
+    while llama_port_in_use "$prompt_default"; do
+      warn "llama-server port $prompt_default is unavailable."
+      llama_suggest_available_port "$host_ip" "$prompt_default" || {
+        error 'No available llama-server port could be suggested.'
+        return 1
+      }
+      prompt_default="$REPLY"
+    done
+
     prompt_with_default 'Port for llama-server' "$prompt_default"
     selected_port="$REPLY"
 
@@ -396,9 +422,10 @@ llama_prompt_for_available_port() {
     fi
 
     if llama_port_in_use "$selected_port"; then
-      error "Port $selected_port is already in use by another process."
-      out 'Choose a different port.'
+      warn "llama-server port $selected_port is unavailable."
+      out 'Choose a different port for the ClawBox-managed llama-server.'
       blank_line
+      current_port="$selected_port"
       continue
     fi
 
@@ -942,30 +969,28 @@ llama_verify_service_health() {
   local stdout_path=''
   local stderr_path=''
   local local_readiness_host=''
+  local readiness_message='Waiting for llama-server API readiness...'
 
   stdout_path="$(llama_mode_stdout_log "${LLAMA_ACTIVE_MODE:-user}")"
   stderr_path="$(llama_mode_stderr_log "${LLAMA_ACTIVE_MODE:-user}")"
   local_readiness_host="$(llama_local_readiness_host "${LLAMA_HOST:-}")"
   out "llama-server stdout: $stdout_path"
   out "llama-server stderr: $stderr_path"
-  step "Waiting for llama-server port"
+  status_begin "$readiness_message"
   while [ "$attempt" -le 120 ]; do
     if llama_port_in_use "$LLAMA_PORT"; then
       break
     fi
 
     attempt=$((attempt + 1))
-    if [ $((attempt % 15)) -eq 0 ]; then
-      out "Still waiting for llama-server port ($attempt/120 seconds)..."
-    fi
-    sleep 1
+    status_sleep 1 "$readiness_message"
   done
 
   if [ "$attempt" -le 120 ]; then
     attempt=1
     while [ "$attempt" -le 120 ]; do
       if llama_local_api_responding "$LLAMA_PORT"; then
-        success "llama-server is responding on port $LLAMA_PORT"
+        status_end "llama-server is responding on port $LLAMA_PORT" 'success'
         if [ -n "${HOST_IP:-}" ] && [ "${HOST_IP:-}" != "$local_readiness_host" ] \
           && ! llama_api_responding "${HOST_IP:-}" "$LLAMA_PORT"; then
           warn "llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
@@ -977,13 +1002,11 @@ llama_verify_service_health() {
       fi
 
       attempt=$((attempt + 1))
-      if [ $((attempt % 15)) -eq 0 ]; then
-        out "Still waiting for llama-server API readiness ($attempt/120 seconds)..."
-      fi
-      sleep 1
+      status_sleep 1 "$readiness_message"
     done
   fi
 
+  status_end 'llama-server readiness timed out.' 'warning'
   api_url="$(llama_api_url "${HOST_IP:-}" "$LLAMA_PORT")" || api_url="http://${HOST_IP:-}:${LLAMA_PORT:-}/v1/models"
   error "llama-server did not respond at $api_url"
   err 'Possible causes:'

@@ -118,7 +118,21 @@ offer_vm_ip_recovery() {
 
     status_begin 'Discovering VM IP address...'
 
-    if ! discover_vm_ip_candidates; then
+    if command -v discover_vm_ip_candidates_with_active_status >/dev/null 2>&1; then
+      if discover_vm_ip_candidates_with_active_status; then
+        candidate_count=-1
+      else
+        candidate_count=0
+      fi
+    else
+      if discover_vm_ip_candidates; then
+        candidate_count=-1
+      else
+        candidate_count=0
+      fi
+    fi
+
+    if [ "$candidate_count" -eq 0 ]; then
       status_end 'ClawBox could not automatically determine the VM IP address.' 'warning'
       warn 'No likely VM IP addresses were discovered on the expected subnet.'
       blank_line
@@ -156,6 +170,7 @@ offer_vm_ip_recovery() {
       continue
     fi
 
+    candidate_count=0
     status_end 'VM IP discovery completed.' 'success'
 
     discovered_candidates="$REPLY"

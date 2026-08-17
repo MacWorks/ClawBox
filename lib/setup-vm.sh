@@ -569,6 +569,76 @@ EOF
   return 1
 }
 
+discover_vm_ip_candidates_with_active_status() {
+  local reply_file=''
+  local confidence_file=''
+  local pid=''
+  local status=0
+
+  reply_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-vm-ip-candidates.XXXXXX")" || return 1
+  confidence_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-vm-ip-confidence.XXXXXX")" || {
+    rm -f "$reply_file"
+    return 1
+  }
+
+  (
+    if discover_vm_ip_candidates; then
+      printf '%s\n' "$REPLY" > "$reply_file"
+      printf '%s\n' "${VM_IP_DISCOVERY_CONFIDENCE:-}" > "$confidence_file"
+      exit 0
+    else
+      exit "$?"
+    fi
+  ) >/dev/null 2>&1 &
+  pid="$!"
+
+  if status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Discovering VM IP address...}"; then
+    status=0
+  else
+    status=$?
+  fi
+
+  REPLY=''
+  if [ -s "$reply_file" ]; then
+    REPLY="$(cat "$reply_file")"
+  fi
+  if [ -s "$confidence_file" ]; then
+    IFS= read -r VM_IP_DISCOVERY_CONFIDENCE < "$confidence_file" || VM_IP_DISCOVERY_CONFIDENCE=''
+  fi
+
+  rm -f "$reply_file" "$confidence_file"
+  return "$status"
+}
+
+probe_ssh_target_endpoint_with_active_status() {
+  local target="$1"
+  local reply_file=''
+  local pid=''
+  local status=0
+
+  reply_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-vm-ip-probe.XXXXXX")" || return 1
+
+  (
+    probe_ssh_target_endpoint "$target" || true
+    printf '%s\n' "$REPLY" > "$reply_file"
+  ) >/dev/null 2>&1 &
+  pid="$!"
+
+  if status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Discovering VM IP address...}"; then
+    status=0
+  else
+    status=$?
+  fi
+
+  REPLY=''
+  if [ -s "$reply_file" ]; then
+    IFS= read -r REPLY < "$reply_file" || REPLY=''
+  fi
+
+  rm -f "$reply_file"
+  return "$status"
+}
+
 discover_vm_ip_before_manual_prompt() {
   local vm_ip_default="$1"
   local discovered_candidates=''
@@ -596,7 +666,7 @@ discover_vm_ip_before_manual_prompt() {
 
   if [ -n "$saved_vm_ip" ] && [ -n "$saved_vm_user" ] && vm_ip_is_ipv4 "$saved_vm_ip"; then
     while [ "$configured_attempts" -le "$configured_max_attempts" ]; do
-      probe_ssh_target_endpoint "${saved_vm_user}@${saved_vm_ip}"
+      probe_ssh_target_endpoint_with_active_status "${saved_vm_user}@${saved_vm_ip}"
       configured_probe_state="$REPLY"
 
       if vm_network_state_is_reachable "$configured_probe_state"; then
@@ -608,11 +678,10 @@ discover_vm_ip_before_manual_prompt() {
       fi
 
       if [ "$configured_attempts" -lt "$configured_max_attempts" ]; then
-        status_tick
         if [ -n "${CLAWBOX_SLEEP_BIN:-}" ]; then
           "$CLAWBOX_SLEEP_BIN" "$configured_interval"
         else
-          sleep "$configured_interval"
+          status_sleep "$configured_interval"
         fi
       fi
 
@@ -626,7 +695,7 @@ discover_vm_ip_before_manual_prompt() {
   fi
 
   while [ "$attempts" -le "$max_attempts" ]; do
-    if discover_vm_ip_candidates; then
+    if discover_vm_ip_candidates_with_active_status; then
       discovered_candidates="$REPLY"
       VM_IP="$saved_vm_ip"
       VM_USER="$saved_vm_user"
@@ -638,11 +707,10 @@ discover_vm_ip_before_manual_prompt() {
     fi
 
     if [ "$attempts" -lt "$max_attempts" ]; then
-      status_tick
       if [ -n "${CLAWBOX_SLEEP_BIN:-}" ]; then
         "$CLAWBOX_SLEEP_BIN" "$interval"
       else
-        sleep "$interval"
+        status_sleep "$interval"
       fi
     fi
 
