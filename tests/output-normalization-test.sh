@@ -3049,16 +3049,11 @@ test_vm_connection_setup_reports_vm_settings_completion_without_progress_spinner
   rendered_output="$(render_terminal_output "$output")"
 
   assert_not_contains 'vm connection setup omits unnecessary vm settings progress output' "$output" 'Saving VM settings...'
-  assert_contains 'vm connection setup reports vm settings completion' "$output" 'VM settings saved.'
-  if [[ "$rendered_output" == *$'\n\n\nVM settings saved.'* ]]; then
-    fail 'vm connection setup does not leave two blank separators before settings saved'
+  assert_not_contains 'vm connection setup omits normal vm settings completion noise' "$output" 'VM settings saved.'
+  if [[ "$rendered_output" == *$'Enter VM home directory path [/Users/tester]: \n\n\n'* ]]; then
+    fail 'vm connection setup does not leave two blank separators after final vm setting prompt'
   else
-    pass 'vm connection setup does not leave two blank separators before settings saved'
-  fi
-  if [[ "$rendered_output" == *'VM settings saved.'$'\n\n\n'* ]]; then
-    fail 'vm connection setup does not leave two blank separators after settings saved'
-  else
-    pass 'vm connection setup does not leave two blank separators after settings saved'
+    pass 'vm connection setup does not leave two blank separators after final vm setting prompt'
   fi
 }
 
@@ -3107,7 +3102,7 @@ test_vm_connection_setup_prefers_configured_vm_ip_default() {
   } 2>&1)"
 
   assert_contains 'vm connection rerun uses configured vm ip as the prompt default' "$output" 'Enter VM IP address [192.168.64.7]:'
-  assert_contains 'vm connection rerun keeps the configured vm ip after accepting the default' "$output" 'VM settings saved.'
+  assert_not_contains 'vm connection rerun omits vm settings saved noise after accepting the default' "$output" 'VM settings saved.'
 }
 
 test_manual_ssh_setup_uses_section_heading() {
@@ -3388,7 +3383,7 @@ test_status_helper_keeps_one_separator_after_empty_spinner_completion() {
   if [[ "$rendered_output" == *$'Start the VM now? [Y/n]: y\n\nVM runtime detected.'* ]]; then
     pass 'status helper keeps one separator after empty spinner completion'
   else
-    fail 'status helper keeps one separator after empty spinner completion'
+    fail 'status helper should keep one separator after empty spinner completion'
   fi
 
   if [[ "$rendered_output" == *$'Start the VM now? [Y/n]: y\n\n\nVM runtime detected.'* ]]; then
@@ -3823,7 +3818,7 @@ test_provisioning_and_deployment_flow() {
     }
 
     ensure_vm_provision_script() {
-      out 'Finalizing...'
+      return 0
     }
 
     exit_if_openclaw_not_installed() {
@@ -3854,11 +3849,13 @@ test_provisioning_and_deployment_flow() {
   } 2>&1)"
 
   assert_contains 'provisioning flow shows host inference section' "$output" ' > Host Inference Service'
-  assert_contains 'provisioning flow shows vm onboarding section' "$output" ' > VM Onboarding'
-  assert_contains 'provisioning flow shows openclaw section' "$output" ' > OpenClaw Configuration'
+  assert_contains 'provisioning flow shows consolidated vm setup section' "$output" ' > VM Setup'
+  assert_not_contains 'provisioning flow omits vm onboarding subsection' "$output" ' > VM Onboarding'
+  assert_not_contains 'provisioning flow omits openclaw subsection' "$output" ' > OpenClaw Configuration'
   assert_contains 'provisioning flow starts compact OpenClaw preparation status' "$output" 'Preparing OpenClaw configuration...'
-  assert_contains 'provisioning flow completes compact OpenClaw preparation status' "$output" 'Preparing OpenClaw configuration... ✓'
-  assert_contains 'provisioning flow shows deployment section' "$output" ' > Deployment'
+  assert_contains 'provisioning flow completes compact OpenClaw preparation status' "$output" 'OpenClaw configuration prepared ✓'
+  assert_contains 'provisioning flow reports deployment staging completion' "$output" 'Deployment staged ✓'
+  assert_not_contains 'provisioning flow omits deployment subsection' "$output" ' > Deployment'
   assert_contains 'provisioning flow shows runtime section' "$output" ' > Runtime'
   assert_contains 'provisioning flow reports targeted config sync state' "$output" 'OpenClaw config already matched; no OpenClaw changes were made.'
   assert_contains 'provisioning flow shows runtime callout' "$output" 'OpenClaw is installed but not running.'
@@ -3911,14 +3908,14 @@ import sys
 text = sys.argv[1]
 updated = text.find("Targeted ClawBox OpenClaw settings updated.")
 prompt = text.find("Restart the VM OpenClaw gateway now to apply targeted config changes?")
-deployment = text.find(" > Deployment")
+deployment = text.find("Deployment staged")
 runtime = text.find(" > Runtime")
 raise SystemExit(0 if -1 not in (updated, prompt, deployment, runtime) and deployment < updated < prompt < runtime else 1)
 PY
   then
-    pass "targeted OpenClaw restart prompt appears after Deployment staging and before Runtime"
+    pass "targeted OpenClaw restart prompt appears after deployment staging and before Runtime"
   else
-    fail "targeted OpenClaw restart prompt should appear after Deployment staging and before Runtime"
+    fail "targeted OpenClaw restart prompt should appear after deployment staging and before Runtime"
   fi
 }
 
@@ -3986,7 +3983,7 @@ test_openclaw_preparation_status_covers_remote_drift_detection() {
   if python3 - "$output" <<'PY'
 import sys
 text = sys.argv[1]
-done = text.find("Preparing OpenClaw configuration... ✓")
+done = text.find("OpenClaw configuration prepared ✓")
 matched = text.find("OpenClaw config already matched; no OpenClaw changes were made.")
 raise SystemExit(0 if -1 not in (done, matched) and done < matched else 1)
 PY
@@ -4078,14 +4075,14 @@ import sys
 text = sys.argv[1]
 matched = text.find("OpenClaw config already matched; no OpenClaw changes were made.")
 auth = text.find("Checking OpenClaw gateway authentication... ✓")
-deployment = text.find(" > Deployment")
+deployment = text.find("Deployment staged")
 runtime = text.find(" > Runtime")
 raise SystemExit(0 if -1 not in (matched, auth, deployment, runtime) and deployment < matched < auth < runtime else 1)
 PY
   then
-    pass "OpenClaw gateway auth status completes after Deployment staging and before Runtime"
+    pass "OpenClaw gateway auth status completes after deployment staging and before Runtime"
   else
-    fail "OpenClaw gateway auth status should complete after Deployment staging and before Runtime"
+    fail "OpenClaw gateway auth status should complete after deployment staging and before Runtime"
   fi
 
   assert_contains 'OpenClaw gateway auth status visibly repaints during remote token reads' "$output" 'Checking OpenClaw gateway authentication /'
@@ -4241,7 +4238,7 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
     }
 
     ensure_vm_provision_script() {
-      out 'Finalizing...'
+      return 0
     }
 
     setup_launchagent() {
@@ -4282,7 +4279,8 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
     printf 'VM_CONTROL_CALLS:%s\n' "$vm_control_calls"
   } 2>&1)"
 
-  assert_contains 'provisioning fallback flow shows provisioning section' "$output" ' > VM Provisioning'
+  assert_contains 'provisioning fallback flow stays inside consolidated vm setup section' "$output" ' > VM Setup'
+  assert_not_contains 'provisioning fallback flow omits provisioning subsection' "$output" ' > VM Provisioning'
   assert_contains 'provisioning fallback flow explains openclaw is missing in vm' "$output" 'OpenClaw is not yet installed in the VM.'
   assert_contains 'provisioning fallback flow prints vm-local command banner' "$output" 'Run the following INSIDE the VM terminal:'
   assert_contains 'provisioning fallback flow prints copy-friendly one-line command' "$output" 'cd /Users/tester/ClawBox && ./vm-provision.sh'
@@ -4322,7 +4320,7 @@ test_openclaw_config_present_without_executable_uses_provisioning_flow() {
       IS_RUNNING=false
       return 0
     }
-    ensure_vm_provision_script() { out 'Finalizing...'; }
+    ensure_vm_provision_script() { return 0; }
     sync_openclaw_config() {
       printf 'UNEXPECTED_TARGETED_SYNC\n'
       return 1
@@ -4341,7 +4339,7 @@ test_openclaw_config_present_without_executable_uses_provisioning_flow() {
     run_provisioning_and_deployment || true
   } 2>&1)"
 
-  assert_contains 'config-present executable-absent flow deploys vm payload before provisioning prompt' "$output" 'Finalizing...'
+  assert_contains 'config-present executable-absent flow deploys vm payload before provisioning prompt' "$output" 'Deployment staged ✓'
   assert_contains 'config-present executable-absent flow explains OpenClaw is missing' "$output" 'OpenClaw is not yet installed in the VM.'
   assert_not_contains 'config-present executable-absent flow does not offer targeted config update' "$output" 'Apply targeted OpenClaw config updates?'
   assert_not_contains 'config-present executable-absent flow does not run targeted sync' "$output" 'UNEXPECTED_TARGETED_SYNC'
@@ -4371,7 +4369,7 @@ test_openclaw_provisioning_confirmation_still_requires_executable_before_sync() 
       IS_RUNNING=false
       return 0
     }
-    ensure_vm_provision_script() { out 'Finalizing...'; }
+    ensure_vm_provision_script() { return 0; }
     sync_openclaw_config() {
       printf 'UNEXPECTED_TARGETED_SYNC\n'
       return 1
@@ -4496,7 +4494,7 @@ test_runtime_service_existing_menu_wording() {
   } 2>&1)"
 
   assert_contains 'runtime service menu reports discovery progress' "$output" 'Checking host VM auto-start service...'
-  assert_contains 'runtime service menu completes discovery progress before details' "$output" 'Checking host VM auto-start service... ✓'
+  assert_contains 'runtime service menu completes discovery progress before details' "$output" 'Host VM auto-start service checked ✓'
   assert_contains 'runtime service menu identifies the host vm autostart service' "$output" 'Existing host VM auto-start service detected.'
   assert_contains 'runtime service menu warns that stale keep skips updates' "$output" 'the latest reliability fixes will not be applied'
   assert_contains 'runtime service menu shows option one as keeping the existing host vm autostart service' "$output" '1) Keep the existing host VM auto-start service'
@@ -4507,7 +4505,7 @@ test_runtime_service_existing_menu_wording() {
   if python3 - "$output" <<'PY'
 import sys
 text = sys.argv[1]
-done = text.find("Checking host VM auto-start service... ✓")
+done = text.find("Host VM auto-start service checked ✓")
 details = text.find("Existing host VM auto-start service detected.")
 prompt = text.find("Choose runtime service action")
 raise SystemExit(0 if -1 not in (done, details, prompt) and done < details < prompt else 1)
@@ -4638,6 +4636,53 @@ test_optional_embeddings_setup_is_host_only() {
   assert_contains 'accepting embeddings writes independent embeddings config' "$enabled_output" 'EMBEDDINGS_ENV:true:/tmp/embeddings.gguf:11435'
   assert_contains 'accepting embeddings starts the user service with a separate profile' "$enabled_output" 'EMBEDDINGS_SERVICE:user'
   assert_not_contains 'embeddings setup does not invoke VM deployment' "$enabled_output" 'Deploying to VM'
+}
+
+test_embeddings_context_uses_native_context_ceiling() {
+  local output
+  local embeddings_model="$TEMP_DIR/embeddings-native/embed-native.gguf"
+
+  mkdir -p "$(dirname "$embeddings_model")"
+  write_synthetic_gguf_context_fixture "$embeddings_model" 65536
+
+  output="$({
+    load_setup_functions
+    HOST_IP='192.168.64.1'
+    LLAMA_BIN='/tmp/llama-server'
+    LLAMA_PORT='11434'
+    EMBEDDINGS_ENABLED=false
+    EMBEDDINGS_LLAMA_CTX='131072'
+    prompt_yes_no() { REPLY='true'; }
+    prompt_with_suffix() { printf 'UNEXPECTED_EXISTING_EMBEDDINGS_MENU:%s %s\n' "$1" "$2"; return 1; }
+    embeddings_service_configured() { return 1; }
+    select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH="$embeddings_model"; }
+    llama_port_in_use() { return 1; }
+    prompt_with_default() {
+      if [ "${1:-}" = "Embeddings context size" ]; then
+        printf 'CTX_PROMPT_DEFAULT:%s\n' "${2:-}"
+        if [ -z "${EMBEDDINGS_TEST_CTX_PROMPTED:-}" ]; then
+          EMBEDDINGS_TEST_CTX_PROMPTED=true
+          REPLY='131072'
+        else
+          REPLY='32768'
+        fi
+        return 0
+      fi
+
+      REPLY="${2:-}"
+    }
+    write_env_from_template() { printf 'EMBEDDINGS_ENV:%s:%s\n' "${EMBEDDINGS_ENABLED:-}" "${EMBEDDINGS_LLAMA_CTX:-}"; }
+    source_env_file() { return 0; }
+    detect_existing_llama_install_mode() { REPLY='user'; }
+    setup_embeddings_llama_service_for_mode() { printf 'EMBEDDINGS_SERVICE_CTX:%s\n' "${EMBEDDINGS_LLAMA_CTX:-}"; }
+    setup_embeddings_service_phase
+  } 2>&1)"
+
+  assert_contains 'embeddings setup reports native context metadata' "$output" 'Embeddings model native context: 65536'
+  assert_contains 'embeddings context default is clamped to native context' "$output" 'CTX_PROMPT_DEFAULT:65536'
+  assert_contains 'embeddings oversized manual context is rejected' "$output" '131072 exceeds model native context 65536'
+  assert_contains 'embeddings smaller valid context is persisted' "$output" 'EMBEDDINGS_ENV:true:32768'
+  assert_contains 'embeddings smaller valid context reaches service setup' "$output" 'EMBEDDINGS_SERVICE_CTX:32768'
 }
 
 test_embeddings_placeholder_url_is_never_probed() {
@@ -5160,6 +5205,7 @@ run_test test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_in
 run_test test_runtime_service_existing_menu_wording
 run_test test_host_llama_restart_uses_install_mode_without_hidden_health_wait
 run_test test_optional_embeddings_setup_is_host_only
+run_test test_embeddings_context_uses_native_context_ceiling
 run_test test_embeddings_placeholder_url_is_never_probed
 run_test test_existing_embeddings_menu_uses_installed_managed_port_over_stale_env
 run_test test_existing_embeddings_menu_requires_managed_metadata_before_recommending_reuse

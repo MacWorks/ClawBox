@@ -6424,6 +6424,8 @@ test_system_llama_module() {
   local chown_log="$TEMP_DIR/logs/tests/llama-chown.log"
   local fake_bin="$TEMP_DIR/bin/llama-server"
   local fake_model="$TEMP_DIR/models/model.gguf"
+  local ownership_failure_output=''
+  local ownership_failure_status=0
 
   mkdir -p "$TEMP_DIR/logs/tests"
 
@@ -6572,6 +6574,36 @@ test_system_llama_module() {
     pass "llama service setup skips system launchctl reload when config is unchanged"
   else
     fail "llama service setup should skip system launchctl reload when config is unchanged"
+  fi
+
+  printf '%s\n' 'stale plist' > "$plist_dest"
+  chown() {
+    return 19
+  }
+  set +e
+  ownership_failure_output="$({
+    status_begin_compact() {
+      printf 'STATUS_BEGIN:%s\n' "$1"
+    }
+    status_end() {
+      printf 'STATUS_END:%s:%s\n' "$1" "${2:-info}"
+    }
+    setup_system_llama_service
+  } 2>&1)"
+  ownership_failure_status=$?
+  set -e
+
+  if [ "$ownership_failure_status" -ne 0 ]; then
+    pass "llama service setup propagates plist ownership failure"
+  else
+    fail "llama service setup should propagate plist ownership failure"
+  fi
+
+  if [[ "$ownership_failure_output" == *'STATUS_END:Installing llama-server LaunchDaemon failed.:error'* ]] \
+    && [[ "$ownership_failure_output" != *'STATUS_END:Installing llama-server LaunchDaemon ✓:progress'* ]]; then
+    pass "llama service setup does not report plist installation success before ownership succeeds"
+  else
+    fail "llama service setup should not report plist installation success before ownership succeeds"
   fi
 }
 

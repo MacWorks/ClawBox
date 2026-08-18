@@ -522,7 +522,7 @@ _status_finalize_message() {
 _status_prepare_begin() {
   _refresh_output_state
 
-  if [ "${CLAWBOX_LAST_OUTPUT_TYPE:-blank}" != 'prompt' ]; then
+  if [ "${CLAWBOX_LAST_OUTPUT_TYPE:-blank}" != 'blank' ]; then
     err_blank_line
   fi
 }
@@ -549,10 +549,22 @@ _status_begin_with_spacing() {
   fi
 
   if [ "$can_spin" = true ]; then
+    if [ "$compact" = true ]; then
+      _refresh_output_state
+      if [ "${CLAWBOX_LAST_OUTPUT_TYPE:-blank}" = 'prompt' ]; then
+        err_blank_line
+      fi
+    fi
     _status_hide_cursor
     _status_render_message "$message"
     _status_render_active_line "$REPLY"
   else
+    if [ "$compact" = true ]; then
+      _refresh_output_state
+      if [ "${CLAWBOX_LAST_OUTPUT_TYPE:-blank}" = 'prompt' ]; then
+        blank_line
+      fi
+    fi
     out "$message"
   fi
 }
@@ -624,7 +636,6 @@ status_end() {
   if [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] && _status_can_spin; then
     if [ -z "$message" ]; then
       _status_clear_line
-      printf '\n' >&2
       _set_output_state 'blank'
       REPLY="$preserved_reply"
       CLAWBOX_STATUS_ACTIVE=false

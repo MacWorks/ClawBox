@@ -521,7 +521,7 @@ openclaw_config_preparation_status_active() {
 
 openclaw_config_preparation_status_success() {
   if openclaw_config_preparation_status_active; then
-    status_end "Preparing OpenClaw configuration... ✓" 'progress'
+    status_end "OpenClaw configuration prepared ✓" 'progress'
   fi
 }
 

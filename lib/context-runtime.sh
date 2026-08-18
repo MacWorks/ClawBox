@@ -42,6 +42,46 @@ llama_context_safe_default() {
   REPLY="$default_value"
 }
 
+model_context_validate_native_value() {
+  local context_value="$1"
+  local native_context="${2:-}"
+  local source_label="${3:-configuration}"
+  local setting_label="${4:-context size}"
+
+  if ! clawbox_positive_integer "$context_value"; then
+    error "Invalid $setting_label in $source_label: $context_value"
+    error 'Set the context size to a positive integer.'
+    return 1
+  fi
+
+  if clawbox_positive_integer "$native_context" && [ "$context_value" -gt "$native_context" ]; then
+    error "Invalid $setting_label in $source_label: $context_value exceeds model native context $native_context."
+    error 'Choose a value less than or equal to the selected model native context.'
+    return 1
+  fi
+
+  return 0
+}
+
+model_context_prompt_value() {
+  local prompt_label="$1"
+  local current_value="${2:-}"
+  local native_context="${3:-}"
+  local fallback_value="${4:-$(llama_default_context_window)}"
+  local source_label="${5:-setup input}"
+  local default_value=''
+
+  llama_context_safe_default "$current_value" "$native_context" "$fallback_value"
+  default_value="$REPLY"
+
+  while true; do
+    prompt_with_default "$prompt_label" "$default_value" || return $?
+    if model_context_validate_native_value "$REPLY" "$native_context" "$source_label"; then
+      return 0
+    fi
+  done
+}
+
 llama_context_validate_value() {
   local context_value="$1"
   local native_context="${2:-}"
@@ -70,13 +110,7 @@ llama_context_validate_value() {
     fi
   fi
 
-  if clawbox_positive_integer "$native_context" && [ "$context_value" -gt "$native_context" ]; then
-    error "Invalid LLAMA_CTX value in $source_label: $context_value exceeds model native context $native_context."
-    error 'Choose a value less than or equal to the selected model native context.'
-    return 1
-  fi
-
-  return 0
+  model_context_validate_native_value "$context_value" "$native_context" "$source_label" 'LLAMA_CTX value'
 }
 
 llama_context_prompt_value() {

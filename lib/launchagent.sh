@@ -458,7 +458,7 @@ launchagent_detect_existing_runtime_state_with_status() {
   pid="$!"
 
   if status_wait_for_pid_active "$pid" 'Checking host VM auto-start service...'; then
-    status_end 'Checking host VM auto-start service... ✓' 'progress'
+    status_end 'Host VM auto-start service checked ✓' 'progress'
     status=0
   else
     status="$?"

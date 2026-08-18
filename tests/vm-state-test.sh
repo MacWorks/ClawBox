@@ -1761,28 +1761,173 @@ test_copy_ssh_key_to_vm_interactive_prompt_spacing_and_single_completion() {
   local output
   local success_count
 
-  prepare_vm_state_mocks
-  load_setup_functions
+  output="$({
+    prepare_vm_state_mocks
+    load_setup_functions
 
-  VM_HOST='vm-user@192.168.64.2'
+    VM_HOST='vm-user@192.168.64.2'
 
-  ssh_copy_id_should_own_terminal() {
-    return 0
-  }
+    ssh_copy_id_should_own_terminal() {
+      return 0
+    }
 
-  ssh-copy-id() {
-    printf '%s\n' '(vm-user@192.168.64.2) Password:'
-    return 0
-  }
+    ssh-copy-id() {
+      printf '%s\n' '/usr/bin/ssh-copy-id: INFO: Source of key(s) to be installed: "/Users/tester/.ssh/id_ed25519.pub"'
+      printf '%s\n' '/usr/bin/ssh-copy-id: INFO: attempting to log in with the new key(s), to filter out any that are already installed'
+      printf '%s\n' '/usr/bin/ssh-copy-id: INFO: 1 key(s) remain to be installed -- if you are prompted now it is to install the new keys'
+      printf '%s\n' '(vm-user@192.168.64.2) Password:'
+      printf '%s\n' 'Number of key(s) added: 1'
+      printf '%s\n' 'Now try logging into the machine, with: "ssh vm-user@192.168.64.2"'
+      return 0
+    }
 
-  output="$({ copy_ssh_key_to_vm; } 2>&1)"
+    copy_ssh_key_to_vm
+  } 2>&1)"
   success_count="$(printf '%s\n' "$output" | grep -F -c 'SSH key copied to VM. ✓' || true)"
 
   assert_contains 'interactive ssh-copy-id prints operation line before prompt' "$output" 'Copying SSH key to VM...'
   assert_contains 'interactive ssh-copy-id leaves a blank line before password prompt' "$output" $'Copying SSH key to VM...\n\n(vm-user@192.168.64.2) Password:'
   assert_equals 'interactive ssh-copy-id prints one success completion' "$success_count" '1'
+  assert_not_contains 'interactive ssh-copy-id suppresses source-key chatter on success' "$output" 'Source of key(s)'
+  assert_not_contains 'interactive ssh-copy-id suppresses attempting-login chatter on success' "$output" 'attempting to log in'
+  assert_not_contains 'interactive ssh-copy-id suppresses post-success key count on success' "$output" 'Number of key(s) added'
+  assert_not_contains 'interactive ssh-copy-id suppresses post-success login advice on success' "$output" 'Now try logging into the machine'
   assert_not_contains 'interactive ssh-copy-id does not print status helper method line' "$output" 'Copying SSH key to VM with ssh-copy-id...'
   assert_not_contains 'interactive ssh-copy-id does not print failure line on success' "$output" 'SSH key copy failed.'
+}
+
+test_copy_ssh_key_to_vm_interactive_pipeline_preserves_stdin() {
+  local input_log="$TEMP_DIR/ssh-copy-id-stdin.log"
+
+  (
+    prepare_vm_state_mocks
+    load_setup_functions
+
+    VM_HOST='vm-user@192.168.64.2'
+
+    ssh_copy_id_should_own_terminal() {
+      return 0
+    }
+
+    ssh-copy-id() {
+      local terminal_input=''
+      IFS= read -r terminal_input
+      printf '%s\n' "$terminal_input" >"$input_log"
+      return 0
+    }
+
+    printf '%s\n' 'terminal-owned-input' | copy_ssh_key_to_vm >"$TEMP_DIR/copy-ssh-key-stdin.out" 2>&1
+  )
+
+  assert_equals 'interactive ssh-copy-id retains direct ownership of stdin' "$(cat "$input_log")" 'terminal-owned-input'
+}
+
+test_copy_ssh_key_to_vm_interactive_pipeline_preserves_failure_and_cleans_up() {
+  local output
+  local copy_status=0
+  local copy_temp_dir="$TEMP_DIR/ssh-copy-id-capture"
+
+  set +e
+  output="$({
+    prepare_vm_state_mocks
+    load_setup_functions
+
+    VM_HOST='vm-user@192.168.64.2'
+    mkdir -p "$copy_temp_dir"
+    TMPDIR="$copy_temp_dir"
+
+    ssh_copy_id_should_own_terminal() {
+      return 0
+    }
+
+    ssh-copy-id() {
+      printf '%s\n' 'Permission denied (publickey,password).'
+      return 17
+    }
+
+    if copy_ssh_key_to_vm; then
+      result=0
+    else
+      result=$?
+    fi
+    printf 'RECORDED_COPY_STATUS:%s\n' "$VM_SSH_COPY_ID_STATUS"
+    if [ -z "$(ls -A "$copy_temp_dir")" ]; then
+      printf 'TEMP_FILE_CLEANED\n'
+    fi
+    exit "$result"
+  } 2>&1)"
+  copy_status=$?
+  set -e
+
+  assert_equals 'interactive ssh-copy-id preserves the command failure status' "$copy_status" '1'
+  assert_contains 'interactive ssh-copy-id records the command failure status' "$output" 'RECORDED_COPY_STATUS:17'
+  assert_contains 'interactive ssh-copy-id retains useful failure diagnostics' "$output" 'Permission denied (publickey,password).'
+  assert_contains 'interactive ssh-copy-id removes its captured-output temp file' "$output" 'TEMP_FILE_CLEANED'
+}
+
+test_copy_ssh_key_to_vm_interactive_filter_failure_is_not_ignored() {
+  local output
+  local copy_status=0
+
+  set +e
+  output="$({
+    prepare_vm_state_mocks
+    load_setup_functions
+
+    VM_HOST='vm-user@192.168.64.2'
+
+    ssh_copy_id_should_own_terminal() {
+      return 0
+    }
+
+    ssh-copy-id() {
+      return 0
+    }
+
+    ssh_copy_id_filter_output() {
+      return 23
+    }
+
+    if copy_ssh_key_to_vm; then
+      result=0
+    else
+      result=$?
+    fi
+    printf 'RECORDED_COPY_STATUS:%s\n' "$VM_SSH_COPY_ID_STATUS"
+    exit "$result"
+  } 2>&1)"
+  copy_status=$?
+  set -e
+
+  assert_equals 'interactive ssh-copy-id fails when its output filter fails' "$copy_status" '1'
+  assert_contains 'interactive ssh-copy-id records output-filter failure status' "$output" 'RECORDED_COPY_STATUS:23'
+  assert_contains 'interactive ssh-copy-id reports output-filter failure' "$output" 'ssh-copy-id output filter failed with status 23.'
+  assert_not_contains 'interactive ssh-copy-id does not report success after output-filter failure' "$output" 'SSH key copied to VM. ✓'
+}
+
+test_copy_ssh_key_to_vm_signal_cleanup_removes_tracked_temp_file() {
+  local signal_temp="$TEMP_DIR/ssh-copy-id-signal-temp"
+  local signal_state="$TEMP_DIR/ssh-copy-id-signal-output-state"
+  local signal_status=0
+
+  set +e
+  bash -c '
+    CLAWBOX_OUTPUT_STATE_FILE="$2"
+    . "$1/lib/output.sh"
+    . "$1/lib/vm/vm-ssh.sh"
+    : >"$3"
+    ssh_copy_id_track_temp_file "$3"
+    kill -TERM "$$"
+  ' _ "$ROOT_DIR" "$signal_state" "$signal_temp" >/dev/null 2>&1
+  signal_status=$?
+  set -e
+
+  assert_equals 'interactive ssh-copy-id signal cleanup preserves TERM failure status' "$signal_status" '143'
+  if [ ! -e "$signal_temp" ]; then
+    pass 'interactive ssh-copy-id signal cleanup removes its tracked temp file'
+  else
+    fail 'interactive ssh-copy-id signal cleanup should remove its tracked temp file'
+  fi
 }
 
 test_copy_ssh_key_to_vm_keeps_failure_when_all_keys_skipped_but_auth_fails() {
@@ -3270,6 +3415,10 @@ test_batch_auth_probe_uses_configured_target_without_disabling_user_ssh_config
 test_wait_for_vm_ssh_service_clears_expected_refusal_without_warning_line
 test_copy_ssh_key_to_vm_treats_all_keys_skipped_as_success_when_auth_works
 test_copy_ssh_key_to_vm_interactive_prompt_spacing_and_single_completion
+test_copy_ssh_key_to_vm_interactive_pipeline_preserves_stdin
+test_copy_ssh_key_to_vm_interactive_pipeline_preserves_failure_and_cleans_up
+test_copy_ssh_key_to_vm_interactive_filter_failure_is_not_ignored
+test_copy_ssh_key_to_vm_signal_cleanup_removes_tracked_temp_file
 test_copy_ssh_key_to_vm_keeps_failure_when_all_keys_skipped_but_auth_fails
 test_ensure_vm_connectivity_does_not_repeat_boot_wait_after_failed_startup_readiness
 test_started_vm_polls_until_ssh_ready_without_manual_setup

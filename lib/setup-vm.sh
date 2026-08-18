@@ -784,6 +784,4 @@ ensure_vm_connection_setup() {
     error 'VM settings could not be saved.'
     return 1
   fi
-
-  out 'VM settings saved.'
 }

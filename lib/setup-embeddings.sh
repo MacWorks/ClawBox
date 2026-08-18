@@ -67,9 +67,13 @@ detect_embeddings_llama_install_mode() {
 }
 
 configure_embeddings_service() {
-  local mode='' port_default='' port='' host='' ctx='' args=''
+  local mode='' port_default='' port='' host='' ctx='' args='' native_context_value=''
   EMBEDDINGS_ENABLED=true
   select_embeddings_model_path || return $?
+  if gguf_native_context_from_file "${EMBEDDINGS_MODEL_PATH:-}" >/dev/null 2>&1; then
+    native_context_value="$(gguf_native_context_from_file "$EMBEDDINGS_MODEL_PATH" 2>/dev/null || true)"
+    [ -z "$native_context_value" ] || outf 'Embeddings model native context: %s' "$native_context_value"
+  fi
   configured_or_default 'EMBEDDINGS_LLAMA_HOST' "${EMBEDDINGS_LLAMA_HOST:-}" '0.0.0.0'; host="$REPLY"
   configured_or_default 'EMBEDDINGS_LLAMA_PORT' "${EMBEDDINGS_LLAMA_PORT:-}" '11435'; port_default="$REPLY"
   while true; do
@@ -85,7 +89,8 @@ configure_embeddings_service() {
     port_default="$port"
   done
   configured_or_default 'EMBEDDINGS_LLAMA_CTX' "${EMBEDDINGS_LLAMA_CTX:-}" '8192'; ctx="$REPLY"
-  prompt_with_default 'Embeddings context size' "$ctx"; ctx="$REPLY"
+  model_context_prompt_value 'Embeddings context size' "$ctx" "$native_context_value" '8192' 'setup input' || return $?
+  ctx="$REPLY"
   configured_or_default 'EMBEDDINGS_LLAMA_EXTRA_ARGS' "${EMBEDDINGS_LLAMA_EXTRA_ARGS:-}" '--embedding'; args="$REPLY"
   prompt_with_default 'Embeddings llama-server extra args (whitespace-separated)' "$args"; args="$REPLY"
   EMBEDDINGS_LLAMA_HOST="$host"; EMBEDDINGS_LLAMA_PORT="$port"; EMBEDDINGS_LLAMA_CTX="$ctx"; EMBEDDINGS_LLAMA_EXTRA_ARGS="$args"; EMBEDDINGS_LLAMA_BASE_URL="http://${HOST_IP}:${port}/v1"

@@ -113,8 +113,7 @@ run_provisioning_and_deployment() {
     llama_refresh_openclaw_effective_context_window || return $?
   fi
 
-  section "VM Onboarding"
-  step "Checking SSH access to the VM."
+  section "VM Setup"
 
   if ensure_vm_connectivity_or_repair; then
     :
@@ -123,12 +122,18 @@ run_provisioning_and_deployment() {
     return "$connectivity_status"
   fi
 
-  section "Deployment"
-  step "Deploying to VM..."
+  if status_run_compact \
+    "Deploying to VM..." \
+    "Deployment staged ✓" \
+    "Deployment staging failed." \
+    ensure_vm_provision_script
+  then
+    :
+  else
+    connectivity_status=$?
+    return "$connectivity_status"
+  fi
 
-  ensure_vm_provision_script || return $?
-
-  section "OpenClaw Configuration"
   status_begin_compact "Preparing OpenClaw configuration..."
 
   if detect_openclaw_runtime_state_with_status; then

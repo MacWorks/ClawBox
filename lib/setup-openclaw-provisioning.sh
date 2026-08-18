@@ -18,8 +18,6 @@ generate_openclaw_config() {
 }
 
 ensure_vm_provision_script() {
-  out 'Finalizing...'
-
   if ssh_exec "test -f \"$VM_RUNTIME_PATH/vm-provision.sh\""; then
     :
   else
@@ -53,7 +51,6 @@ print_openclaw_personalization_next_step() {
 
 ensure_openclaw_provisioned() {
   if [ "$NEEDS_PROVISIONING" = true ]; then
-    section "VM Provisioning"
     out 'OpenClaw is not yet installed in the VM.'
     blank_line
     out 'Run the following INSIDE the VM terminal:'

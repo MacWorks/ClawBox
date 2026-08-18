@@ -916,12 +916,94 @@ ssh_copy_id_should_own_terminal() {
   [ -t 0 ] && [ -t 1 ] && [ -t 2 ]
 }
 
+CLAWBOX_SSH_COPY_ID_TEMP_FILE=''
+CLAWBOX_SSH_COPY_ID_CLEANUP_TRAP_INSTALLED=false
+
+ssh_copy_id_cleanup_temp_file() {
+  if [ -n "${CLAWBOX_SSH_COPY_ID_TEMP_FILE:-}" ]; then
+    rm -f "$CLAWBOX_SSH_COPY_ID_TEMP_FILE"
+    CLAWBOX_SSH_COPY_ID_TEMP_FILE=''
+  fi
+}
+
+ssh_copy_id_cleanup_on_signal() {
+  local signal_name="$1"
+  local signal_status=1
+
+  ssh_copy_id_cleanup_temp_file
+  case "$signal_name" in
+    HUP) signal_status=129 ;;
+    INT) signal_status=130 ;;
+    TERM) signal_status=143 ;;
+  esac
+  exit "$signal_status"
+}
+
+ssh_copy_id_track_temp_file() {
+  CLAWBOX_SSH_COPY_ID_TEMP_FILE="$1"
+
+  if [ "$CLAWBOX_SSH_COPY_ID_CLEANUP_TRAP_INSTALLED" != true ]; then
+    _append_trap 'ssh_copy_id_cleanup_temp_file' EXIT
+    _append_trap 'ssh_copy_id_cleanup_on_signal HUP' HUP
+    _append_trap 'ssh_copy_id_cleanup_on_signal INT' INT
+    _append_trap 'ssh_copy_id_cleanup_on_signal TERM' TERM
+    CLAWBOX_SSH_COPY_ID_CLEANUP_TRAP_INSTALLED=true
+  fi
+}
+
+ssh_copy_id_filter_output() {
+  local output_file="$1"
+
+  perl -MIO::Handle -e '
+use strict;
+use warnings;
+
+my ($output_file) = @ARGV;
+open my $log, ">>", $output_file or exit 1;
+STDERR->autoflush(1);
+
+my $buffer = "";
+my $printed_prompt = 0;
+while (read(STDIN, my $char, 1)) {
+  print {$log} $char;
+  if ($printed_prompt && $char eq "\n") {
+    print STDERR $char;
+    $printed_prompt = 0;
+    next;
+  }
+
+  $buffer .= $char;
+
+  if ($buffer =~ /(?:password|passphrase):\s*$/is) {
+    print STDERR $buffer;
+    $buffer = "";
+    $printed_prompt = 1;
+    next;
+  }
+
+  if ($buffer =~ /\n$/) {
+    my $line = $buffer;
+    $buffer = "";
+
+    next if $line =~ m{^\s*/.*ssh-copy-id:\s+INFO:};
+    next if $line =~ /^Number of key\(s\) added:/;
+    next if $line =~ /^Now try logging into the machine/;
+    next if $line =~ /^\s*$/;
+  }
+}
+' "$output_file"
+}
+
 copy_ssh_key_to_vm() {
   local key_path="$HOME/.ssh/id_ed25519.pub"
   local remote_key_path='~/.ssh/clawbox_id_ed25519.pub'
   local timeout_seconds=''
   local copy_output=''
   local copy_status=0
+  local copy_filter_status=0
+  local copy_output_file=''
+  local pipeline_statuses=()
+  local restore_errexit=false
 
   timeout_seconds="$(vm_onboarding_bootstrap_timeout)"
   VM_SSH_COPY_ID_OUTPUT=''
@@ -931,17 +1013,36 @@ copy_ssh_key_to_vm() {
     if ssh_copy_id_should_own_terminal; then
       out 'Copying SSH key to VM...'
       blank_line
+      copy_output_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-ssh-copy-id.XXXXXX")" || return 1
+      ssh_copy_id_track_temp_file "$copy_output_file"
+      case "$-" in
+        *e*) restore_errexit=true ;;
+      esac
       set +e
-      ssh-copy-id -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 -o ServerAliveInterval=1 -o ServerAliveCountMax=1 "$VM_HOST"
-      copy_status=$?
-      set -e
-      copy_output=''
+      ssh-copy-id -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 -o ServerAliveInterval=1 -o ServerAliveCountMax=1 "$VM_HOST" 2>&1 \
+        | ssh_copy_id_filter_output "$copy_output_file"
+      pipeline_statuses=("${PIPESTATUS[@]}")
+      copy_status="${pipeline_statuses[0]:-1}"
+      copy_filter_status="${pipeline_statuses[1]:-1}"
+      if [ "$restore_errexit" = true ]; then set -e; else set +e; fi
+      copy_output="$(cat "$copy_output_file" 2>/dev/null || true)"
+      ssh_copy_id_cleanup_temp_file
+      if [ "$copy_filter_status" -ne 0 ]; then
+        [ -n "$copy_output" ] || copy_output="ssh-copy-id output filter failed with status $copy_filter_status."
+        [ "$copy_status" -ne 0 ] || copy_status="$copy_filter_status"
+      fi
+      _set_output_state normal
+      blank_line
     else
       status_begin 'Copying SSH key to VM with ssh-copy-id...'
+      restore_errexit=false
+      case "$-" in
+        *e*) restore_errexit=true ;;
+      esac
       set +e
       copy_output="$(ssh-copy-id -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 -o ServerAliveInterval=1 -o ServerAliveCountMax=1 "$VM_HOST" 2>&1)"
       copy_status=$?
-      set -e
+      if [ "$restore_errexit" = true ]; then set -e; else set +e; fi
     fi
 
     VM_SSH_COPY_ID_OUTPUT="$copy_output"
