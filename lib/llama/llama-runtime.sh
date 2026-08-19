@@ -646,9 +646,9 @@ setup_embeddings_llama_service_for_mode() {
       fi
 
       if [ "$configured_endpoint_ready" = true ]; then
-        status_end "Embeddings llama-server is responding at $configured_base" 'progress'
+        status_end "Embeddings llama-server is responding at $configured_base ✓" 'progress'
       else
-        status_end "Embeddings llama-server is responding at $local_base" 'progress'
+        status_end "Embeddings llama-server is responding locally at $local_base" 'progress'
         warn "Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
         out "Local readiness: $local_base"
         out "VM-facing endpoint: $configured_base"

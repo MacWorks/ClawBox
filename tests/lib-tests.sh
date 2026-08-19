@@ -5358,7 +5358,7 @@ test_llama_health_decision_module() {
     printf 'SLEEPS:%s\n' "$sleep_calls"
   } 2>&1)"
 
-  if printf '%s\n' "$output" | grep -Fq 'OUT:llama-server is responding on port 11434' \
+  if printf '%s\n' "$output" | grep -Fq 'OUT:llama-server is responding on port 11434 ✓' \
     && printf '%s\n' "$output" | grep -Fq 'OUT:Waiting for llama-server API readiness' \
     && printf '%s\n' "$output" | grep -Fq 'STATUS:0' \
     && printf '%s\n' "$output" | grep -Fq 'PORT_CHECKS:3' \

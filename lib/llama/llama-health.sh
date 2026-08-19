@@ -975,7 +975,7 @@ llama_verify_service_health() {
     attempt=1
     while [ "$attempt" -le 120 ]; do
       if llama_local_api_responding "$LLAMA_PORT"; then
-        status_end "llama-server is responding on port $LLAMA_PORT" 'progress'
+        status_end "llama-server is responding on port $LLAMA_PORT ✓" 'progress'
         if [ -n "${HOST_IP:-}" ] && [ "${HOST_IP:-}" != "$local_readiness_host" ] \
           && ! llama_api_responding "${HOST_IP:-}" "$LLAMA_PORT"; then
           warn "llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."

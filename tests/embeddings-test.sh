@@ -291,15 +291,16 @@ test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint() {
   failure_output="$(printf '%s\n' "$output" | sed -n '/^EMBEDDINGS_KICKSTART_FAILURE_BEGIN$/,/^EMBEDDINGS_KICKSTART_FAILURE_END$/p')"
 
   assert_contains 'embeddings service start succeeds from local readiness' "$output" 'STATUS=0'
-  assert_contains 'embeddings service start reports local readiness success' "$output" 'Embeddings llama-server is responding at http://127.0.0.1:11435/v1'
+  assert_contains 'embeddings service start reports local readiness success' "$output" 'Embeddings llama-server is responding locally at http://127.0.0.1:11435/v1'
+  assert_not_contains 'embeddings local-only readiness does not claim complete success' "$output" 'Embeddings llama-server is responding locally at http://127.0.0.1:11435/v1 ✓'
   assert_contains 'embeddings service start uses readiness progress status' "$output" 'Waiting for embeddings llama-server API readiness'
   assert_contains 'embeddings LaunchAgent load uses active shared status' "$(cat "$active_status_log")" 'Loading embeddings llama-server LaunchAgent'
-  assert_contains 'embeddings launch and readiness steps remain compact' "$output" $'Embeddings llama-server LaunchAgent loaded ✓\nWaiting for embeddings llama-server API readiness\nEmbeddings llama-server is responding at http://127.0.0.1:11435/v1'
+  assert_contains 'embeddings launch and readiness steps remain compact' "$output" $'Embeddings llama-server LaunchAgent loaded ✓\nWaiting for embeddings llama-server API readiness\nEmbeddings llama-server is responding locally at http://127.0.0.1:11435/v1'
   assert_not_contains 'embeddings operational completions do not retain ellipses' "$output" 'Loading embeddings llama-server LaunchAgent...'
   assert_contains 'embeddings kickstart failure remains nonfatal after bootstrap succeeds' "$failure_output" 'EMBEDDINGS_KICKSTART_STATUS:0'
   assert_contains 'embeddings kickstart failure reports only the successful durable load' "$failure_output" 'Embeddings llama-server LaunchAgent loaded ✓'
   assert_not_contains 'embeddings kickstart failure does not claim successful explicit start' "$failure_output" 'Starting embeddings llama-server LaunchAgent ✓'
-  assert_contains 'embeddings kickstart failure still proceeds to authoritative API readiness' "$failure_output" 'Embeddings llama-server is responding at http://127.0.0.1:11435/v1'
+  assert_contains 'embeddings kickstart failure still proceeds to authoritative API readiness' "$failure_output" 'Embeddings llama-server is responding locally at http://127.0.0.1:11435/v1'
   curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
   assert_contains 'embeddings service start probes local readiness' "$curl_output" 'http://127.0.0.1:11435/v1/models'
   assert_contains 'embeddings service start separately probes VM-facing endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'

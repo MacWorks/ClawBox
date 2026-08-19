@@ -4660,12 +4660,12 @@ test_primary_llama_start_uses_active_compact_lifecycle_status() {
   failure_output="$(printf '%s\n' "$output" | sed -n '/^PRIMARY_KICKSTART_FAILURE_BEGIN$/,/^PRIMARY_KICKSTART_FAILURE_END$/p')"
 
   assert_contains 'primary LaunchAgent load uses active shared status' "$(cat "$active_status_log")" 'Loading llama-server LaunchAgent'
-  assert_contains 'primary launch and readiness steps remain compact' "$output" $'llama-server LaunchAgent loaded ✓\nWaiting for llama-server API readiness\nllama-server is responding on port 11434'
+  assert_contains 'primary launch and readiness steps remain compact' "$output" $'llama-server LaunchAgent loaded ✓\nWaiting for llama-server API readiness\nllama-server is responding on port 11434 ✓'
   assert_not_contains 'primary operational completions do not retain ellipses' "$output" 'Loading llama-server LaunchAgent...'
   assert_contains 'primary kickstart failure remains nonfatal after bootstrap succeeds' "$failure_output" 'PRIMARY_KICKSTART_STATUS:0'
   assert_contains 'primary kickstart failure reports only the successful durable load' "$failure_output" 'llama-server LaunchAgent loaded ✓'
   assert_not_contains 'primary kickstart failure does not claim successful explicit start' "$failure_output" 'Starting llama-server LaunchAgent ✓'
-  assert_contains 'primary kickstart failure still proceeds to authoritative API readiness' "$failure_output" 'llama-server is responding on port 11434'
+  assert_contains 'primary kickstart failure still proceeds to authoritative API readiness' "$failure_output" 'llama-server is responding on port 11434 ✓'
 }
 
 test_host_llama_restart_uses_install_mode_without_hidden_health_wait() {
