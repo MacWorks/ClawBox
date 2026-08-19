@@ -956,12 +956,12 @@ llama_verify_service_health() {
   local stdout_path=''
   local stderr_path=''
   local local_readiness_host=''
-  local readiness_message='Waiting for llama-server API readiness...'
+  local readiness_message='Waiting for llama-server API readiness'
 
   stdout_path="$(llama_mode_stdout_log "${LLAMA_ACTIVE_MODE:-user}")"
   stderr_path="$(llama_mode_stderr_log "${LLAMA_ACTIVE_MODE:-user}")"
   local_readiness_host="$(llama_local_readiness_host "${LLAMA_HOST:-}")"
-  status_begin "$readiness_message"
+  status_begin_compact "$readiness_message"
   while [ "$attempt" -le 120 ]; do
     if llama_port_in_use "$LLAMA_PORT"; then
       break
@@ -975,7 +975,7 @@ llama_verify_service_health() {
     attempt=1
     while [ "$attempt" -le 120 ]; do
       if llama_local_api_responding "$LLAMA_PORT"; then
-        status_end "llama-server is responding on port $LLAMA_PORT" 'success'
+        status_end "llama-server is responding on port $LLAMA_PORT" 'progress'
         if [ -n "${HOST_IP:-}" ] && [ "${HOST_IP:-}" != "$local_readiness_host" ] \
           && ! llama_api_responding "${HOST_IP:-}" "$LLAMA_PORT"; then
           warn "llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."

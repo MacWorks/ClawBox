@@ -85,7 +85,7 @@ detect_openclaw_runtime_state_with_status() {
   ) &
   pid="$!"
 
-  if status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Preparing OpenClaw configuration...}"; then
+  if status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Preparing OpenClaw configuration}"; then
     status=0
   else
     status="$?"
@@ -123,7 +123,7 @@ run_provisioning_and_deployment() {
   fi
 
   if status_run_compact \
-    "Deploying to VM..." \
+    "Deploying to VM" \
     "Deployment staged ✓" \
     "Deployment staging failed." \
     ensure_vm_provision_script
@@ -134,7 +134,7 @@ run_provisioning_and_deployment() {
     return "$connectivity_status"
   fi
 
-  status_begin_compact "Preparing OpenClaw configuration..."
+  status_begin_compact "Preparing OpenClaw configuration"
 
   if detect_openclaw_runtime_state_with_status; then
     :
@@ -146,7 +146,7 @@ run_provisioning_and_deployment() {
   if [ "${NEEDS_PROVISIONING:-false}" = true ]; then
     openclaw_config_preparation_status_success
     ensure_openclaw_provisioned || return $?
-    status_begin_compact "Preparing OpenClaw configuration..."
+    status_begin_compact "Preparing OpenClaw configuration"
   fi
 
   # Existing VM config is user/OpenClaw-owned. Normal setup makes only
@@ -160,7 +160,7 @@ run_provisioning_and_deployment() {
   offer_targeted_openclaw_config_restart || return $?
 
   section "Runtime"
-  step "Configuring runtime services..."
+  step "Configuring runtime services"
 
   setup_launchagent || return $?
 

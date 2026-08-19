@@ -338,7 +338,7 @@ setup_llama_service_for_mode() {
       llama_maybe_sudo "$mode" mkdir -p "$(dirname "$wrapper_dest")" "$(dirname "$env_dest")" "$(dirname "$plist_dest")"
 
       if [ "$wrapper_matches" = false ]; then
-        status_begin_compact 'Installing llama-server wrapper...'
+        status_begin_compact_active 'Installing llama-server wrapper'
         if llama_maybe_sudo "$mode" install -m 755 "$wrapper_src" "$wrapper_dest"; then
           status_end 'Installing llama-server wrapper ✓' 'progress'
         else
@@ -348,7 +348,7 @@ setup_llama_service_for_mode() {
       fi
 
       if [ "$env_matches" = false ]; then
-        status_begin_compact 'Installing llama-server runtime environment...'
+        status_begin_compact_active 'Installing llama-server runtime environment'
         if llama_maybe_sudo "$mode" install -m 644 "$env_temp" "$env_dest"; then
           status_end 'Installing llama-server runtime environment ✓' 'progress'
         else
@@ -358,7 +358,7 @@ setup_llama_service_for_mode() {
       fi
 
       if [ "$plist_matches" = false ]; then
-        status_begin_compact "Installing llama-server $service_name..."
+        status_begin_compact_active "Installing llama-server $service_name"
         if llama_maybe_sudo "$mode" install -m 644 "$plist_temp" "$plist_dest" \
           && { [ "$mode" != 'system' ] || llama_maybe_sudo "$mode" chown root:wheel "$plist_dest"; }
         then
@@ -374,15 +374,15 @@ setup_llama_service_for_mode() {
 
     if [ "$wrapper_matches" = false ] || [ "$env_matches" = false ] || [ "$plist_matches" = false ] || [ "$service_loaded" = false ] || [ "$force_restart" = true ]; then
       LLAMA_SERVICE_CHANGED=true
-      status_begin_compact "Starting llama-server $service_name..."
+      status_begin_compact_active "Loading llama-server $service_name"
       if [ "$service_loaded" = true ]; then
         llama_maybe_sudo "$mode" launchctl bootout "$(llama_mode_domain "$mode")" "$plist_dest" >/dev/null 2>&1 || true
       fi
       if llama_maybe_sudo "$mode" launchctl bootstrap "$(llama_mode_domain "$mode")" "$plist_dest"; then
         llama_maybe_sudo "$mode" launchctl kickstart -k "$service_target" >/dev/null 2>&1 || true
-        status_end "Starting llama-server $service_name ✓" 'progress'
+        status_end "llama-server $service_name loaded ✓" 'progress'
       else
-        status_end "Starting llama-server $service_name failed." 'error'
+        status_end "Loading llama-server $service_name failed." 'error'
         return 1
       fi
     fi
@@ -594,7 +594,7 @@ embeddings_llama_verify_configured_endpoint() {
 
 setup_embeddings_llama_service_for_mode() {
   local mode="$1" wrapper_src wrapper_dest env_dest plist_dest stdout_path stderr_path env_temp plist_temp target wrapper_matches=false env_matches=false plist_matches=false service_loaded=false
-  local readiness_message='Waiting for embeddings llama-server API readiness...'
+  local readiness_message='Waiting for embeddings llama-server API readiness'
   local configured_base=''
   local local_base=''
   local configured_endpoint_ready=false
@@ -610,7 +610,7 @@ setup_embeddings_llama_service_for_mode() {
     rm -f "$env_temp" "$plist_temp"
     step "Existing embeddings llama-server $(llama_mode_display_name "$mode") matches expected configuration"
   else
-    status_begin_compact 'Installing embeddings llama-server runtime environment...'
+    status_begin_compact_active 'Installing embeddings llama-server runtime environment'
     if llama_maybe_sudo "$mode" mkdir -p "$(dirname "$wrapper_dest")" "$(dirname "$env_dest")" "$(dirname "$plist_dest")" "$(dirname "$stdout_path")" \
       && llama_maybe_sudo "$mode" install -m 755 "$wrapper_src" "$wrapper_dest" \
       && llama_maybe_sudo "$mode" install -m 644 "$env_temp" "$env_dest" \
@@ -625,17 +625,17 @@ setup_embeddings_llama_service_for_mode() {
     fi
     rm -f "$env_temp" "$plist_temp"
     if [ "$service_loaded" = true ]; then llama_maybe_sudo "$mode" launchctl bootout "$(llama_mode_domain "$mode")" "$plist_dest" >/dev/null 2>&1 || true; fi
-    status_begin_compact "Starting embeddings llama-server $(llama_mode_display_name "$mode")..."
+    status_begin_compact_active "Loading embeddings llama-server $(llama_mode_display_name "$mode")"
     if llama_maybe_sudo "$mode" launchctl bootstrap "$(llama_mode_domain "$mode")" "$plist_dest"; then
       llama_maybe_sudo "$mode" launchctl kickstart -k "$target" >/dev/null 2>&1 || true
-      status_end "Starting embeddings llama-server $(llama_mode_display_name "$mode") ✓" 'progress'
+      status_end "Embeddings llama-server $(llama_mode_display_name "$mode") loaded ✓" 'progress'
     else
-      status_end "Starting embeddings llama-server $(llama_mode_display_name "$mode") failed." 'error'
+      status_end "Loading embeddings llama-server $(llama_mode_display_name "$mode") failed." 'error'
       return 1
     fi
   fi
   local attempt=1
-  status_begin "$readiness_message"
+  status_begin_compact "$readiness_message"
   while [ "$attempt" -le 30 ]; do
     if embeddings_llama_local_endpoint_responding; then
       configured_base="$(embeddings_llama_configured_base_url)"
@@ -646,9 +646,9 @@ setup_embeddings_llama_service_for_mode() {
       fi
 
       if [ "$configured_endpoint_ready" = true ]; then
-        status_end "Embeddings llama-server is responding at $configured_base" 'success'
+        status_end "Embeddings llama-server is responding at $configured_base" 'progress'
       else
-        status_end "Embeddings llama-server is responding at $local_base" 'success'
+        status_end "Embeddings llama-server is responding at $local_base" 'progress'
         warn "Embeddings llama-server is healthy locally, but the configured VM-facing endpoint is not reachable yet."
         out "Local readiness: $local_base"
         out "VM-facing endpoint: $configured_base"

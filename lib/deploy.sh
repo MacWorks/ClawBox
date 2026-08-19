@@ -516,7 +516,7 @@ openclaw_config_desired_entries() {
 
 openclaw_config_preparation_status_active() {
   [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] || return 1
-  [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Preparing OpenClaw configuration...' ]
+  [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Preparing OpenClaw configuration' ]
 }
 
 openclaw_config_preparation_status_success() {
@@ -553,7 +553,7 @@ openclaw_config_collect_drift_with_status() {
 
   openclaw_config_collect_drift_for_scope "$scope" >"$drift_file" &
   pid="$!"
-  status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Preparing OpenClaw configuration...}"
+  status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Preparing OpenClaw configuration}"
 }
 
 apply_targeted_openclaw_config_updates() {
@@ -616,25 +616,37 @@ EOF
   fi
 }
 
+install_initial_openclaw_config() {
+  generate_openclaw_config || return $?
+  scp -O -q "$CONFIG_PATH" "$VM_HOST:$REMOTE_CONFIG_PATH" </dev/null || return $?
+  ssh_exec "chmod 600 $REMOTE_CONFIG_PATH" >/dev/null 2>&1 || true
+  ssh_exec "test -f $REMOTE_CONFIG_PATH"
+}
+
 sync_openclaw_config() {
+  local status=0
+
   CONFIG_OVERWRITTEN=false
   CONFIG_TARGETED_UPDATED=false
   ssh_run_quiet "mkdir -p $REMOTE_CONFIG_DIR"
 
   if ! ssh_exec "test -f $REMOTE_CONFIG_PATH"; then
     openclaw_config_preparation_status_success
-    out 'Installing initial minimal OpenClaw config...'
-    generate_openclaw_config || return $?
-    scp -O -q "$CONFIG_PATH" "$VM_HOST:$REMOTE_CONFIG_PATH" </dev/null
-    ssh_exec "chmod 600 $REMOTE_CONFIG_PATH" >/dev/null 2>&1 || true
-    ssh_exec "test -f $REMOTE_CONFIG_PATH"
-    return 0
+    status_begin_compact_active 'Installing initial minimal OpenClaw config'
+    if install_initial_openclaw_config; then
+      status_end 'Initial minimal OpenClaw config installed ✓' 'progress'
+      return 0
+    else
+      status="$?"
+      status_end 'Initial minimal OpenClaw config installation failed.' 'error'
+      return "$status"
+    fi
   fi
 
   apply_targeted_openclaw_config_updates all || return $?
   if ! status_run_compact \
-    "Checking OpenClaw gateway authentication..." \
-    "Checking OpenClaw gateway authentication... ✓" \
+    "Checking OpenClaw gateway authentication" \
+    "Checking OpenClaw gateway authentication ✓" \
     "Checking OpenClaw gateway authentication failed." \
     ensure_openclaw_gateway_auth_config
   then

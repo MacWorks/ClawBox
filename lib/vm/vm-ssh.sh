@@ -1011,7 +1011,13 @@ copy_ssh_key_to_vm() {
 
   if command -v ssh-copy-id >/dev/null 2>&1; then
     if ssh_copy_id_should_own_terminal; then
-      out 'Copying SSH key to VM...'
+      if _status_can_spin; then
+        status_begin_compact_active 'Copying SSH key to VM'
+        status_tick 'Copying SSH key to VM'
+        status_suspend
+      else
+        out 'Copying SSH key to VM'
+      fi
       blank_line
       copy_output_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-ssh-copy-id.XXXXXX")" || return 1
       ssh_copy_id_track_temp_file "$copy_output_file"
@@ -1034,7 +1040,7 @@ copy_ssh_key_to_vm() {
       _set_output_state normal
       blank_line
     else
-      status_begin 'Copying SSH key to VM with ssh-copy-id...'
+      status_begin 'Copying SSH key to VM with ssh-copy-id'
       restore_errexit=false
       case "$-" in
         *e*) restore_errexit=true ;;
@@ -1049,11 +1055,11 @@ copy_ssh_key_to_vm() {
     VM_SSH_COPY_ID_STATUS=$copy_status
 
     if [ "$copy_status" -eq 0 ]; then
-      status_end 'SSH key copied to VM. ✓' 'success'
+      success 'SSH key copied to VM ✓'
       return 0
     fi
 
-    status_end 'SSH key copy failed.' 'warning'
+    warn 'SSH key copy failed.'
 
     case "$copy_output" in
       *'All keys were skipped because they already exist on the remote system.'*|*'Number of key(s) added: 0'*)
@@ -1068,7 +1074,7 @@ copy_ssh_key_to_vm() {
     return 1
   fi
 
-  status_begin 'Copying SSH key to VM...'
+  status_begin_active 'Copying SSH key to VM'
   if ! scp -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 -q "$key_path" "$VM_HOST:$remote_key_path" </dev/null \
     || ! ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" 'mkdir -p ~/.ssh' </dev/null \
     || ! ssh -o ConnectTimeout="$timeout_seconds" -o ConnectionAttempts=1 "$VM_HOST" 'chmod 700 ~/.ssh' </dev/null \
@@ -1079,6 +1085,6 @@ copy_ssh_key_to_vm() {
     status_end 'SSH key copy failed.' 'warning'
     return 1
   fi
-  status_end 'SSH key copied to VM. ✓' 'success'
+  status_end 'SSH key copied to VM ✓' 'success'
   return 0
 }

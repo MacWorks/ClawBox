@@ -331,7 +331,7 @@ start_vm_with_utm() {
     VM_UTM_PATH="$REPLY"
   fi
 
-  status_begin 'Starting VM with UTM...'
+  status_begin 'Starting VM with UTM'
 
   if resolve_utmctl_bin; then
     utmctl_bin="$REPLY"
@@ -358,7 +358,7 @@ start_vm_with_utm() {
         print_utmctl_identity_diagnostics "$utmctl_bin" "$vm_name"
       fi
     fi
-    status_begin 'Starting VM with UTM via AppleScript...'
+    status_begin 'Starting VM with UTM via AppleScript'
   fi
 
   if [ -z "$utmctl_bin" ] && [ "${UTMCTL_GUIDANCE_SHOWN:-false}" != true ]; then
@@ -390,7 +390,7 @@ start_vm_with_utm() {
   fi
 
   sleep 2
-  status_tick 'Starting VM with UTM via AppleScript...'
+  status_tick 'Starting VM with UTM via AppleScript'
 
   osascript_output="$(run_vm_command_with_default_timeout "$osascript_bin" \
     -e 'on run argv' \
@@ -437,7 +437,7 @@ wait_for_vm_running() {
   max_attempts="$(vm_runtime_wait_max_attempts)"
   wait_interval="$(vm_ssh_wait_interval)"
 
-  status_begin 'Waiting for VM runtime...'
+  status_begin 'Waiting for VM runtime'
 
   while [ "$attempt" -le "$max_attempts" ]; do
     if setup_selected_vm_is_running; then
@@ -446,7 +446,7 @@ wait_for_vm_running() {
     fi
 
     attempt=$((attempt + 1))
-    status_sleep "$wait_interval" 'Waiting for VM runtime...'
+    status_sleep "$wait_interval" 'Waiting for VM runtime'
   done
 
   status_end 'VM runtime was not detected.' 'warning'
@@ -461,7 +461,7 @@ wait_for_manual_vm_running() {
   max_attempts="$(manual_vm_runtime_wait_max_attempts)"
   wait_interval="$(vm_ssh_wait_interval)"
 
-  status_begin 'Checking for VM runtime...'
+  status_begin 'Checking for VM runtime'
 
   while [ "$attempt" -le "$max_attempts" ]; do
     if setup_selected_vm_is_running; then
@@ -470,7 +470,7 @@ wait_for_manual_vm_running() {
     fi
 
     attempt=$((attempt + 1))
-    status_sleep "$wait_interval" 'Checking for VM runtime...'
+    status_sleep "$wait_interval" 'Checking for VM runtime'
   done
 
   status_end 'VM runtime was not detected.' 'warning'
@@ -486,7 +486,7 @@ wait_for_vm_network() {
   max_attempts="$(vm_network_wait_max_attempts)"
   wait_interval="$(vm_network_wait_interval)"
 
-  status_begin 'Waiting for VM network...'
+  status_begin 'Waiting for VM network'
 
   while [ "$attempt" -le "$max_attempts" ]; do
     probe_vm_network_endpoint
@@ -506,7 +506,7 @@ wait_for_vm_network() {
     esac
 
     attempt=$((attempt + 1))
-    status_sleep "$wait_interval" 'Waiting for VM network...'
+    status_sleep "$wait_interval" 'Waiting for VM network'
   done
 
   REPLY='ssh-timeout'
@@ -523,7 +523,7 @@ wait_for_vm_ssh_service() {
   max_attempts="$(vm_ssh_wait_max_attempts)"
   wait_interval="$(vm_onboarding_wait_interval)"
 
-  status_begin 'Waiting for SSH...'
+  status_begin 'Waiting for SSH'
 
   while [ "$attempt" -le "$max_attempts" ]; do
     probe_vm_ssh_endpoint
@@ -553,7 +553,7 @@ wait_for_vm_ssh_service() {
     esac
 
     attempt=$((attempt + 1))
-    status_sleep "$wait_interval" 'Waiting for SSH...'
+    status_sleep "$wait_interval" 'Waiting for SSH'
   done
 
   REPLY='ssh-timeout'

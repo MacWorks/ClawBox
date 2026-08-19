@@ -67,6 +67,8 @@ _status_render_final_line() {
 }
 
 _status_suspend_rendering() {
+  _status_stop_active_ticker
+
   if [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] && _status_can_spin; then
     _status_clear_line
     printf '\n' >&2
@@ -415,6 +417,7 @@ CLAWBOX_STATUS_MESSAGE=''
 CLAWBOX_STATUS_SPINNER_INDEX=0
 CLAWBOX_CURSOR_HIDDEN=false
 CLAWBOX_STATUS_COMPACT_ACTIVE=false
+CLAWBOX_STATUS_TICKER_PID=''
 
 _append_trap() {
   local trap_command="$1"
@@ -447,7 +450,38 @@ _status_hide_cursor() {
 }
 
 _status_restore_on_exit() {
+  _status_stop_active_ticker
   _status_show_cursor
+}
+
+_status_stop_active_ticker() {
+  local ticker_pid="${CLAWBOX_STATUS_TICKER_PID:-}"
+
+  CLAWBOX_STATUS_TICKER_PID=''
+  [ -n "$ticker_pid" ] || return 0
+
+  kill "$ticker_pid" >/dev/null 2>&1 || true
+  wait "$ticker_pid" >/dev/null 2>&1 || true
+}
+
+_status_start_active_ticker() {
+  local message="${1:-${CLAWBOX_STATUS_MESSAGE:-}}"
+  local interval=''
+
+  _status_can_spin || return 0
+  [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] || return 0
+
+  _status_stop_active_ticker
+  interval="$(status_tick_interval)"
+
+  (
+    trap 'exit 0' HUP INT TERM
+    while true; do
+      command sleep "$interval"
+      status_tick "$message"
+    done
+  ) &
+  CLAWBOX_STATUS_TICKER_PID="$!"
 }
 
 install_status_exit_trap() {
@@ -577,6 +611,16 @@ status_begin_compact() {
   _status_begin_with_spacing "$1" true
 }
 
+status_begin_active() {
+  status_begin "$1"
+  _status_start_active_ticker "$1"
+}
+
+status_begin_compact_active() {
+  status_begin_compact "$1"
+  _status_start_active_ticker "$1"
+}
+
 status_tick() {
   local message="${1:-${CLAWBOX_STATUS_MESSAGE:-}}"
 
@@ -631,6 +675,7 @@ status_end() {
   local preserved_reply="${REPLY-}"
   local final_message=''
 
+  _status_stop_active_ticker
   _status_show_cursor
 
   if [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] && _status_can_spin; then

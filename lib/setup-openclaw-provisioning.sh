@@ -6,8 +6,6 @@
 # GENERATE_SCRIPT, CONFIG_PATH, PROVISION_SCRIPT, and NEEDS_PROVISIONING.
 
 generate_openclaw_config() {
-  step "Generating OpenClaw config..."
-
   ssh_ensure_dir "$VM_RUNTIME_PATH"
 
   bash "$GENERATE_SCRIPT" >/dev/null

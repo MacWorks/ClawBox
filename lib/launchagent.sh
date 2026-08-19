@@ -178,7 +178,7 @@ launchagent_wait_for_start_state() {
     fi
 
     attempts=$((attempts + 1))
-    status_sleep "$interval" 'Waiting for VM startup service...'
+    status_sleep "$interval" 'Waiting for VM startup service'
   done
 
   return 1
@@ -383,7 +383,7 @@ launchagent_start_selected_vm_for_setup() {
   LAUNCHAGENT_SKIP_KICKSTART_AFTER_BOOTSTRAP=true
 
   launchagent_record_setup_trace 'setup-start-selected-start' "vm=$VM_MACHINE_NAME"
-  status_begin_compact 'Starting selected VM with ClawBox VM startup service...'
+  status_begin_compact 'Starting selected VM with ClawBox VM startup service'
   if launchagent_install_and_start; then
     launchagent_record_setup_trace 'setup-wait-wrapper-start'
     if launchagent_wait_for_start_state; then
@@ -453,11 +453,11 @@ launchagent_detect_existing_runtime_state_with_status() {
 
   state_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-launchagent-state.XXXXXX")" || return 1
 
-  status_begin_compact 'Checking host VM auto-start service...'
+  status_begin_compact 'Checking host VM auto-start service'
   launchagent_detect_existing_runtime_state >"$state_file" &
   pid="$!"
 
-  if status_wait_for_pid_active "$pid" 'Checking host VM auto-start service...'; then
+  if status_wait_for_pid_active "$pid" 'Checking host VM auto-start service'; then
     status_end 'Host VM auto-start service checked ✓' 'progress'
     status=0
   else

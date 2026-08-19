@@ -116,7 +116,7 @@ offer_vm_ip_recovery() {
     abort_option_number=0
     selected_option=''
 
-    status_begin 'Discovering VM IP address...'
+    status_begin 'Discovering VM IP address'
 
     if command -v discover_vm_ip_candidates_with_active_status >/dev/null 2>&1; then
       if discover_vm_ip_candidates_with_active_status; then
@@ -430,20 +430,20 @@ print_vm_ssh_probe_guidance() {
 }
 
 attempt_ssh_access_bootstrap() {
-  status_begin 'Configuring SSH access...'
+  status_begin 'Configuring SSH access'
 
   if ! ensure_host_ssh_key; then
     status_end 'SSH access configuration did not complete.' 'warning'
     return 1
   fi
 
-  status_tick 'Configuring SSH access...'
+  status_tick 'Configuring SSH access'
   if ! copy_ssh_key_to_vm; then
     status_end 'SSH access configuration did not complete.' 'warning'
     return 1
   fi
 
-  status_tick 'Configuring SSH access...'
+  status_tick 'Configuring SSH access'
   if ssh_onboarding_check "echo ok" >/dev/null 2>&1; then
     status_end 'SSH access configured successfully.' 'success'
     return 0
@@ -1070,12 +1070,12 @@ ensure_vm_connectivity_or_repair() {
   VM_SSH_CONNECTIVITY_READY_REPORTED=false
   reset_vm_onboarding_probe_state >/dev/null 2>&1 || true
 
-  status_begin 'Checking VM state...'
+  status_begin_compact_active 'Checking VM state'
   detect_vm_state
   vm_state="$REPLY"
   running_confidence="${VM_RUNNING_STATE_CONFIDENCE:-unknown}"
   ssh_probe_state="${VM_DETECTED_SSH_PROBE_STATE:-unknown}"
-  status_end '' 'info'
+  status_end 'VM state checked ✓' 'progress'
 
   if [ "$vm_state" = 'ready' ]; then
     return 0

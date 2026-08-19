@@ -1783,17 +1783,101 @@ test_copy_ssh_key_to_vm_interactive_prompt_spacing_and_single_completion() {
 
     copy_ssh_key_to_vm
   } 2>&1)"
-  success_count="$(printf '%s\n' "$output" | grep -F -c 'SSH key copied to VM. ✓' || true)"
+  success_count="$(printf '%s\n' "$output" | grep -F -c 'SSH key copied to VM ✓' || true)"
 
-  assert_contains 'interactive ssh-copy-id prints operation line before prompt' "$output" 'Copying SSH key to VM...'
-  assert_contains 'interactive ssh-copy-id leaves a blank line before password prompt' "$output" $'Copying SSH key to VM...\n\n(vm-user@192.168.64.2) Password:'
+  assert_contains 'interactive ssh-copy-id prints operation line before prompt' "$output" 'Copying SSH key to VM'
+  assert_contains 'interactive ssh-copy-id leaves a blank line before password prompt' "$output" $'Copying SSH key to VM\n\n(vm-user@192.168.64.2) Password:'
   assert_equals 'interactive ssh-copy-id prints one success completion' "$success_count" '1'
+  assert_not_contains 'interactive ssh-copy-id completion does not retain progress ellipsis' "$output" 'Copying SSH key to VM...'
   assert_not_contains 'interactive ssh-copy-id suppresses source-key chatter on success' "$output" 'Source of key(s)'
   assert_not_contains 'interactive ssh-copy-id suppresses attempting-login chatter on success' "$output" 'attempting to log in'
   assert_not_contains 'interactive ssh-copy-id suppresses post-success key count on success' "$output" 'Number of key(s) added'
   assert_not_contains 'interactive ssh-copy-id suppresses post-success login advice on success' "$output" 'Now try logging into the machine'
-  assert_not_contains 'interactive ssh-copy-id does not print status helper method line' "$output" 'Copying SSH key to VM with ssh-copy-id...'
+  assert_not_contains 'interactive ssh-copy-id does not print status helper method line' "$output" 'Copying SSH key to VM with ssh-copy-id'
   assert_not_contains 'interactive ssh-copy-id does not print failure line on success' "$output" 'SSH key copy failed.'
+}
+
+test_copy_ssh_key_to_vm_suspends_status_before_terminal_handoff() {
+  local output
+  local event_log=''
+
+  event_log="$(mktemp "${TMPDIR:-/tmp}/clawbox-ssh-copy-id-status.XXXXXX")"
+
+  output="$({
+    prepare_vm_state_mocks
+    load_setup_functions
+
+    VM_HOST='vm-user@192.168.64.2'
+    CLAWBOX_STATUS_ACTIVE=false
+    CLAWBOX_STATUS_TICKER_PID=''
+
+    ssh_copy_id_should_own_terminal() {
+      return 0
+    }
+    _status_can_spin() {
+      return 0
+    }
+    status_begin_compact_active() {
+      CLAWBOX_STATUS_ACTIVE=true
+      CLAWBOX_STATUS_TICKER_PID='12345'
+      printf 'EVENT:status-begin:%s\n' "$1" >> "$event_log"
+    }
+    status_tick() {
+      printf 'EVENT:status-tick:%s\n' "$1" >> "$event_log"
+    }
+    status_suspend() {
+      CLAWBOX_STATUS_ACTIVE=false
+      CLAWBOX_STATUS_TICKER_PID=''
+      printf 'EVENT:status-suspend\n' >> "$event_log"
+    }
+    status_end() {
+      printf 'EVENT:status-end:%s:%s\n' "$1" "${2:-info}" >> "$event_log"
+    }
+    success() {
+      printf 'EVENT:success:%s\n' "$1" >> "$event_log"
+    }
+    ssh-copy-id() {
+      printf 'EVENT:ssh-copy-id:status-active=%s:ticker-pid=%s\n' "${CLAWBOX_STATUS_ACTIVE:-}" "${CLAWBOX_STATUS_TICKER_PID:-}" >> "$event_log"
+      return 0
+    }
+
+    copy_ssh_key_to_vm
+  } 2>&1)"
+
+  output="$(cat "$event_log")"
+  rm -f "$event_log"
+  assert_contains 'interactive ssh-copy-id suspends status before terminal ownership' "$output" $'EVENT:status-tick:Copying SSH key to VM\nEVENT:status-suspend'
+  assert_contains 'interactive ssh-copy-id receives terminal after active rendering stops' "$output" 'EVENT:ssh-copy-id:status-active=false:ticker-pid='
+  assert_contains 'interactive ssh-copy-id completes only after the copy returns' "$output" $'EVENT:ssh-copy-id:status-active=false:ticker-pid=\nEVENT:success:SSH key copied to VM ✓'
+  assert_not_contains 'interactive ssh-copy-id does not finalize status before copying' "$output" 'EVENT:status-end:'
+}
+
+test_copy_ssh_key_to_vm_has_one_separator_after_configuration_prompt() {
+  local output
+
+  output="$({
+    prepare_vm_state_mocks
+    load_setup_functions
+
+    VM_HOST='vm-user@192.168.64.2'
+
+    ssh_copy_id_should_own_terminal() {
+      return 0
+    }
+
+    ssh-copy-id() {
+      printf '%s\n' '(vm-user@192.168.64.2) Password:'
+      return 0
+    }
+
+    printf '%s\n' 'Attempt to configure SSH access automatically? [Y/n]: y' >&2
+    _set_output_state prompt
+    copy_ssh_key_to_vm
+  } 2>&1)"
+
+  assert_contains 'ssh key copy begins after exactly one prompt separator' "$output" $'Attempt to configure SSH access automatically? [Y/n]: y\n\nCopying SSH key to VM'
+  assert_not_contains 'ssh key copy does not add a second blank line after configuration prompt' "$output" $'Attempt to configure SSH access automatically? [Y/n]: y\n\n\nCopying SSH key to VM'
+  assert_contains 'ssh-copy-id still owns a visually separated password prompt' "$output" $'Copying SSH key to VM\n\n(vm-user@192.168.64.2) Password:'
 }
 
 test_copy_ssh_key_to_vm_interactive_pipeline_preserves_stdin() {
@@ -2059,7 +2143,7 @@ test_ensure_vm_connectivity_recovers_vm_ip_after_startup() {
 
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
-  assert_contains 'vm ip recovery reports discovery progress' "$output" 'Discovering VM IP address...'
+  assert_contains 'vm ip recovery reports discovery progress' "$output" 'Discovering VM IP address'
   assert_contains 'vm ip recovery reports the detected generic address as a menu option' "$output" '1) 192.168.64.6'
 }
 
@@ -3415,6 +3499,8 @@ test_batch_auth_probe_uses_configured_target_without_disabling_user_ssh_config
 test_wait_for_vm_ssh_service_clears_expected_refusal_without_warning_line
 test_copy_ssh_key_to_vm_treats_all_keys_skipped_as_success_when_auth_works
 test_copy_ssh_key_to_vm_interactive_prompt_spacing_and_single_completion
+test_copy_ssh_key_to_vm_suspends_status_before_terminal_handoff
+test_copy_ssh_key_to_vm_has_one_separator_after_configuration_prompt
 test_copy_ssh_key_to_vm_interactive_pipeline_preserves_stdin
 test_copy_ssh_key_to_vm_interactive_pipeline_preserves_failure_and_cleans_up
 test_copy_ssh_key_to_vm_interactive_filter_failure_is_not_ignored

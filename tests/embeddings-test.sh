@@ -224,6 +224,7 @@ test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint() {
   local output=''
   local status=0
   local curl_log="$TEMP_DIR/embeddings-start-curl.log"
+  local active_status_log="$TEMP_DIR/embeddings-start-active-status.log"
   local model_path="$TEMP_DIR/models/embed-start.gguf"
   local fake_bin='/bin/echo'
 
@@ -234,6 +235,7 @@ test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint() {
     export HOME="$TEMP_DIR/embeddings-start-home"
     export BASE_DIR="$ROOT_DIR"
     export CLAWBOX_EMBEDDINGS_CURL_LOG="$curl_log"
+    export CLAWBOX_EMBEDDINGS_ACTIVE_STATUS_LOG="$active_status_log"
     export LLAMA_BIN="$fake_bin"
     export EMBEDDINGS_MODEL_PATH="$model_path"
     export EMBEDDINGS_LLAMA_HOST='0.0.0.0'
@@ -259,16 +261,45 @@ test_embeddings_service_start_uses_loopback_readiness_before_vm_endpoint() {
     launchctl() { return 0; }
     sleep() { :; }
     . "$ROOT_DIR/lib/llama.sh"
+    status_begin_compact_active() {
+      printf '%s\n' "$1" >> "$CLAWBOX_EMBEDDINGS_ACTIVE_STATUS_LOG"
+      _status_begin_with_spacing "$1" true
+    }
     set +e
     setup_embeddings_llama_service_for_mode user
     status=$?
     set -e
     printf 'STATUS=%s\n' "$status"
+
+    printf 'EMBEDDINGS_KICKSTART_FAILURE_BEGIN\n'
+    printf 'stale runtime env\n' > "$(embeddings_llama_mode_env_dest user)"
+    launchctl() {
+      if [ "${1:-}" = 'kickstart' ]; then
+        return 37
+      fi
+      return 0
+    }
+    set +e
+    setup_embeddings_llama_service_for_mode user
+    failure_status=$?
+    set -e
+    printf 'EMBEDDINGS_KICKSTART_STATUS:%s\n' "$failure_status"
+    printf 'EMBEDDINGS_KICKSTART_FAILURE_END\n'
   } 2>&1)"
+
+  local failure_output=''
+  failure_output="$(printf '%s\n' "$output" | sed -n '/^EMBEDDINGS_KICKSTART_FAILURE_BEGIN$/,/^EMBEDDINGS_KICKSTART_FAILURE_END$/p')"
 
   assert_contains 'embeddings service start succeeds from local readiness' "$output" 'STATUS=0'
   assert_contains 'embeddings service start reports local readiness success' "$output" 'Embeddings llama-server is responding at http://127.0.0.1:11435/v1'
-  assert_contains 'embeddings service start uses readiness progress status' "$output" 'Waiting for embeddings llama-server API readiness...'
+  assert_contains 'embeddings service start uses readiness progress status' "$output" 'Waiting for embeddings llama-server API readiness'
+  assert_contains 'embeddings LaunchAgent load uses active shared status' "$(cat "$active_status_log")" 'Loading embeddings llama-server LaunchAgent'
+  assert_contains 'embeddings launch and readiness steps remain compact' "$output" $'Embeddings llama-server LaunchAgent loaded ✓\nWaiting for embeddings llama-server API readiness\nEmbeddings llama-server is responding at http://127.0.0.1:11435/v1'
+  assert_not_contains 'embeddings operational completions do not retain ellipses' "$output" 'Loading embeddings llama-server LaunchAgent...'
+  assert_contains 'embeddings kickstart failure remains nonfatal after bootstrap succeeds' "$failure_output" 'EMBEDDINGS_KICKSTART_STATUS:0'
+  assert_contains 'embeddings kickstart failure reports only the successful durable load' "$failure_output" 'Embeddings llama-server LaunchAgent loaded ✓'
+  assert_not_contains 'embeddings kickstart failure does not claim successful explicit start' "$failure_output" 'Starting embeddings llama-server LaunchAgent ✓'
+  assert_contains 'embeddings kickstart failure still proceeds to authoritative API readiness' "$failure_output" 'Embeddings llama-server is responding at http://127.0.0.1:11435/v1'
   curl_output="$([ -f "$curl_log" ] && cat "$curl_log" || true)"
   assert_contains 'embeddings service start probes local readiness' "$curl_output" 'http://127.0.0.1:11435/v1/models'
   assert_contains 'embeddings service start separately probes VM-facing endpoint' "$curl_output" 'http://192.168.64.1:11435/v1/models'

@@ -1787,8 +1787,8 @@ test_fresh_setup_uses_single_discovered_vm_ip_without_manual_prompt() {
 
   status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
 
-  assert_contains 'fresh single IP flow reports discovery progress' "$output" 'Discovering VM IP address...'
-  assert_contains 'fresh single IP flow keeps discovery status active while candidates are collected' "$output" 'EVENT:status-wait:Discovering VM IP address...'
+  assert_contains 'fresh single IP flow reports discovery progress' "$output" 'Discovering VM IP address'
+  assert_contains 'fresh single IP flow keeps discovery status active while candidates are collected' "$output" 'EVENT:status-wait:Discovering VM IP address'
   assert_contains 'fresh single IP flow detects VM IP' "$output" 'Detected VM IP: 192.168.64.6'
   assert_contains 'fresh single IP flow uses discovered VM host' "$output" 'FINAL_VM_HOST:tester@192.168.64.6'
   assert_contains 'fresh single IP flow reaches connectivity with discovered VM host' "$output" 'EVENT:connectivity-after:tester@192.168.64.6'
@@ -1884,8 +1884,8 @@ test_fresh_setup_retries_ip_discovery_until_new_vm_network_is_ready() {
   status="$(printf '%s\n' "$output" | awk -F: '/^STATUS:/ { print $2; exit }')"
 
   assert_contains 'fresh retry IP flow observes initially missing guest IP' "$output" 'empty'
-  assert_contains 'fresh retry IP flow reports discovery progress' "$output" 'Discovering VM IP address...'
-  assert_contains 'fresh retry IP flow keeps discovery status active while candidates are collected' "$output" 'EVENT:status-wait:Discovering VM IP address...'
+  assert_contains 'fresh retry IP flow reports discovery progress' "$output" 'Discovering VM IP address'
+  assert_contains 'fresh retry IP flow keeps discovery status active while candidates are collected' "$output" 'EVENT:status-wait:Discovering VM IP address'
   assert_contains 'fresh retry IP flow retries discovery after initial miss' "$output" 'found'
   assert_contains 'fresh retry IP flow records two discovery attempts' "$output" 'DISCOVERY_CALLS:2'
   assert_contains 'fresh retry IP flow uses discovered VM host' "$output" 'FINAL_VM_HOST:tester@192.168.64.6'
@@ -2964,10 +2964,37 @@ test_vm_connectivity_repair_flow() {
   } 2>&1)"
 
   assert_contains 'repair flow warns when VM is stopped' "$output" 'VM is not running.'
-  assert_contains 'repair flow reports the initial vm state check before a possible pause' "$output" 'Checking VM state...'
-  assert_not_contains 'repair flow omits the low-value vm state completion line' "$output" 'VM state checked.'
+  assert_contains 'repair flow reports the initial vm state check before a possible pause' "$output" 'Checking VM state'
+  assert_contains 'repair flow completes the vm state operation through shared status output' "$output" 'VM state checked ✓'
   assert_contains 'repair flow offers VM start prompt' "$output" 'Start the VM now? [Y/n]:'
   assert_no_excessive_blank_lines 'repair flow avoids excessive blank lines' "$output"
+}
+
+test_vm_state_check_keeps_active_status_around_detection() {
+  local output
+
+  output="$({
+    load_setup_functions
+
+    status_begin_compact_active() {
+      printf 'EVENT:status-begin:%s\n' "$1"
+    }
+    status_end() {
+      printf 'EVENT:status-end:%s:%s\n' "$1" "${2:-info}"
+    }
+    detect_vm_state() {
+      printf 'EVENT:detect-vm-state\n'
+      REPLY='ready'
+      VM_RUNNING_STATE_CONFIDENCE='exact'
+      VM_DETECTED_SSH_PROBE_STATE='ready'
+      return 0
+    }
+
+    ensure_vm_connectivity_or_repair
+  } 2>&1)"
+
+  assert_contains 'vm state detection starts the shared active status before blocking work' "$output" $'EVENT:status-begin:Checking VM state\nEVENT:detect-vm-state'
+  assert_contains 'vm state detection completes status only after state resolution' "$output" $'EVENT:detect-vm-state\nEVENT:status-end:VM state checked ✓:progress'
 }
 
 test_vm_running_without_ssh_flow() {
@@ -3241,6 +3268,29 @@ test_status_helper_repaints_while_waiting_for_background_work() {
   assert_contains 'status helper completes after background work finishes' "$output" 'Checking OpenClaw configuration... ✓'
 }
 
+test_status_helper_animates_current_shell_blocking_work() {
+  local output
+
+  output="$({
+    load_setup_functions
+
+    _status_can_spin() {
+      return 0
+    }
+
+    CLAWBOX_STATUS_INTERVAL_SECONDS=0.001
+    status_begin_compact_active 'Blocking setup operation'
+    command sleep 0.02
+    status_end 'Blocking setup operation ✓' 'progress'
+    printf 'TICKER_PID:%s\n' "${CLAWBOX_STATUS_TICKER_PID:-}"
+  } 2>&1)"
+
+  assert_contains 'active status helper repaints synchronous blocking work' "$output" 'Blocking setup operation /'
+  assert_contains 'active status helper completes without a retained ellipsis' "$output" 'Blocking setup operation ✓'
+  assert_not_contains 'active status helper completion has no progress ellipsis' "$output" 'Blocking setup operation... ✓'
+  assert_equals 'active status helper leaves no ticker pid after completion' "$(printf '%s\n' "$output" | grep '^TICKER_PID:' | tail -n 1)" 'TICKER_PID:'
+}
+
 test_status_helper_uses_fast_spinner_cadence() {
   local interval=''
 
@@ -3485,8 +3535,8 @@ test_vm_startup_progress_flow() {
     queue_prompt_answers 'y' 'y'
 
     start_vm_with_utm() {
-      status_begin 'Starting VM with UTM...'
-      status_tick 'Starting VM with UTM...'
+      status_begin 'Starting VM with UTM'
+      status_tick 'Starting VM with UTM'
       status_end ''
       return 0
     }
@@ -3544,20 +3594,20 @@ test_vm_startup_progress_flow() {
   } 2>&1)"
   rendered_output="$(render_terminal_output "$output")"
 
-  assert_contains 'startup flow reports that it is starting the vm explicitly' "$output" 'Starting VM with UTM...'
+  assert_contains 'startup flow reports that it is starting the vm explicitly' "$output" 'Starting VM with UTM'
   assert_not_contains 'startup flow no longer emits redundant vm startup completion line' "$output" 'VM startup initiated.'
   if [[ "$rendered_output" == *$'\n\n\nVM runtime detected.'* ]]; then
     fail 'startup flow does not leave two blank separators before runtime detected'
   else
     pass 'startup flow does not leave two blank separators before runtime detected'
   fi
-  assert_contains 'startup flow reports waiting for vm runtime' "$output" 'Waiting for VM runtime...'
+  assert_contains 'startup flow reports waiting for vm runtime' "$output" 'Waiting for VM runtime'
   assert_contains 'startup flow reports runtime completion' "$output" 'VM runtime detected.'
-  assert_contains 'startup flow reports waiting for vm network' "$output" 'Waiting for VM network...'
+  assert_contains 'startup flow reports waiting for vm network' "$output" 'Waiting for VM network'
   assert_contains 'startup flow reports network completion' "$output" 'VM network detected.'
-  assert_contains 'startup flow reports waiting for ssh service' "$output" 'Waiting for SSH...'
+  assert_contains 'startup flow reports waiting for ssh service' "$output" 'Waiting for SSH'
   assert_contains 'startup flow reports consolidated ssh completion' "$output" 'SSH connectivity is ready. ✓'
-  assert_contains 'startup flow reports when it begins configuring ssh access' "$output" 'Configuring SSH access...'
+  assert_contains 'startup flow reports when it begins configuring ssh access' "$output" 'Configuring SSH access'
   assert_contains 'startup flow reports ssh configuration completion' "$output" 'SSH access configured.'
 }
 
@@ -3700,7 +3750,7 @@ test_vm_ip_discovery_recovery_flow() {
   } 2>&1)"
 
   assert_contains 'vm ip recovery flow reports unreachable current vm ip address' "$output" 'The current VM IP address (192.168.64.7) was unreachable.'
-  assert_contains 'vm ip recovery flow reports discovery progress' "$output" 'Discovering VM IP address...'
+  assert_contains 'vm ip recovery flow reports discovery progress' "$output" 'Discovering VM IP address'
   assert_contains 'vm ip recovery flow reports discovery completion' "$output" 'VM IP discovery completed.'
   assert_equals 'vm ip recovery flow emits one discovery completion line' "$(printf '%s\n' "$output" | grep -F 'VM IP discovery completed.' | wc -l | tr -d '[:space:]')" '1'
   assert_contains 'vm ip recovery flow reports the detected likely vm address' "$output" 'Detected likely VM address: 192.168.64.6'
@@ -3852,7 +3902,7 @@ test_provisioning_and_deployment_flow() {
   assert_contains 'provisioning flow shows consolidated vm setup section' "$output" ' > VM Setup'
   assert_not_contains 'provisioning flow omits vm onboarding subsection' "$output" ' > VM Onboarding'
   assert_not_contains 'provisioning flow omits openclaw subsection' "$output" ' > OpenClaw Configuration'
-  assert_contains 'provisioning flow starts compact OpenClaw preparation status' "$output" 'Preparing OpenClaw configuration...'
+  assert_contains 'provisioning flow starts compact OpenClaw preparation status' "$output" 'Preparing OpenClaw configuration'
   assert_contains 'provisioning flow completes compact OpenClaw preparation status' "$output" 'OpenClaw configuration prepared ✓'
   assert_contains 'provisioning flow reports deployment staging completion' "$output" 'Deployment staged ✓'
   assert_not_contains 'provisioning flow omits deployment subsection' "$output" ' > Deployment'
@@ -3959,7 +4009,7 @@ test_openclaw_preparation_status_covers_remote_drift_detection() {
       local key="${1-}"
       if [ "$key" = 'agents.defaults.model.primary' ] \
         && [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] \
-        && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Preparing OpenClaw configuration...' ]; then
+        && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Preparing OpenClaw configuration' ]; then
         : > "$marker"
         sleep 0.02
       fi
@@ -4029,7 +4079,7 @@ test_openclaw_gateway_auth_status_covers_post_comparison_remote_work() {
       [[ "$command_text" == *"test -f"* ]] && return 0
       if [[ "$command_text" == *"chmod 600"* ]] \
         && [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] \
-        && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Checking OpenClaw gateway authentication...' ]; then
+        && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Checking OpenClaw gateway authentication' ]; then
         : > "$chmod_marker"
       fi
       return 0
@@ -4041,7 +4091,7 @@ test_openclaw_gateway_auth_status_covers_post_comparison_remote_work() {
       local key="${1-}"
       if [ "$key" = 'gateway.auth.token' ] \
         && [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] \
-        && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Checking OpenClaw gateway authentication...' ]; then
+        && [ "${CLAWBOX_STATUS_MESSAGE:-}" = 'Checking OpenClaw gateway authentication' ]; then
         : > "$auth_get_marker"
         sleep 0.02
         printf '%s\n' '__OPENCLAW_REDACTED__'
@@ -4074,7 +4124,7 @@ test_openclaw_gateway_auth_status_covers_post_comparison_remote_work() {
 import sys
 text = sys.argv[1]
 matched = text.find("OpenClaw config already matched; no OpenClaw changes were made.")
-auth = text.find("Checking OpenClaw gateway authentication... ✓")
+auth = text.find("Checking OpenClaw gateway authentication ✓")
 deployment = text.find("Deployment staged")
 runtime = text.find(" > Runtime")
 raise SystemExit(0 if -1 not in (matched, auth, deployment, runtime) and deployment < matched < auth < runtime else 1)
@@ -4493,7 +4543,7 @@ test_runtime_service_existing_menu_wording() {
     setup_launchagent
   } 2>&1)"
 
-  assert_contains 'runtime service menu reports discovery progress' "$output" 'Checking host VM auto-start service...'
+  assert_contains 'runtime service menu reports discovery progress' "$output" 'Checking host VM auto-start service'
   assert_contains 'runtime service menu completes discovery progress before details' "$output" 'Host VM auto-start service checked ✓'
   assert_contains 'runtime service menu identifies the host vm autostart service' "$output" 'Existing host VM auto-start service detected.'
   assert_contains 'runtime service menu warns that stale keep skips updates' "$output" 'the latest reliability fixes will not be applied'
@@ -4515,6 +4565,107 @@ PY
   else
     fail "runtime service discovery spinner should stop before details and prompt"
   fi
+}
+
+test_primary_llama_start_uses_active_compact_lifecycle_status() {
+  local output
+  local home_dir="$TEMP_DIR/primary-progress-home"
+  local model_path="$TEMP_DIR/primary-progress-model.gguf"
+  local fake_bin="$TEMP_DIR/primary-progress-llama-server"
+  local loaded_file="$TEMP_DIR/primary-progress-loaded"
+  local active_status_log="$TEMP_DIR/primary-progress-active-status.log"
+
+  mkdir -p "$home_dir"
+  printf '#!/bin/bash\nexit 0\n' > "$fake_bin"
+  chmod +x "$fake_bin"
+  : > "$model_path"
+  : > "$active_status_log"
+
+  output="$({
+    load_setup_functions
+
+    HOME="$home_dir"
+    BASE_DIR="$ROOT_DIR"
+    HOST_IP='127.0.0.1'
+    LLAMA_BIN="$fake_bin"
+    MODEL_PATH="$model_path"
+    MMPROJ_PATH=''
+    LLAMA_HOST='0.0.0.0'
+    LLAMA_PORT='11434'
+    LLAMA_CTX='32768'
+    LLAMA_PARALLEL='1'
+    LLAMA_GPU_LAYERS='0'
+    LLAMA_FLASH_ATTENTION='false'
+    LLAMA_JINJA='true'
+    LLAMA_MLOCK='false'
+    LLAMA_EXTRA_ARGS=''
+    CLAWBOX_LLAMA_USER_UID='501'
+    CLAWBOX_LLAMA_USER_OUT_LOG="$TEMP_DIR/primary-progress.out.log"
+    CLAWBOX_LLAMA_USER_ERR_LOG="$TEMP_DIR/primary-progress.err.log"
+
+    launchctl() {
+      if [ "${1:-}" = 'print' ]; then
+        [ -f "$loaded_file" ]
+        return $?
+      fi
+      if [ "${1:-}" = 'bootstrap' ]; then
+        : > "$loaded_file"
+        return 0
+      fi
+      if [ "${1:-}" = 'bootout' ]; then
+        rm -f "$loaded_file"
+        return 0
+      fi
+      return 0
+    }
+    llama_port_in_use() { return 0; }
+    llama_local_api_responding() { return 0; }
+    llama_api_responding() { return 0; }
+    status_begin_compact_active() {
+      printf '%s\n' "$1" >> "$active_status_log"
+      _status_begin_with_spacing "$1" true
+    }
+
+    setup_user_llama_service
+
+    printf 'PRIMARY_KICKSTART_FAILURE_BEGIN\n'
+    printf 'stale runtime env\n' > "$(llama_mode_env_dest user)"
+    launchctl() {
+      if [ "${1:-}" = 'print' ]; then
+        [ -f "$loaded_file" ]
+        return $?
+      fi
+      if [ "${1:-}" = 'bootstrap' ]; then
+        : > "$loaded_file"
+        return 0
+      fi
+      if [ "${1:-}" = 'bootout' ]; then
+        rm -f "$loaded_file"
+        return 0
+      fi
+      if [ "${1:-}" = 'kickstart' ]; then
+        return 37
+      fi
+      return 0
+    }
+    set +e
+    setup_user_llama_service
+    failure_status=$?
+    set -e
+    printf 'PRIMARY_KICKSTART_STATUS:%s\n' "$failure_status"
+    printf 'PRIMARY_KICKSTART_FAILURE_END\n'
+  } 2>&1)"
+
+  local failure_output=''
+  failure_output="$(printf '%s\n' "$output" | sed -n '/^PRIMARY_KICKSTART_FAILURE_BEGIN$/,/^PRIMARY_KICKSTART_FAILURE_END$/p')"
+
+  assert_contains 'primary LaunchAgent load uses active shared status' "$(cat "$active_status_log")" 'Loading llama-server LaunchAgent'
+  assert_contains 'primary launch and readiness steps remain compact' "$output" $'llama-server LaunchAgent loaded ✓\nWaiting for llama-server API readiness\nllama-server is responding on port 11434'
+  assert_not_contains 'primary operational completions do not retain ellipses' "$output" 'Loading llama-server LaunchAgent...'
+  assert_contains 'primary kickstart failure remains nonfatal after bootstrap succeeds' "$failure_output" 'PRIMARY_KICKSTART_STATUS:0'
+  assert_contains 'primary kickstart failure reports only the successful durable load' "$failure_output" 'llama-server LaunchAgent loaded ✓'
+  assert_not_contains 'primary kickstart failure does not claim successful explicit start' "$failure_output" 'Starting llama-server LaunchAgent ✓'
+  assert_contains 'primary kickstart failure still proceeds to authoritative API readiness' "$failure_output" 'llama-server is responding on port 11434'
 }
 
 test_host_llama_restart_uses_install_mode_without_hidden_health_wait() {
@@ -5170,6 +5321,7 @@ run_test test_vm_detection_permission_block_graceful_exit_flow
 run_test test_vm_detection_permission_block_manual_fallback_flow
 run_test test_llama_install_flows
 run_test test_vm_connectivity_repair_flow
+run_test test_vm_state_check_keeps_active_status_around_detection
 run_test test_vm_running_without_ssh_flow
 run_test test_vm_connection_setup_reports_vm_settings_completion_without_progress_spinner
 run_test test_vm_connection_setup_prefers_configured_vm_ip_default
@@ -5180,6 +5332,7 @@ run_test test_status_progress_helper_is_opt_in_and_line_oriented_without_tty
 run_test test_status_progress_finalizes_tty_line_cleanly
 run_test test_status_helper_renders_trailing_spinner_frames
 run_test test_status_helper_repaints_while_waiting_for_background_work
+run_test test_status_helper_animates_current_shell_blocking_work
 run_test test_status_helper_uses_fast_spinner_cadence
 run_test test_status_helper_applies_semantic_result_styling
 run_test test_status_helper_restores_cursor_after_completion
@@ -5203,6 +5356,7 @@ run_test test_openclaw_config_present_without_executable_uses_provisioning_flow
 run_test test_openclaw_provisioning_confirmation_still_requires_executable_before_sync
 run_test test_provisioning_and_deployment_exits_when_vm_local_provisioning_is_incomplete
 run_test test_runtime_service_existing_menu_wording
+run_test test_primary_llama_start_uses_active_compact_lifecycle_status
 run_test test_host_llama_restart_uses_install_mode_without_hidden_health_wait
 run_test test_optional_embeddings_setup_is_host_only
 run_test test_embeddings_context_uses_native_context_ceiling

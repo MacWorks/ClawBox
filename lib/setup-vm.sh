@@ -602,7 +602,7 @@ discover_vm_ip_candidates_with_active_status() {
   ) >/dev/null 2>&1 &
   pid="$!"
 
-  if status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Discovering VM IP address...}"; then
+  if status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Discovering VM IP address}"; then
     status=0
   else
     status=$?
@@ -634,7 +634,7 @@ probe_ssh_target_endpoint_with_active_status() {
   ) >/dev/null 2>&1 &
   pid="$!"
 
-  if status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Discovering VM IP address...}"; then
+  if status_wait_for_pid_active "$pid" "${CLAWBOX_STATUS_MESSAGE:-Discovering VM IP address}"; then
     status=0
   else
     status=$?
@@ -672,7 +672,7 @@ discover_vm_ip_before_manual_prompt() {
   configured_max_attempts="${CLAWBOX_CONFIGURED_VM_IP_VALIDATION_ATTEMPTS:-4}"
   configured_interval="${CLAWBOX_CONFIGURED_VM_IP_VALIDATION_INTERVAL:-1}"
 
-  status_begin 'Discovering VM IP address...'
+  status_begin 'Discovering VM IP address'
 
   if [ -n "$saved_vm_ip" ] && [ -n "$saved_vm_user" ] && vm_ip_is_ipv4 "$saved_vm_ip"; then
     while [ "$configured_attempts" -le "$configured_max_attempts" ]; do
