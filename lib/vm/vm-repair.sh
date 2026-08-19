@@ -438,14 +438,14 @@ attempt_ssh_access_bootstrap() {
   fi
 
   status_tick 'Configuring SSH access'
-  if ! copy_ssh_key_to_vm; then
+  if ! copy_ssh_key_to_vm true; then
     status_end 'SSH access configuration did not complete.' 'warning'
     return 1
   fi
 
   status_tick 'Configuring SSH access'
   if ssh_onboarding_check "echo ok" >/dev/null 2>&1; then
-    status_end 'SSH access configured successfully.' 'success'
+    status_end 'SSH access configured successfully. ✓' 'success'
     return 0
   fi
 

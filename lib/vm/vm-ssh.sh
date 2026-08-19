@@ -995,6 +995,7 @@ while (read(STDIN, my $char, 1)) {
 }
 
 copy_ssh_key_to_vm() {
+  local defer_success="${1:-false}"
   local key_path="$HOME/.ssh/id_ed25519.pub"
   local remote_key_path='~/.ssh/clawbox_id_ed25519.pub'
   local timeout_seconds=''
@@ -1017,8 +1018,8 @@ copy_ssh_key_to_vm() {
         status_suspend
       else
         out 'Copying SSH key to VM'
+        blank_line
       fi
-      blank_line
       copy_output_file="$(mktemp "${TMPDIR:-/tmp}/clawbox-ssh-copy-id.XXXXXX")" || return 1
       ssh_copy_id_track_temp_file "$copy_output_file"
       case "$-" in
@@ -1055,7 +1056,9 @@ copy_ssh_key_to_vm() {
     VM_SSH_COPY_ID_STATUS=$copy_status
 
     if [ "$copy_status" -eq 0 ]; then
-      success 'SSH key copied to VM ✓'
+      if [ "$defer_success" != true ]; then
+        success 'SSH key copied to VM ✓'
+      fi
       return 0
     fi
 
@@ -1064,7 +1067,9 @@ copy_ssh_key_to_vm() {
     case "$copy_output" in
       *'All keys were skipped because they already exist on the remote system.'*|*'Number of key(s) added: 0'*)
         if ssh_onboarding_check 'echo ok' >/dev/null 2>&1; then
-          out 'ssh-copy-id reported keys already installed; SSH key auth is already working.'
+          if [ "$defer_success" != true ]; then
+            out 'ssh-copy-id reported keys already installed; SSH key auth is already working.'
+          fi
           return 0
         fi
         ;;
@@ -1085,6 +1090,10 @@ copy_ssh_key_to_vm() {
     status_end 'SSH key copy failed.' 'warning'
     return 1
   fi
-  status_end 'SSH key copied to VM ✓' 'success'
+  if [ "$defer_success" = true ]; then
+    status_end '' 'progress'
+  else
+    status_end 'SSH key copied to VM ✓' 'success'
+  fi
   return 0
 }

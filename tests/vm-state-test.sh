@@ -1331,13 +1331,13 @@ test_ensure_vm_connectivity_emits_single_ssh_bootstrap_success_line() {
   CLAWBOX_TEST_SSH_STDERR='Permission denied (publickey,password).'
 
   attempt_ssh_access_bootstrap() {
-    success 'SSH access configured successfully.'
+    success 'SSH access configured successfully. ✓'
     return 0
   }
 
   output="$({ ensure_vm_connectivity_or_repair || true; } 2>&1)"
 
-  assert_equals 'ssh bootstrap success line is emitted exactly once' "$(printf '%s' "$output" | grep -F -c 'SSH access configured successfully.')" '1'
+  assert_equals 'ssh bootstrap success line is emitted exactly once' "$(printf '%s' "$output" | grep -F -c 'SSH access configured successfully. ✓')" '1'
 }
 
 test_ensure_vm_connectivity_retries_ssh_after_remote_login_confirmation() {
@@ -1797,6 +1797,34 @@ test_copy_ssh_key_to_vm_interactive_prompt_spacing_and_single_completion() {
   assert_not_contains 'interactive ssh-copy-id does not print failure line on success' "$output" 'SSH key copy failed.'
 }
 
+test_copy_ssh_key_to_vm_deferred_success_suppresses_intermediate_completion() {
+  local output
+
+  output="$({
+    prepare_vm_state_mocks
+    load_setup_functions
+
+    VM_HOST='vm-user@192.168.64.2'
+
+    ssh_copy_id_should_own_terminal() {
+      return 0
+    }
+    ssh-copy-id() {
+      printf '%s\n' '/usr/bin/ssh-copy-id: INFO: attempting to install the key'
+      printf '%s\n' '(vm-user@192.168.64.2) Password:'
+      printf '%s\n' 'Number of key(s) added: 1'
+      return 0
+    }
+
+    copy_ssh_key_to_vm true
+  } 2>&1)"
+
+  assert_contains 'deferred ssh-copy-id keeps the external password prompt visible' "$output" '(vm-user@192.168.64.2) Password:'
+  assert_not_contains 'deferred ssh-copy-id omits standalone copy completion' "$output" 'SSH key copied to VM ✓'
+  assert_not_contains 'deferred ssh-copy-id still suppresses informational chatter' "$output" 'attempting to install the key'
+  assert_not_contains 'deferred ssh-copy-id still suppresses its own success chatter' "$output" 'Number of key(s) added'
+}
+
 test_copy_ssh_key_to_vm_suspends_status_before_terminal_handoff() {
   local output
   local event_log=''
@@ -1830,6 +1858,9 @@ test_copy_ssh_key_to_vm_suspends_status_before_terminal_handoff() {
       CLAWBOX_STATUS_TICKER_PID=''
       printf 'EVENT:status-suspend\n' >> "$event_log"
     }
+    blank_line() {
+      printf 'EVENT:blank-line\n' >> "$event_log"
+    }
     status_end() {
       printf 'EVENT:status-end:%s:%s\n' "$1" "${2:-info}" >> "$event_log"
     }
@@ -1847,9 +1878,81 @@ test_copy_ssh_key_to_vm_suspends_status_before_terminal_handoff() {
   output="$(cat "$event_log")"
   rm -f "$event_log"
   assert_contains 'interactive ssh-copy-id suspends status before terminal ownership' "$output" $'EVENT:status-tick:Copying SSH key to VM\nEVENT:status-suspend'
-  assert_contains 'interactive ssh-copy-id receives terminal after active rendering stops' "$output" 'EVENT:ssh-copy-id:status-active=false:ticker-pid='
-  assert_contains 'interactive ssh-copy-id completes only after the copy returns' "$output" $'EVENT:ssh-copy-id:status-active=false:ticker-pid=\nEVENT:success:SSH key copied to VM ✓'
+  assert_contains 'interactive ssh-copy-id receives terminal immediately after silent status suspension' "$output" $'EVENT:status-suspend\nEVENT:ssh-copy-id:status-active=false:ticker-pid='
+  assert_not_contains 'interactive ssh-copy-id does not add another blank after status suspension' "$output" $'EVENT:status-suspend\nEVENT:blank-line'
+  assert_contains 'interactive ssh-copy-id completes only after the copy returns' "$output" $'EVENT:ssh-copy-id:status-active=false:ticker-pid=\nEVENT:blank-line\nEVENT:success:SSH key copied to VM ✓'
   assert_not_contains 'interactive ssh-copy-id does not finalize status before copying' "$output" 'EVENT:status-end:'
+}
+
+test_attempt_ssh_access_bootstrap_defers_success_until_auth_verification() {
+  local output
+  local event_log="$TEMP_DIR/ssh-bootstrap-success-events.log"
+  local final_success_count=0
+
+  output="$({
+    prepare_vm_state_mocks
+    load_setup_functions
+
+    ensure_host_ssh_key() {
+      return 0
+    }
+    copy_ssh_key_to_vm() {
+      printf 'copy:%s\n' "${1:-}" >> "$event_log"
+      return 0
+    }
+    ssh_onboarding_check() {
+      printf 'verify\n' >> "$event_log"
+      return 0
+    }
+    status_begin() {
+      :
+    }
+    status_tick() {
+      :
+    }
+    status_end() {
+      printf 'status-end:%s:%s\n' "$1" "${2:-info}" >> "$event_log"
+      printf '%s\n' "$1"
+    }
+
+    attempt_ssh_access_bootstrap
+  } 2>&1)"
+  final_success_count="$(printf '%s\n' "$output" | grep -F -c 'SSH access configured successfully. ✓' || true)"
+
+  assert_contains 'automatic ssh onboarding requests deferred copy success' "$(cat "$event_log")" 'copy:true'
+  assert_contains 'automatic ssh onboarding emits final success only after authentication verification' "$(cat "$event_log")" $'copy:true\nverify\nstatus-end:SSH access configured successfully. ✓:success'
+  assert_not_contains 'automatic ssh onboarding omits intermediate copy success' "$output" 'SSH key copied to VM ✓'
+  assert_equals 'automatic ssh onboarding prints final verified success exactly once' "$final_success_count" '1'
+}
+
+test_attempt_ssh_access_bootstrap_does_not_claim_success_when_verification_fails() {
+  local output
+  local bootstrap_status=0
+
+  set +e
+  output="$({
+    prepare_vm_state_mocks
+    load_setup_functions
+
+    ensure_host_ssh_key() {
+      return 0
+    }
+    copy_ssh_key_to_vm() {
+      [ "${1:-}" = true ]
+    }
+    ssh_onboarding_check() {
+      return 1
+    }
+
+    attempt_ssh_access_bootstrap
+  } 2>&1)"
+  bootstrap_status=$?
+  set -e
+
+  assert_equals 'automatic ssh onboarding fails when post-copy authentication verification fails' "$bootstrap_status" '1'
+  assert_not_contains 'automatic ssh onboarding does not claim overall success after failed verification' "$output" 'SSH access configured successfully. ✓'
+  assert_not_contains 'automatic ssh onboarding does not emit deferred copy success after failed verification' "$output" 'SSH key copied to VM ✓'
+  assert_contains 'automatic ssh onboarding retains failure output after failed verification' "$output" 'SSH access configuration did not complete.'
 }
 
 test_copy_ssh_key_to_vm_has_one_separator_after_configuration_prompt() {
@@ -3499,7 +3602,10 @@ test_batch_auth_probe_uses_configured_target_without_disabling_user_ssh_config
 test_wait_for_vm_ssh_service_clears_expected_refusal_without_warning_line
 test_copy_ssh_key_to_vm_treats_all_keys_skipped_as_success_when_auth_works
 test_copy_ssh_key_to_vm_interactive_prompt_spacing_and_single_completion
+test_copy_ssh_key_to_vm_deferred_success_suppresses_intermediate_completion
 test_copy_ssh_key_to_vm_suspends_status_before_terminal_handoff
+test_attempt_ssh_access_bootstrap_defers_success_until_auth_verification
+test_attempt_ssh_access_bootstrap_does_not_claim_success_when_verification_fails
 test_copy_ssh_key_to_vm_has_one_separator_after_configuration_prompt
 test_copy_ssh_key_to_vm_interactive_pipeline_preserves_stdin
 test_copy_ssh_key_to_vm_interactive_pipeline_preserves_failure_and_cleans_up
