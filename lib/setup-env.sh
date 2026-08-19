@@ -262,14 +262,16 @@ prompt_llama_context_for_openclaw() {
   local current_value="$1"
   local native_context_or_fallback="$2"
   local max_tokens_value="${3:-8192}"
+  local prompt_detail="${4:-}"
 
   if command -v llama_context_prompt_value >/dev/null 2>&1; then
-    llama_context_prompt_value "$current_value" "$native_context_or_fallback" "$max_tokens_value" 'setup input'
+    llama_context_prompt_value "$current_value" "$native_context_or_fallback" "$max_tokens_value" 'setup input' "$prompt_detail"
     return $?
   fi
 
   while true; do
-    prompt_resolved_value 'Context size for llama-server' 'LLAMA_CTX' "$current_value" "$native_context_or_fallback" || return $?
+    configured_or_default 'LLAMA_CTX' "$current_value" "$native_context_or_fallback"
+    prompt_with_default 'Context size for llama-server' "$REPLY" false "$prompt_detail" || return $?
     if validate_openclaw_token_context_values "$REPLY" "$max_tokens_value" 'setup input'; then
       return 0
     fi

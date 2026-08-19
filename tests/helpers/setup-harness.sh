@@ -212,12 +212,19 @@ install_prompt_stubs() {
     local label="$1"
     local default_value="$2"
     local allow_empty="${3:-false}"
+    local prompt_detail="${4:-}"
     local answer
 
     if [ -n "$default_value" ]; then
-      prompt "$label [$default_value]:"
-    else
+      label="$label [$default_value]"
+    fi
+    if [ -n "$prompt_detail" ]; then
+      label="$label $prompt_detail"
+    fi
+    if [ -n "$label" ]; then
       prompt "$label:"
+    else
+      prompt ':'
     fi
 
     take_prompt_answer

@@ -110,6 +110,8 @@ ensure_env_bootstrap() {
   local mmproj_path_value
   local openclaw_model_supports_vision_configured=false
   local native_context_value=''
+  local llama_context_prompt_detail=''
+  local llama_context_resolved_early=false
 
   if [ ! -f "$ENV_FILE" ]; then
     ENV_CREATED_FROM_EXAMPLE=true
@@ -246,9 +248,11 @@ ensure_env_bootstrap() {
   selected_model_name="$REPLY"
   if gguf_native_context_from_file "${MODEL_PATH:-}" >/dev/null 2>&1; then
     native_context_value="$(gguf_native_context_from_file "$MODEL_PATH" 2>/dev/null || true)"
-    [ -z "$native_context_value" ] || outf 'Model native context: %s' "$native_context_value"
   else
     warn 'Model native context metadata is unavailable; using ClawBox defaults.'
+  fi
+  if clawbox_positive_integer "$native_context_value"; then
+    llama_context_prompt_detail="(native max: $native_context_value)"
   fi
 
   derive_llama_bin_path
@@ -282,6 +286,13 @@ ensure_env_bootstrap() {
     host_ip_value="$REPLY"
   else
     host_ip_value="$host_ip_default"
+  fi
+  configured_or_default 'OPENCLAW_MAX_TOKENS' "${OPENCLAW_MAX_TOKENS:-}" '8192'
+  openclaw_max_tokens_value="$REPLY"
+  if [ "$llama_section_needed" = true ]; then
+    llama_context_prompt_value "${LLAMA_CTX:-}" "$native_context_value" "$openclaw_max_tokens_value" 'setup input' "$llama_context_prompt_detail" || return $?
+    llama_ctx_value="$REPLY"
+    llama_context_resolved_early=true
   fi
   if [ "$llama_section_needed" = true ]; then
     prompt_resolved_value 'Port for llama-server' 'LLAMA_PORT' "${LLAMA_PORT:-}" '11434'
@@ -319,12 +330,7 @@ ensure_env_bootstrap() {
   llama_port_value="$REPLY"
 
   if [ "$LLAMA_USE_EXISTING_INSTANCE" = true ]; then
-    configured_or_default 'OPENCLAW_MAX_TOKENS' "${OPENCLAW_MAX_TOKENS:-}" '8192'
-    openclaw_max_tokens_value="$REPLY"
-    if [ "$llama_section_needed" = true ]; then
-      llama_context_prompt_value "${LLAMA_CTX:-}" "$native_context_value" "$openclaw_max_tokens_value" 'setup input' || return $?
-      llama_ctx_value="$REPLY"
-    else
+    if [ "$llama_context_resolved_early" != true ]; then
       llama_context_resolve_noninteractive "${LLAMA_CTX:-}" "$native_context_value" "$openclaw_max_tokens_value" '.env' || return $?
       llama_ctx_value="$REPLY"
     fi
@@ -335,10 +341,10 @@ ensure_env_bootstrap() {
       llama_base_url_value="$(build_llama_base_url "$host_ip_value" "$llama_port_value")"
     fi
   else
-    configured_or_default 'OPENCLAW_MAX_TOKENS' "${OPENCLAW_MAX_TOKENS:-}" '8192'
-    openclaw_max_tokens_value="$REPLY"
-    prompt_llama_context_for_openclaw "${LLAMA_CTX:-}" "$native_context_value" "$openclaw_max_tokens_value"
-    llama_ctx_value="$REPLY"
+    if [ "$llama_context_resolved_early" != true ]; then
+      prompt_llama_context_for_openclaw "${LLAMA_CTX:-}" "$native_context_value" "$openclaw_max_tokens_value" "$llama_context_prompt_detail"
+      llama_ctx_value="$REPLY"
+    fi
 
     llama_bin_value="$llama_bin_default"
     llama_capture_status resolve_configured_llama_bin "$llama_bin_value"

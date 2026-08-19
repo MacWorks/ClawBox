@@ -14,6 +14,7 @@ trap cleanup_temp_dir EXIT
 test_model_selection_flow() {
   local output
   local host_prompt_index=0
+  local context_prompt_index=0
   local port_prompt_index=0
 
   output="$({
@@ -102,16 +103,25 @@ import os
 print(os.environ["OUTPUT_TEXT"].find("Host IP for llama-server API"))
 PY
 )"
+  context_prompt_index="$(OUTPUT_TEXT="$output" python3 - <<'PY'
+import os
+print(os.environ["OUTPUT_TEXT"].find("Context size for llama-server"))
+PY
+)"
   port_prompt_index="$(OUTPUT_TEXT="$output" python3 - <<'PY'
 import os
 print(os.environ["OUTPUT_TEXT"].find("Port for llama-server"))
 PY
 )"
-  if [ "$host_prompt_index" -ge 0 ] && [ "$port_prompt_index" -ge 0 ] && [ "$host_prompt_index" -lt "$port_prompt_index" ]; then
-    pass 'model flow prompts for host before port'
+  if [ "$host_prompt_index" -ge 0 ] && [ "$context_prompt_index" -ge 0 ] && [ "$port_prompt_index" -ge 0 ] \
+    && [ "$host_prompt_index" -lt "$context_prompt_index" ] && [ "$context_prompt_index" -lt "$port_prompt_index" ]; then
+    pass 'model flow prompts for host then context then port'
   else
-    fail 'model flow should prompt for host before port'
+    fail 'model flow should prompt for host then context then port'
   fi
+  assert_contains 'unknown-native primary flow keeps ordinary context prompt' "$output" 'Context size for llama-server [32768]:'
+  assert_not_contains 'unknown-native primary flow does not invent native max' "$output" 'Context size for llama-server [32768] (native max:'
+  assert_not_contains 'primary setup omits standalone native context output' "$output" 'Model native context:'
   assert_no_excessive_blank_lines 'model flow avoids excessive blank lines' "$output"
 }
 
@@ -851,8 +861,8 @@ test_first_run_bootstrap_detects_cross_user_llama_before_binary_setup() {
       '' \
       '' \
       '' \
-      '2' \
-      ''
+      '' \
+      '2'
 
     ENV_FILE="$TEMP_DIR/.env"
     ENV_CREATED_FROM_EXAMPLE=true
@@ -968,8 +978,8 @@ test_first_run_bootstrap_honors_explicit_custom_llama_port() {
       "$models_dir" \
       '' \
       '' \
-      '11801' \
       '' \
+      '11801' \
       '' \
       '' \
       ''
@@ -1092,9 +1102,9 @@ test_first_run_bootstrap_selects_custom_context_before_runtime_and_openclaw() {
       "$models_dir" \
       '' \
       '' \
-      '' \
       '262144' \
       '65536' \
+      '' \
       '' \
       ''
 
@@ -1212,8 +1222,8 @@ PY
   assert_contains 'fresh context setup starts without an existing env and succeeds' "$output" 'BOOTSTRAP_STATUS:0'
   assert_contains 'fresh context setup auto-selects the primary model' "$output" 'Using model: bonsai-context.gguf'
   assert_contains 'fresh context setup stores selected model path' "$output" "MODEL_PATH:$model_path"
-  assert_contains 'fresh context setup discovers native context through GGUF parser' "$output" 'Model native context: 131072'
-  assert_contains 'fresh context setup presents context prompt' "$output" 'Context size for llama-server [32768]:'
+  assert_contains 'fresh context setup presents native context in context prompt' "$output" 'Context size for llama-server [32768] (native max: 131072):'
+  assert_not_contains 'fresh context setup omits standalone native context output' "$output" 'Model native context:'
   assert_contains 'fresh context setup rejects above-native context' "$output" '262144 exceeds model native context 131072'
   assert_contains 'fresh context setup accepts non-default context in memory' "$output" 'LLAMA_CTX:65536'
   assert_contains 'fresh context setup persists non-default context' "$output" 'ENV_FILE_CTX:LLAMA_CTX="65536"'
@@ -4791,6 +4801,8 @@ test_optional_embeddings_setup_is_host_only() {
 
 test_embeddings_context_uses_native_context_ceiling() {
   local output
+  local context_prompt_index=0
+  local port_prompt_index=0
   local embeddings_model="$TEMP_DIR/embeddings-native/embed-native.gguf"
 
   mkdir -p "$(dirname "$embeddings_model")"
@@ -4811,6 +4823,8 @@ test_embeddings_context_uses_native_context_ceiling() {
     prompt_with_default() {
       if [ "${1:-}" = "Embeddings context size" ]; then
         printf 'CTX_PROMPT_DEFAULT:%s\n' "${2:-}"
+        printf 'CTX_PROMPT_DETAIL:%s\n' "${4:-}"
+        printf 'PROMPT_EVENT:context\n'
         if [ -z "${EMBEDDINGS_TEST_CTX_PROMPTED:-}" ]; then
           EMBEDDINGS_TEST_CTX_PROMPTED=true
           REPLY='131072'
@@ -4818,6 +4832,10 @@ test_embeddings_context_uses_native_context_ceiling() {
           REPLY='32768'
         fi
         return 0
+      fi
+
+      if [ "${1:-}" = "Embeddings llama-server port" ]; then
+        printf 'PROMPT_EVENT:port\n'
       fi
 
       REPLY="${2:-}"
@@ -4829,11 +4847,64 @@ test_embeddings_context_uses_native_context_ceiling() {
     setup_embeddings_service_phase
   } 2>&1)"
 
-  assert_contains 'embeddings setup reports native context metadata' "$output" 'Embeddings model native context: 65536'
+  assert_contains 'embeddings setup includes native context in context prompt' "$output" 'CTX_PROMPT_DETAIL:(native max: 65536)'
+  assert_not_contains 'embeddings setup omits standalone native context output' "$output" 'Embeddings model native context:'
   assert_contains 'embeddings context default is clamped to native context' "$output" 'CTX_PROMPT_DEFAULT:65536'
   assert_contains 'embeddings oversized manual context is rejected' "$output" '131072 exceeds model native context 65536'
   assert_contains 'embeddings smaller valid context is persisted' "$output" 'EMBEDDINGS_ENV:true:32768'
   assert_contains 'embeddings smaller valid context reaches service setup' "$output" 'EMBEDDINGS_SERVICE_CTX:32768'
+  context_prompt_index="$(OUTPUT_TEXT="$output" python3 - <<'PY'
+import os
+print(os.environ["OUTPUT_TEXT"].find("PROMPT_EVENT:context"))
+PY
+)"
+  port_prompt_index="$(OUTPUT_TEXT="$output" python3 - <<'PY'
+import os
+print(os.environ["OUTPUT_TEXT"].find("PROMPT_EVENT:port"))
+PY
+)"
+  if [ "$context_prompt_index" -ge 0 ] && [ "$port_prompt_index" -ge 0 ] && [ "$context_prompt_index" -lt "$port_prompt_index" ]; then
+    pass 'embeddings setup prompts for context before port'
+  else
+    fail 'embeddings setup should prompt for context before port'
+  fi
+}
+
+test_embeddings_unknown_native_context_omits_maximum() {
+  local output
+  local embeddings_model="$TEMP_DIR/embeddings-unknown/embed-unknown.gguf"
+
+  mkdir -p "$(dirname "$embeddings_model")"
+  : > "$embeddings_model"
+
+  output="$({
+    load_setup_functions
+    HOST_IP='192.168.64.1'
+    LLAMA_BIN='/tmp/llama-server'
+    LLAMA_PORT='11434'
+    EMBEDDINGS_ENABLED=false
+    EMBEDDINGS_LLAMA_CTX='8192'
+    select_embeddings_model_path() { EMBEDDINGS_MODEL_PATH="$embeddings_model"; }
+    llama_port_in_use() { return 1; }
+    prompt_with_default() {
+      local label="$1" default_value="$2" prompt_detail="${4:-}"
+      if [ -n "$prompt_detail" ]; then
+        printf 'PROMPT:%s [%s] %s:\n' "$label" "$default_value" "$prompt_detail"
+      else
+        printf 'PROMPT:%s [%s]:\n' "$label" "$default_value"
+      fi
+      REPLY="$default_value"
+    }
+    write_env_from_template() { :; }
+    source_env_file() { return 0; }
+    detect_existing_llama_install_mode() { REPLY='user'; }
+    setup_embeddings_llama_service_for_mode() { return 0; }
+    configure_embeddings_service
+  } 2>&1)"
+
+  assert_contains 'unknown-native embeddings flow keeps ordinary context prompt' "$output" 'PROMPT:Embeddings context size [8192]:'
+  assert_not_contains 'unknown-native embeddings flow does not invent native max' "$output" 'PROMPT:Embeddings context size [8192] (native max:'
+  assert_not_contains 'unknown-native embeddings flow omits standalone native context output' "$output" 'Embeddings model native context:'
 }
 
 test_embeddings_placeholder_url_is_never_probed() {
@@ -5360,6 +5431,7 @@ run_test test_primary_llama_start_uses_active_compact_lifecycle_status
 run_test test_host_llama_restart_uses_install_mode_without_hidden_health_wait
 run_test test_optional_embeddings_setup_is_host_only
 run_test test_embeddings_context_uses_native_context_ceiling
+run_test test_embeddings_unknown_native_context_omits_maximum
 run_test test_embeddings_placeholder_url_is_never_probed
 run_test test_existing_embeddings_menu_uses_installed_managed_port_over_stale_env
 run_test test_existing_embeddings_menu_requires_managed_metadata_before_recommending_reuse

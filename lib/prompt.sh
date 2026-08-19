@@ -84,6 +84,7 @@ prompt_with_default() {
   local input_value
   local prompt_label
   local allow_empty="${3:-false}"
+  local prompt_detail="${4:-}"
 
   PROMPT_USED_DEFAULT=false
   sanitize_prompt_default_value "$default_value"
@@ -91,10 +92,13 @@ prompt_with_default() {
 
   while true; do
     if [ -n "$default_value" ]; then
-      prompt_label="$label [$default_value]:"
+      prompt_label="$label [$default_value]"
     else
-      prompt_label="$label:"
+      prompt_label="$label"
     fi
+
+    [ -z "$prompt_detail" ] || prompt_label="$prompt_label $prompt_detail"
+    prompt_label="$prompt_label:"
 
     prompt "$prompt_label"
 

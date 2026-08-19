@@ -69,13 +69,14 @@ model_context_prompt_value() {
   local native_context="${3:-}"
   local fallback_value="${4:-$(llama_default_context_window)}"
   local source_label="${5:-setup input}"
+  local prompt_detail="${6:-}"
   local default_value=''
 
   llama_context_safe_default "$current_value" "$native_context" "$fallback_value"
   default_value="$REPLY"
 
   while true; do
-    prompt_with_default "$prompt_label" "$default_value" || return $?
+    prompt_with_default "$prompt_label" "$default_value" false "$prompt_detail" || return $?
     if model_context_validate_native_value "$REPLY" "$native_context" "$source_label"; then
       return 0
     fi
@@ -118,13 +119,14 @@ llama_context_prompt_value() {
   local native_context="${2:-}"
   local max_tokens_value="${3:-${OPENCLAW_MAX_TOKENS:-8192}}"
   local source_label="${4:-setup input}"
+  local prompt_detail="${5:-}"
   local default_value=''
 
   llama_context_safe_default "$current_value" "$native_context" "$(llama_default_context_window)"
   default_value="$REPLY"
 
   while true; do
-    prompt_with_default 'Context size for llama-server' "$default_value" || return $?
+    prompt_with_default 'Context size for llama-server' "$default_value" false "$prompt_detail" || return $?
     if llama_context_validate_value "$REPLY" "$native_context" "$max_tokens_value" "$source_label"; then
       return 0
     fi
