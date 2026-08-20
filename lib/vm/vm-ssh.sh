@@ -1015,7 +1015,7 @@ copy_ssh_key_to_vm() {
       if _status_can_spin; then
         status_begin_compact_active 'Copying SSH key to VM'
         status_tick 'Copying SSH key to VM'
-        status_suspend
+        status_suspend_for_terminal
       else
         out 'Copying SSH key to VM'
         blank_line

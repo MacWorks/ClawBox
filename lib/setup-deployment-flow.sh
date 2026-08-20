@@ -66,6 +66,32 @@ print_setup_completion_summary() {
   esac
 }
 
+setup_completion_status_can_prompt() {
+  [ -t 0 ]
+}
+
+run_clawbox_status_command() {
+  "$BASE_DIR/scripts/status.sh"
+}
+
+offer_setup_completion_status() {
+  local status=0
+
+  setup_completion_status_can_prompt || return 0
+
+  prompt_yes_no 'Run ClawBox status now?' 'y'
+  is_yes "$REPLY" || return 0
+
+  if run_clawbox_status_command; then
+    return 0
+  else
+    status=$?
+  fi
+
+  warn "ClawBox status reported issues (exit status $status). Setup remains complete."
+  return 0
+}
+
 detect_openclaw_runtime_state_with_status() {
   local state_file=''
   local pid=''
@@ -171,4 +197,5 @@ run_provisioning_and_deployment() {
   offer_openclaw_webui || return $?
 
   print_setup_completion_summary
+  offer_setup_completion_status
 }

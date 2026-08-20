@@ -1853,7 +1853,7 @@ test_copy_ssh_key_to_vm_suspends_status_before_terminal_handoff() {
     status_tick() {
       printf 'EVENT:status-tick:%s\n' "$1" >> "$event_log"
     }
-    status_suspend() {
+    status_suspend_for_terminal() {
       CLAWBOX_STATUS_ACTIVE=false
       CLAWBOX_STATUS_TICKER_PID=''
       printf 'EVENT:status-suspend\n' >> "$event_log"
@@ -1882,6 +1882,115 @@ test_copy_ssh_key_to_vm_suspends_status_before_terminal_handoff() {
   assert_not_contains 'interactive ssh-copy-id does not add another blank after status suspension' "$output" $'EVENT:status-suspend\nEVENT:blank-line'
   assert_contains 'interactive ssh-copy-id completes only after the copy returns' "$output" $'EVENT:ssh-copy-id:status-active=false:ticker-pid=\nEVENT:blank-line\nEVENT:success:SSH key copied to VM ✓'
   assert_not_contains 'interactive ssh-copy-id does not finalize status before copying' "$output" 'EVENT:status-end:'
+}
+
+test_automatic_ssh_onboarding_real_tty_rendering_has_one_password_separator() {
+  local raw_output=''
+  local rendered_output=''
+  local output=''
+
+  raw_output="$(mktemp "${TMPDIR:-/tmp}/clawbox-ssh-onboarding-tty.XXXXXX")"
+  rendered_output="$(mktemp "${TMPDIR:-/tmp}/clawbox-ssh-onboarding-rendered.XXXXXX")"
+
+  (
+    prepare_vm_state_mocks
+    load_setup_functions
+
+    VM_HOST='vm-user@192.168.64.2'
+    CLAWBOX_STATUS_ACTIVE=false
+    CLAWBOX_STATUS_TICKER_PID=''
+
+    _status_can_spin() {
+      return 0
+    }
+    _status_start_active_ticker() {
+      CLAWBOX_STATUS_TICKER_PID=''
+    }
+    ssh_copy_id_should_own_terminal() {
+      return 0
+    }
+    ensure_host_ssh_key() {
+      return 0
+    }
+    ssh-copy-id() {
+      printf '%s\n' '/usr/bin/ssh-copy-id: INFO: attempting to install the key'
+      printf '%s\n' '(vm-user@192.168.64.2) Password:'
+      printf '%s\n' 'Number of key(s) added: 1'
+      return 0
+    }
+    ssh_onboarding_check() {
+      return 0
+    }
+
+    prompt 'Attempt to configure SSH access automatically? [Y/n]:'
+    printf 'y\n' >&2
+    prompt_complete
+    attempt_ssh_access_bootstrap
+  ) >"$raw_output" 2>&1
+
+  python3 - "$raw_output" "$rendered_output" <<'PY'
+import sys
+
+data = open(sys.argv[1], "rb").read().decode("utf-8", "replace")
+lines = [[]]
+column = 0
+index = 0
+
+while index < len(data):
+    char = data[index]
+    if char == "\x1b" and index + 1 < len(data) and data[index + 1] == "[":
+        end = index + 2
+        while end < len(data) and not ("@" <= data[end] <= "~"):
+            end += 1
+        if end >= len(data):
+            break
+        parameters = data[index + 2:end]
+        final = data[end]
+        if final == "K" and parameters in ("", "0", "2"):
+            lines[-1] = []
+            column = 0
+        index = end + 1
+        continue
+    if char == "\r":
+        column = 0
+    elif char == "\n":
+        lines.append([])
+        column = 0
+    else:
+        while len(lines[-1]) < column:
+            lines[-1].append(" ")
+        if column < len(lines[-1]):
+            lines[-1][column] = char
+        else:
+            lines[-1].append(char)
+        column += 1
+    index += 1
+
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    handle.write("\n".join("".join(line) for line in lines))
+PY
+
+  output="$(cat "$rendered_output")"
+
+  if python3 - "$rendered_output" <<'PY'
+import sys
+
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+prompt = next(i for i, line in enumerate(lines) if "Attempt to configure SSH access automatically?" in line)
+password = next(i for i, line in enumerate(lines) if "Password:" in line)
+between = lines[prompt + 1:password]
+raise SystemExit(0 if between == [""] else 1)
+PY
+  then
+    pass 'real tty ssh onboarding leaves exactly one visual blank line before the password prompt'
+  else
+    fail 'real tty ssh onboarding should leave exactly one visual blank line before the password prompt'
+  fi
+  assert_not_contains 'real tty ssh onboarding clears the suspended spinner before password ownership' "$output" 'Copying SSH key to VM'
+  assert_not_contains 'real tty ssh onboarding suppresses ssh-copy-id chatter' "$output" 'ssh-copy-id: INFO'
+  assert_not_contains 'real tty ssh onboarding suppresses intermediate copy completion' "$output" 'SSH key copied to VM ✓'
+  assert_equals 'real tty ssh onboarding prints one final verified success' "$(printf '%s\n' "$output" | grep -F -c 'SSH access configured successfully. ✓' || true)" '1'
+  rm -f "$raw_output" "$rendered_output"
 }
 
 test_attempt_ssh_access_bootstrap_defers_success_until_auth_verification() {
@@ -3604,6 +3713,7 @@ test_copy_ssh_key_to_vm_treats_all_keys_skipped_as_success_when_auth_works
 test_copy_ssh_key_to_vm_interactive_prompt_spacing_and_single_completion
 test_copy_ssh_key_to_vm_deferred_success_suppresses_intermediate_completion
 test_copy_ssh_key_to_vm_suspends_status_before_terminal_handoff
+test_automatic_ssh_onboarding_real_tty_rendering_has_one_password_separator
 test_attempt_ssh_access_bootstrap_defers_success_until_auth_verification
 test_attempt_ssh_access_bootstrap_does_not_claim_success_when_verification_fails
 test_copy_ssh_key_to_vm_has_one_separator_after_configuration_prompt

@@ -67,11 +67,15 @@ _status_render_final_line() {
 }
 
 _status_suspend_rendering() {
+  local advance_line="${1:-true}"
+
   _status_stop_active_ticker
 
   if [ "${CLAWBOX_STATUS_ACTIVE:-false}" = true ] && _status_can_spin; then
     _status_clear_line
-    printf '\n' >&2
+    if [ "$advance_line" = true ]; then
+      printf '\n' >&2
+    fi
     _status_show_cursor
     _set_output_state "blank"
     CLAWBOX_STATUS_ACTIVE=false
@@ -732,6 +736,10 @@ terminal_safe_exit() {
 
 status_suspend() {
   _status_suspend_rendering
+}
+
+status_suspend_for_terminal() {
+  _status_suspend_rendering false
 }
 
 status_wait_for_pid() {

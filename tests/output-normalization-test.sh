@@ -3841,6 +3841,8 @@ test_provisioning_and_deployment_flow() {
 
   output="$({
     load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers ''
 
     user_has_sudo() {
       return 1
@@ -3902,6 +3904,19 @@ test_provisioning_and_deployment_flow() {
       return 0
     }
 
+    offer_openclaw_webui() {
+      return 0
+    }
+
+    setup_completion_status_can_prompt() {
+      return 0
+    }
+
+    run_clawbox_status_command() {
+      out 'CANONICAL STATUS RAN'
+      return 0
+    }
+
     MODEL_PATH='/tmp/model.gguf'
     LLAMA_PORT='11434'
 
@@ -3919,7 +3934,76 @@ test_provisioning_and_deployment_flow() {
   assert_contains 'provisioning flow shows runtime section' "$output" ' > Runtime'
   assert_contains 'provisioning flow reports targeted config sync state' "$output" 'OpenClaw config already matched; no OpenClaw changes were made.'
   assert_contains 'provisioning flow shows runtime callout' "$output" 'OpenClaw is installed but not running.'
+  assert_contains 'successful setup offers the default-yes status prompt' "$output" 'Run ClawBox status now? [Y/n]:'
+  assert_contains 'default status prompt response runs canonical status' "$output" 'CANONICAL STATUS RAN'
+
+  if python3 - "$output" <<'PY'
+import sys
+text = sys.argv[1]
+complete = text.find("ClawBox setup completed successfully.")
+prompt = text.find("Run ClawBox status now?")
+status = text.find("CANONICAL STATUS RAN")
+raise SystemExit(0 if -1 not in (complete, prompt, status) and complete < prompt < status else 1)
+PY
+  then
+    pass 'status prompt and status output occur only after setup completion'
+  else
+    fail 'status prompt and status output should occur only after setup completion'
+  fi
   assert_no_excessive_blank_lines 'provisioning flow avoids excessive blank lines' "$output"
+}
+
+test_setup_completion_status_prompt_choices_and_failure_reporting() {
+  local yes_output=''
+  local no_output=''
+  local failure_output=''
+  local runner_source=''
+
+  yes_output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers 'y'
+    setup_completion_status_can_prompt() { return 0; }
+    run_clawbox_status_command() { printf 'STATUS_INVOKED\n'; return 0; }
+    offer_setup_completion_status
+  } 2>&1)"
+
+  no_output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers 'n'
+    setup_completion_status_can_prompt() { return 0; }
+    run_clawbox_status_command() { printf 'UNEXPECTED_STATUS\n'; return 0; }
+    if offer_setup_completion_status; then
+      printf 'DECLINE_STATUS:0\n'
+    else
+      printf 'DECLINE_STATUS:%s\n' "$?"
+    fi
+  } 2>&1)"
+
+  failure_output="$({
+    load_setup_functions
+    install_prompt_stubs
+    queue_prompt_answers ''
+    setup_completion_status_can_prompt() { return 0; }
+    run_clawbox_status_command() { printf 'STATUS_FAILED\n'; return 7; }
+    if offer_setup_completion_status; then
+      printf 'SETUP_STATUS:0\n'
+    else
+      printf 'SETUP_STATUS:%s\n' "$?"
+    fi
+  } 2>&1)"
+
+  load_setup_functions
+  runner_source="$(declare -f run_clawbox_status_command)"
+
+  assert_contains 'explicit yes runs status after setup' "$yes_output" 'STATUS_INVOKED'
+  assert_contains 'explicit no keeps setup successful' "$no_output" 'DECLINE_STATUS:0'
+  assert_not_contains 'explicit no does not run status' "$no_output" 'UNEXPECTED_STATUS'
+  assert_contains 'status command failure output remains visible' "$failure_output" 'STATUS_FAILED'
+  assert_contains 'status command failure is reported without undoing setup' "$failure_output" 'ClawBox status reported issues (exit status 7). Setup remains complete.'
+  assert_contains 'status command failure leaves completed setup successful' "$failure_output" 'SETUP_STATUS:0'
+  assert_contains 'setup completion invokes the canonical status script' "$runner_source" '"$BASE_DIR/scripts/status.sh"'
 }
 
 test_targeted_openclaw_restart_prompt_follows_config_update_before_deployment() {
@@ -4391,6 +4475,7 @@ test_openclaw_config_present_without_executable_uses_provisioning_flow() {
     offer_openclaw_restart_after_llama_update() { return 0; }
     offer_openclaw_webui() { return 0; }
     print_setup_completion_summary() { printf 'UNEXPECTED_SETUP_COMPLETE\n'; return 0; }
+    offer_setup_completion_status() { printf 'UNEXPECTED_STATUS_PROMPT\n'; return 0; }
 
     VM_RUNTIME_PATH='/Users/tester/ClawBox'
     VM_HOST='tester@192.168.64.2'
@@ -4405,6 +4490,7 @@ test_openclaw_config_present_without_executable_uses_provisioning_flow() {
   assert_not_contains 'config-present executable-absent flow does not run targeted sync' "$output" 'UNEXPECTED_TARGETED_SYNC'
   assert_not_contains 'config-present executable-absent flow does not continue to runtime' "$output" 'UNEXPECTED_RUNTIME'
   assert_not_contains 'config-present executable-absent flow does not complete setup' "$output" 'UNEXPECTED_SETUP_COMPLETE'
+  assert_not_contains 'config-present executable-absent flow does not offer final status' "$output" 'UNEXPECTED_STATUS_PROMPT'
 }
 
 test_openclaw_provisioning_confirmation_still_requires_executable_before_sync() {
@@ -5418,6 +5504,7 @@ run_test test_vm_startup_network_recovery_flow
 run_test test_vm_ip_discovery_recovery_flow
 run_test test_detect_vm_state
 run_test test_provisioning_and_deployment_flow
+run_test test_setup_completion_status_prompt_choices_and_failure_reporting
 run_test test_targeted_openclaw_restart_prompt_follows_config_update_before_deployment
 run_test test_openclaw_preparation_status_covers_remote_drift_detection
 run_test test_openclaw_gateway_auth_status_covers_post_comparison_remote_work
