@@ -817,6 +817,25 @@ test_runtime_handle_module() {
     fail "runtime handler should start OpenClaw instead of claiming launchctl-only state is already running"
   fi
 
+  openclaw_runtime_has_manual_process() {
+    return 1
+  }
+
+  : > "$output_log"
+  start_attempts=0
+  CONFIG_OVERWRITTEN=false
+  IS_RUNNING=true
+  OPENCLAW_AUTOSTART=true
+  OPENCLAW_RUNTIME_MANAGEMENT_STATE='managed by VM launchd'
+  if handle_openclaw_runtime_state >/dev/null 2>&1 \
+    && [ "$start_attempts" -eq 0 ] \
+    && grep -Fxq 'out:OpenClaw is already running on the VM. ✓' "$output_log" \
+    && grep -Fxq 'out:OpenClaw runtime: managed by VM launchd. ✓' "$output_log"; then
+    pass "runtime handler marks positively verified existing VM launchd state complete"
+  else
+    fail "runtime handler should mark positively verified existing VM launchd state complete"
+  fi
+
   openclaw_runtime_has_running_native_gateway_service() {
     return 0
   }

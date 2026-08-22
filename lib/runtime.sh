@@ -290,9 +290,9 @@ handle_openclaw_runtime_state() {
       return 0
     fi
 
-    out "OpenClaw is already running on the VM."
+    out 'OpenClaw is already running on the VM. ✓'
     if [ "${OPENCLAW_RUNTIME_MANAGEMENT_STATE:-}" = 'managed by VM launchd' ]; then
-      out 'OpenClaw runtime: managed by VM launchd.'
+      out 'OpenClaw runtime: managed by VM launchd. ✓'
     elif [ "${OPENCLAW_RUNTIME_MANAGEMENT_STATE:-}" = 'managed by native OpenClaw LaunchAgent' ]; then
       out 'OpenClaw runtime: managed by native OpenClaw LaunchAgent (ai.openclaw.gateway).'
     fi
