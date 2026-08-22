@@ -186,7 +186,6 @@ run_provisioning_and_deployment() {
   offer_targeted_openclaw_config_restart || return $?
 
   section "Runtime"
-  step "Configuring runtime services"
 
   setup_launchagent || return $?
 

@@ -577,5 +577,5 @@ setup_launchagent() {
   launchagent_install_and_start || return $?
   VM_AUTOSTART_STATE='enabled'
   VM_AUTOSTART_SETUP_TEMPORARY=false
-  out "LaunchAgent installed."
+  out 'VM auto-start LaunchAgent installed ✓'
 }

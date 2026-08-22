@@ -3888,7 +3888,7 @@ test_provisioning_and_deployment_flow() {
     }
 
     setup_launchagent() {
-      out 'LaunchAgent installed.'
+      out 'VM auto-start LaunchAgent installed ✓'
     }
 
     handle_openclaw_runtime_state() {
@@ -3932,6 +3932,13 @@ test_provisioning_and_deployment_flow() {
   assert_contains 'provisioning flow reports deployment staging completion' "$output" 'Deployment staged ✓'
   assert_not_contains 'provisioning flow omits deployment subsection' "$output" ' > Deployment'
   assert_contains 'provisioning flow shows runtime section' "$output" ' > Runtime'
+  assert_not_contains 'runtime flow omits redundant configuration intro' "$output" 'Configuring runtime services'
+  assert_contains 'runtime flow reports verified VM auto-start LaunchAgent installation' "$output" 'VM auto-start LaunchAgent installed ✓'
+  if printf '%s\n' "$output" | grep -Eq '^[[:space:]]*[0-9]+[[:space:]]*$'; then
+    fail 'runtime flow should not leak a bare PID or numeric status line'
+  else
+    pass 'runtime flow does not leak a bare PID or numeric status line'
+  fi
   assert_contains 'provisioning flow reports targeted config sync state' "$output" 'OpenClaw config already matched; no OpenClaw changes were made.'
   assert_contains 'provisioning flow shows runtime callout' "$output" 'OpenClaw is installed but not running.'
   assert_contains 'successful setup offers the default-yes status prompt' "$output" 'Run ClawBox status now? [Y/n]:'
@@ -4386,7 +4393,7 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
     }
 
     setup_launchagent() {
-      out 'LaunchAgent installed.'
+      out 'VM auto-start LaunchAgent installed ✓'
     }
 
     handle_openclaw_runtime_state() {
@@ -4433,7 +4440,7 @@ test_provisioning_and_deployment_continues_after_vm_local_provisioning() {
   assert_not_contains 'provisioning fallback flow does not repeat a copy paste command label' "$output" 'Copy/paste command:'
   assert_contains 'provisioning handoff prompts for vm-local completion' "$output" 'Provisioning completed inside the VM? [Y/n]:'
   assert_contains 'provisioning handoff continues into runtime setup after confirmation' "$output" ' > Runtime'
-  assert_contains 'provisioning handoff configures the host runtime service after confirmation' "$output" 'LaunchAgent installed.'
+  assert_contains 'provisioning handoff configures the host runtime service after confirmation' "$output" 'VM auto-start LaunchAgent installed ✓'
   assert_contains 'provisioning handoff prints final setup completion section' "$output" ' > Setup Complete'
   assert_contains 'provisioning handoff points the user at status' "$output" 'Check status with: ./clawbox status'
   assert_contains 'provisioning handoff confirms the running OpenClaw gateway' "$output" 'OpenClaw gateway is running in the VM.'

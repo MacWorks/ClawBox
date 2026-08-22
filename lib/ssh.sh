@@ -374,7 +374,9 @@ printf '%s\\n' 'bootstrapped'"
 $(printf '%s\n' "$REPLY")
 service_target=\"\$domain/\$label\"
 attempts=0
-  until launchctl print \"\$service_target\" >/dev/null 2>&1 && $runtime_pid_command; do
+until launchctl print \"\$service_target\" >/dev/null 2>&1 && {
+  $runtime_pid_command
+} >/dev/null; do
   attempts=\$((attempts + 1))
   if [ \"\$attempts\" -ge 20 ]; then
     printf 'OpenClaw launchd service did not reach a running state: %s\\n' \"\$service_target\" >&2

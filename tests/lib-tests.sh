@@ -470,6 +470,13 @@ test_ssh_module() {
     fail "start_openclaw should bootstrap and kickstart the VM service in the gui launchd domain"
   fi
 
+  if [[ "$captured_script_body" == *'} >/dev/null; do'* ]] \
+    && [[ "$captured_script_body" != *'} >/dev/null 2>&1; do'* ]]; then
+    pass "start_openclaw suppresses the readiness predicate PID without hiding errors"
+  else
+    fail "start_openclaw should suppress only the readiness predicate PID output"
+  fi
+
   mock_openclaw_start_state='already-loaded'
   OPENCLAW_START_STATE=''
   if start_openclaw >/dev/null 2>&1 && [ "$OPENCLAW_START_STATE" = 'already-loaded' ]; then
@@ -3751,7 +3758,7 @@ test_launchagent_temporary_service_prompts_for_retention_yes_and_no() {
 
   output="$(setup_launchagent 2>&1)"
   plist_path="$HOME/Library/LaunchAgents/com.clawbox.startutmvm.plist"
-  assert_contains 'accepting temporary autostart installs LaunchAgent' "$output" 'LaunchAgent installed.'
+  assert_contains 'accepting temporary autostart reports verified VM auto-start LaunchAgent installation' "$output" 'VM auto-start LaunchAgent installed ✓'
   assert_contains 'accepting temporary setup LaunchAgent still asks retention question' "$output" 'PROMPT:Enable VM auto-start at login? [n]'
   assert_contains 'accepting temporary autostart writes final VM_HOST' "$(cat "$plist_path")" '<string>tester@192.168.64.6</string>'
 
